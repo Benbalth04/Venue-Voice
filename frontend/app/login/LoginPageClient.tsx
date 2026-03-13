@@ -5,6 +5,7 @@ import { useMemo, useState } from "react"
 import Link from "next/link"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { supabase } from "@/lib/supabase/client"
 
 export default function LoginPageClient() {
   const router = useRouter()
@@ -22,18 +23,30 @@ export default function LoginPageClient() {
     setLoading(true)
 
     try {
-      const resp = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ email, password }),
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
       })
-
-      const data = await resp.json().catch(() => null)
-
-      if (!resp.ok) {
-        setError(data?.error ?? "Login failed")
+      if (signInError) {
+        setError(signInError.message ?? "Login failed")
         return
+      }
+
+      // Ensure local user exists (idempotent)
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+      if (session?.access_token) {
+        await fetch(
+          `${process.env.NEXT_PUBLIC_BACKEND_BASE_URL ?? "http://localhost:5000"}/api/v1/users/bootstrap`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${session.access_token}`,
+              "Content-Type": "application/json",
+            },
+          },
+        )
       }
 
       router.push(next)

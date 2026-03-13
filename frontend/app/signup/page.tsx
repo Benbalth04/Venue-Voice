@@ -5,6 +5,7 @@ import { useState } from "react"
 import Link from "next/link"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { supabase } from "@/lib/supabase/client"
 
 export default function SignupPage() {
   const router = useRouter()
@@ -24,25 +25,47 @@ export default function SignupPage() {
     setError(null)
     setLoading(true)
     try {
-      const resp = await fetch("/api/auth/signup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          email,
-          password,
-          first_name: firstName,
-          last_name: lastName,
-          company_name: companyName,
-          default_store_name: defaultStoreName,
-        }),
+      const { error: signUpError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            first_name: firstName,
+            last_name: lastName,
+            company_name: companyName,
+            default_store_name: defaultStoreName,
+          },
+        },
       })
-      const data = await resp.json().catch(() => null)
-      if (!resp.ok) {
-        setError(data?.error ?? "Signup failed")
+
+      if (signUpError) {
+        setError(signUpError.message ?? "Signup failed")
         return
       }
-      router.push("/dashboard")
+
+      // If email confirmations are OFF, we may already have a session.
+      // If they are ON, user must confirm email before session exists.
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+
+      if (session?.access_token) {
+        await fetch(
+          `${process.env.NEXT_PUBLIC_BACKEND_BASE_URL ?? "http://localhost:5000"}/api/v1/users/bootstrap`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${session.access_token}`,
+              "Content-Type": "application/json",
+            },
+          },
+        )
+        router.push("/dashboard")
+        return
+      }
+
+      // No session yet (likely requires email confirmation).
+      router.push("/login")
     } finally {
       setLoading(false)
     }

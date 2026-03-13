@@ -3,6 +3,7 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useRouter } from "next/navigation"
+import { supabase } from "@/lib/supabase/client"
 import {
   BarChart3,
   Bell,
@@ -27,12 +28,15 @@ export function Sidebar() {
   const router = useRouter()
 
   async function onLogout() {
-    try {
-      await fetch("/api/auth/logout", { method: "POST", credentials: "include" })
-    } finally {
-      router.push("/login")
-      router.refresh()
-    }
+    // Call signOut but don't block navigation on failure
+    supabase.auth.signOut().catch((err) => {
+      console.error("Supabase signOut failed:", err)
+    })
+
+    // Immediately redirect
+    router.push("/login")
+    // Refresh to ensure server components fetch new session
+    router.refresh()
   }
 
   return (
