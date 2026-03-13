@@ -2,7 +2,7 @@ services:
   database:
     build: ./database
     ports: 
-      - "5432" 
+      - "5432:5432" 
     restart: always
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -37,8 +37,18 @@ services:
       - database
     environment:
       DATABASE_URL: ${DATABASE_URL}
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_KEY: ${SUPABASE_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      SESSION_SECRET: ${SESSION_SECRET}
     networks:
       - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
 
   frontend:
     build: ./frontend
@@ -49,6 +59,7 @@ services:
       - "3000:3000"
     environment:
       NODE_ENV: development
+      BACKEND_BASE_URL: http://backend:5000/api/v1
     command: npm run dev
     networks:
       - backend

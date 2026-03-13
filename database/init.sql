@@ -2,55 +2,43 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 --------------------------------------------------
--- COMPANIES
---------------------------------------------------
-
-CREATE TABLE companies (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    name TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
---------------------------------------------------
--- STORES
---------------------------------------------------
-
-CREATE TABLE stores (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    location TEXT,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE INDEX idx_stores_company_id
-ON stores(company_id);
-
---------------------------------------------------
 -- USERS
 --------------------------------------------------
 
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     email TEXT UNIQUE NOT NULL,
-    password_hash TEXT,
+    first_name TEXT NOT NULL,
+    last_name TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT NOW()
 );
 
 --------------------------------------------------
--- COMPANY USERS (MULTI-TENANT ROLES)
+-- COMPANIES
 --------------------------------------------------
 
-CREATE TABLE company_users (
+CREATE TABLE companies (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    company_id UUID REFERENCES companies(id) ON DELETE CASCADE,
-    role TEXT NOT NULL CHECK (role IN ('dev', 'admin', 'viewer')),
+    owner_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE INDEX idx_company_users_user_id
-ON company_users(user_id);
+--------------------------------------------------
+-- LOCATIONS
+--------------------------------------------------
+
+CREATE TABLE locations (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    created_by UUID NULL REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_locations_company_id
+ON locations(company_id);
+
 
 --------------------------------------------------
 -- SURVEYS
@@ -59,9 +47,14 @@ ON company_users(user_id);
 CREATE TABLE surveys (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    location_id UUID REFERENCES locations(id),
     name TEXT NOT NULL,
     description TEXT,
+    status TEXT NOT NULL CHECK (
+        status IN ('draft','active','archived')
+    ) DEFAULT 'draft',
     active_version_id UUID,
+    created_by UUID NULL REFERENCES users(id) ON DELETE SET NULL,
     created_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -105,17 +98,16 @@ ON questions(survey_version_id);
 --------------------------------------------------
 -- RESPONSES
 --------------------------------------------------
-
 CREATE TABLE responses (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     survey_version_id UUID NOT NULL REFERENCES survey_versions(id),
-    store_id UUID REFERENCES stores(id),
+    location_id UUID REFERENCES locations(id),
     submitted_at TIMESTAMP DEFAULT NOW(),
     metadata JSONB
 );
 
-CREATE INDEX idx_responses_store
-ON responses(store_id);
+CREATE INDEX idx_responses_location
+ON responses(location_id);
 
 CREATE INDEX idx_responses_time
 ON responses(submitted_at);
@@ -123,7 +115,6 @@ ON responses(submitted_at);
 --------------------------------------------------
 -- ANSWERS
 --------------------------------------------------
-
 CREATE TABLE answers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     response_id UUID NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
@@ -141,7 +132,6 @@ ON answers(question_id);
 --------------------------------------------------
 -- ALERT RULES
 --------------------------------------------------
-
 CREATE TABLE alert_rules (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     survey_id UUID NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
@@ -155,16 +145,15 @@ CREATE TABLE alert_rules (
 --------------------------------------------------
 -- AI SUMMARIES
 --------------------------------------------------
-
 CREATE TABLE ai_summaries (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     company_id UUID REFERENCES companies(id),
-    store_id UUID REFERENCES stores(id),
+    location_id UUID REFERENCES locations(id),
     period_start DATE,
     period_end DATE,
     summary TEXT,
     created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE INDEX idx_ai_summaries_store
-ON ai_summaries(store_id);
+CREATE INDEX idx_ai_summaries_location
+ON ai_summaries(location_id);

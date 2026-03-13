@@ -1,2 +1,8 @@
 uvicorn
 fastapi
+supabase
+psycopg2-binary
+pydantic[email]
+SQLAlchemy
+python-jose[cryptography]
+itsdangerous
