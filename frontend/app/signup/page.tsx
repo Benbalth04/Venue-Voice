@@ -14,8 +14,6 @@ export default function SignupPage() {
   const [password, setPassword] = useState("")
   const [firstName, setFirstName] = useState("")
   const [lastName, setLastName] = useState("")
-  const [companyName, setCompanyName] = useState("")
-  const [defaultStoreName, setDefaultStoreName] = useState("")
 
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -32,8 +30,6 @@ export default function SignupPage() {
           data: {
             first_name: firstName,
             last_name: lastName,
-            company_name: companyName,
-            default_store_name: defaultStoreName,
           },
         },
       })
@@ -50,16 +46,7 @@ export default function SignupPage() {
       } = await supabase.auth.getSession()
 
       if (session?.access_token) {
-        await fetch(
-          `${process.env.NEXT_PUBLIC_BACKEND_BASE_URL ?? "http://localhost:5000"}/api/v1/users/bootstrap`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${session.access_token}`,
-              "Content-Type": "application/json",
-            },
-          },
-        )
+        // User record is auto-bootstrapped on first GET /me (dashboard load)
         router.push("/dashboard")
         return
       }
@@ -106,28 +93,6 @@ export default function SignupPage() {
               />
             </label>
           </div>
-
-          <label className="block">
-            <span className="text-sm font-medium text-zinc-700">Company name</span>
-            <input
-              className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
-              value={companyName}
-              onChange={(e) => setCompanyName(e.target.value)}
-              required
-            />
-          </label>
-
-          <label className="block">
-            <span className="text-sm font-medium text-zinc-700">
-              Default store / venue name
-            </span>
-            <input
-              className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
-              value={defaultStoreName}
-              onChange={(e) => setDefaultStoreName(e.target.value)}
-              required
-            />
-          </label>
 
           <label className="block">
             <span className="text-sm font-medium text-zinc-700">Email</span>

@@ -4,6 +4,7 @@ import type { ReactNode } from "react"
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { supabase } from "@/lib/supabase/client"
+import { fetchMe } from "@/lib/api/client"
 
 export function AuthGuard({ children }: { children: ReactNode }) {
   const router = useRouter()
@@ -21,6 +22,18 @@ export function AuthGuard({ children }: { children: ReactNode }) {
 
       if (!session) {
         router.replace("/login")
+        return
+      }
+
+      try {
+        const me = await fetchMe(session.access_token)
+        if (!mounted) return
+        if (!me.onboarding_complete) {
+          router.replace("/onboarding")
+          return
+        }
+      } catch {
+        if (mounted) router.replace("/login")
         return
       }
 

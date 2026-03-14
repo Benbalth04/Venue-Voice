@@ -39,7 +39,8 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
       SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET}
-      SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL} # optional
+      SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL} 
+      SUPBASE_JWT_URL: ${SUPBASE_JWT_URL}
       SESSION_SECRET: ${SESSION_SECRET}
     networks:
       - backend
@@ -62,7 +63,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      NODE_ENV: production
+      NODE_ENV: development
       BACKEND_BASE_URL: http://backend:5000/api/v1
       NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}

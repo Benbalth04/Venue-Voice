@@ -1,0 +1,260 @@
+import os
+import uuid
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import RedirectResponse
+from sqlalchemy.orm import Session
+
+from ..auth.jwt import get_current_user
+from ..db.postgres import get_db_connection
+from ..models.postgres_model import (
+    Company as CompanyORM,
+    Location as LocationORM,
+    QRCode as QRCodeORM,
+    ScanEvent as ScanEventORM,
+    Survey as SurveyORM,
+    User as UserORM,
+)
+from ..schemas.pydantic_model import (
+    QRCodeCreate,
+    QRCodeResponse,
+    QRCodeUpdate,
+    SurveySummaryResponse,
+)
+
+router = APIRouter()
+public_router = APIRouter()
+
+
+def _get_company(user: UserORM, db: Session) -> CompanyORM:
+    company = db.query(CompanyORM).filter(CompanyORM.owner_user_id == user.id).first()
+    if not company:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
+    return company
+
+
+def _get_qr_or_404(qr_id: str, company_id: uuid.UUID, db: Session) -> QRCodeORM:
+    try:
+        uid = uuid.UUID(qr_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="QR code not found")
+
+    qr = db.query(QRCodeORM).filter(
+        QRCodeORM.id == uid,
+        QRCodeORM.company_id == company_id,
+    ).first()
+    if not qr:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="QR code not found")
+    return qr
+
+
+def _to_response(qr: QRCodeORM) -> QRCodeResponse:
+    return QRCodeResponse(
+        id=str(qr.id),
+        slug=qr.slug,
+        survey_id=str(qr.survey_id),
+        location_id=str(qr.location_id) if qr.location_id else None,
+        is_active=qr.is_active,
+        created_at=qr.created_at.isoformat(),
+        updated_at=qr.updated_at.isoformat(),
+    )
+
+
+# --------------------------------------------------
+# Surveys list (for dropdown in QR form)
+# --------------------------------------------------
+
+@router.get("/surveys", response_model=list[SurveySummaryResponse])
+def list_surveys(
+    user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    company = _get_company(user, db)
+    surveys = (
+        db.query(SurveyORM)
+        .filter(SurveyORM.company_id == company.id)
+        .order_by(SurveyORM.created_at.desc())
+        .all()
+    )
+    return [
+        SurveySummaryResponse(
+            id=str(s.id),
+            name=s.name,
+            status=str(s.status.value),
+        )
+        for s in surveys
+    ]
+
+
+# --------------------------------------------------
+# QR Codes CRUD
+# --------------------------------------------------
+
+@router.get("/qr-codes", response_model=list[QRCodeResponse])
+def list_qr_codes(
+    user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    company = _get_company(user, db)
+    qrs = (
+        db.query(QRCodeORM)
+        .filter(QRCodeORM.company_id == company.id)
+        .order_by(QRCodeORM.created_at.desc())
+        .all()
+    )
+    return [_to_response(qr) for qr in qrs]
+
+
+@router.post("/qr-codes", response_model=QRCodeResponse, status_code=status.HTTP_201_CREATED)
+def create_qr_code(
+    payload: QRCodeCreate,
+    user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    company = _get_company(user, db)
+
+    # Validate survey belongs to company
+    try:
+        survey_uid = uuid.UUID(payload.survey_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid survey_id")
+
+    survey = db.query(SurveyORM).filter(
+        SurveyORM.id == survey_uid,
+        SurveyORM.company_id == company.id,
+    ).first()
+    if not survey:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Survey not found")
+
+    # Validate location belongs to company (if provided)
+    location_uid = None
+    if payload.location_id:
+        try:
+            location_uid = uuid.UUID(payload.location_id)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid location_id")
+        loc = db.query(LocationORM).filter(
+            LocationORM.id == location_uid,
+            LocationORM.company_id == company.id,
+        ).first()
+        if not loc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Location not found")
+
+    # Check slug uniqueness
+    existing = db.query(QRCodeORM).filter(QRCodeORM.slug == payload.slug.strip()).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Slug is already in use",
+        )
+
+    qr = QRCodeORM(
+        company_id=company.id,
+        slug=payload.slug.strip(),
+        is_active=True,
+        survey_id=survey_uid,
+        location_id=location_uid,
+    )
+    db.add(qr)
+    db.commit()
+    db.refresh(qr)
+    return _to_response(qr)
+
+
+@router.patch("/qr-codes/{qr_id}", response_model=QRCodeResponse)
+def update_qr_code(
+    qr_id: str,
+    payload: QRCodeUpdate,
+    user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    company = _get_company(user, db)
+    qr = _get_qr_or_404(qr_id, company.id, db)
+
+    if payload.slug is not None:
+        slug = payload.slug.strip()
+        existing = db.query(QRCodeORM).filter(
+            QRCodeORM.slug == slug,
+            QRCodeORM.id != qr.id,
+        ).first()
+        if existing:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Slug is already in use")
+        qr.slug = slug
+
+    if payload.survey_id is not None:
+        try:
+            survey_uid = uuid.UUID(payload.survey_id)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid survey_id")
+        survey = db.query(SurveyORM).filter(
+            SurveyORM.id == survey_uid,
+            SurveyORM.company_id == company.id,
+        ).first()
+        if not survey:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Survey not found")
+        qr.survey_id = survey_uid
+
+    if payload.location_id is not None:
+        try:
+            location_uid = uuid.UUID(payload.location_id)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid location_id")
+        loc = db.query(LocationORM).filter(
+            LocationORM.id == location_uid,
+            LocationORM.company_id == company.id,
+        ).first()
+        if not loc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Location not found")
+        qr.location_id = location_uid
+    elif "location_id" in payload.model_dump(exclude_unset=True) and payload.location_id is None:
+        qr.location_id = None
+
+    if payload.is_active is not None:
+        qr.is_active = payload.is_active
+
+    db.commit()
+    db.refresh(qr)
+    return _to_response(qr)
+
+
+@router.delete("/qr-codes/{qr_id}", status_code=status.HTTP_204_NO_CONTENT)
+def deactivate_qr_code(
+    qr_id: str,
+    user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    company = _get_company(user, db)
+    qr = _get_qr_or_404(qr_id, company.id, db)
+    qr.is_active = False
+    db.commit()
+
+
+# --------------------------------------------------
+# Public: QR redirect  (mounted at /q, no /api/v1 prefix)
+# --------------------------------------------------
+
+@public_router.get("/{slug}")
+def resolve_qr(
+    slug: str,
+    request: Request,
+    db: Session = Depends(get_db_connection),
+):
+    qr = db.query(QRCodeORM).filter(
+        QRCodeORM.slug == slug,
+        QRCodeORM.is_active.is_(True),
+    ).first()
+
+    if not qr:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="QR code not found or inactive")
+
+    # Track the scan
+    scan = ScanEventORM(
+        qr_code_id=qr.id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    db.add(scan)
+    db.commit()
+
+    frontend_origin = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
+    redirect_url = f"{frontend_origin}/survey/{qr.survey_id}"
+    return RedirectResponse(url=redirect_url, status_code=302)

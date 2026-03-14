@@ -32,23 +32,7 @@ export default function LoginPageClient() {
         return
       }
 
-      // Ensure local user exists (idempotent)
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
-      if (session?.access_token) {
-        await fetch(
-          `${process.env.NEXT_PUBLIC_BACKEND_BASE_URL ?? "http://localhost:5000"}/api/v1/users/bootstrap`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${session.access_token}`,
-              "Content-Type": "application/json",
-            },
-          },
-        )
-      }
-
+      // User record is auto-bootstrapped on first GET /me (dashboard load)
       router.push(next)
     } finally {
       setLoading(false)
