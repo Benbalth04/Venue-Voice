@@ -109,8 +109,8 @@ export default function DashboardOverviewPage() {
             <span className="font-medium text-zinc-900">{data.company_name || "your company"}</span>.
           </p>
         </div>
-        <Link href="/dashboard/surveys/create">
-          <Button>Create survey</Button>
+        <Link href="/dashboard/surveys">
+          <Button>Create a survey</Button>
         </Link>
       </div>
 
@@ -170,7 +170,7 @@ export default function DashboardOverviewPage() {
                   href="/dashboard/distribution"
                   className="flex items-center justify-between rounded-xl px-2 py-1.5 text-sm hover:bg-zinc-50"
                 >
-                  <span>{q.name}</span>
+                  <span>{q.title}</span>
                   <span className="text-xs text-zinc-500">
                     {q.scan_count} scans
                   </span>

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react"
 import { DashboardLayout } from "@/components/layout/DashboardLayout"
 import { AuthGuard } from "@/components/auth/AuthGuard"
+import { SettingsSchemaProvider } from "@/contexts/SettingsSchemaContext"
 
 export default function DashboardRootLayout({
   children,
@@ -9,7 +10,9 @@ export default function DashboardRootLayout({
 }) {
   return (
     <AuthGuard>
-      <DashboardLayout>{children}</DashboardLayout>
+      <SettingsSchemaProvider>
+        <DashboardLayout>{children}</DashboardLayout>
+      </SettingsSchemaProvider>
     </AuthGuard>
   )
 }

@@ -50,7 +50,7 @@ def _get_qr_or_404(qr_id: str, company_id: uuid.UUID, db: Session) -> QRCodeORM:
 def _to_response(qr: QRCodeORM) -> QRCodeResponse:
     return QRCodeResponse(
         id=str(qr.id),
-        slug=qr.slug,
+        title=qr.title,
         survey_id=str(qr.survey_id),
         location_id=str(qr.location_id) if qr.location_id else None,
         is_active=qr.is_active,
@@ -139,17 +139,17 @@ def create_qr_code(
         if not loc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Location not found")
 
-    # Check slug uniqueness
-    existing = db.query(QRCodeORM).filter(QRCodeORM.slug == payload.slug.strip()).first()
+    # Check title uniqueness
+    existing = db.query(QRCodeORM).filter(QRCodeORM.title == payload.title.strip()).first()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Slug is already in use",
+            detail="Title is already in use",
         )
 
     qr = QRCodeORM(
         company_id=company.id,
-        slug=payload.slug.strip(),
+        title=payload.title.strip(),
         is_active=True,
         survey_id=survey_uid,
         location_id=location_uid,
@@ -170,15 +170,15 @@ def update_qr_code(
     company = _get_company(user, db)
     qr = _get_qr_or_404(qr_id, company.id, db)
 
-    if payload.slug is not None:
-        slug = payload.slug.strip()
+    if payload.title is not None:
+        title = payload.title.strip()
         existing = db.query(QRCodeORM).filter(
-            QRCodeORM.slug == slug,
+            QRCodeORM.title == title,
             QRCodeORM.id != qr.id,
         ).first()
         if existing:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Slug is already in use")
-        qr.slug = slug
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Title is already in use")
+        qr.title = title
 
     if payload.survey_id is not None:
         try:
@@ -232,14 +232,14 @@ def deactivate_qr_code(
 # Public: QR redirect  (mounted at /q, no /api/v1 prefix)
 # --------------------------------------------------
 
-@public_router.get("/{slug}")
+@public_router.get("/{title}")
 def resolve_qr(
-    slug: str,
+    title: str,
     request: Request,
     db: Session = Depends(get_db_connection),
 ):
     qr = db.query(QRCodeORM).filter(
-        QRCodeORM.slug == slug,
+        QRCodeORM.title == title,
         QRCodeORM.is_active.is_(True),
     ).first()
 

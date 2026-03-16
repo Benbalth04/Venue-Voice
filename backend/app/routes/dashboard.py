@@ -117,7 +117,7 @@ def get_dashboard(
     # Active QR codes (with scan count)
     active_qr_orm = (
         db.query(QRCodeORM)
-        .filter(QRCodeORM.survey_id.in_(survey_ids), QRCodeORM.active.is_(True))
+        .filter(QRCodeORM.survey_id.in_(survey_ids), QRCodeORM.is_active.is_(True))
         .all()
         if survey_ids
         else []
@@ -133,10 +133,10 @@ def get_dashboard(
     active_qr_codes = [
         DashboardQRCodeSummary(
             id=str(q.id),
-            name=q.name,
+            title=q.title,
             survey_id=str(q.survey_id),
             location_id=str(q.location_id) if q.location_id else None,
-            active=q.active,
+            is_active=q.is_active,
             scan_count=_scan_count(q.id),
         )
         for q in active_qr_orm

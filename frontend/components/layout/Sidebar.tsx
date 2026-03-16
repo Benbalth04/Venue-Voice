@@ -1,6 +1,7 @@
 "use client"
 
 import Link from "next/link"
+import Image from "next/image"
 import { usePathname } from "next/navigation"
 import { useRouter } from "next/navigation"
 import { supabase } from "@/lib/supabase/client"
@@ -40,15 +41,20 @@ export function Sidebar() {
   }
 
   return (
-    <aside className="hidden h-screen w-60 flex-col border-r border-zinc-200 bg-white px-4 py-6 lg:flex">
-      <div className="mb-6 px-2 text-sm font-semibold text-violet-700">
-        VenueVoice
-      </div>
-      <nav className="flex-1 space-y-1">
-        {items.map((item) => {
+    <aside className="hidden sticky top-0 h-screen w-60 flex-col border-r border-zinc-200 bg-white px-4 py-6 lg:flex">
+      <Link href="/dashboard" className="mb-6 px-2 block">
+        <Image
+          src="/venue_voice_logo_1.png"
+          alt="Venue Voice"
+          width={600}
+          height={600}
+          className="h-8 w-auto"
+        />
+      </Link>
+        <nav className="flex-1 space-y-1">
+          {items.map((item) => {
           const Icon = item.icon
-          const active =
-            pathname === item.href || pathname.startsWith(item.href + "/")
+          const active = pathname === item.href
           return (
             <Link
               key={item.href}

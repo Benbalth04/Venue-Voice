@@ -19,12 +19,12 @@ import {
 } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
 import type { Survey } from "@/lib/survey/types"
-import { QuestionCard } from "@/components/QuestionCard"
+import { QuestionCard } from "@/components/survey/QuestionCard"
 
 export type EditorSelection =
   | { type: "surveyTitle" }
   | { type: "surveySubtitle" }
-  | { type: "question"; questionId: number }
+  | { type: "question"; questionId: string }
   | null
 
 export function SurveyEditor({
@@ -33,12 +33,14 @@ export function SurveyEditor({
   onSelect,
   onDeleteQuestion,
   onReorderQuestions,
+  questionTypeLabels,
 }: {
   survey: Survey
   selection: EditorSelection
   onSelect: (next: EditorSelection) => void
-  onDeleteQuestion: (questionId: number) => void
-  onReorderQuestions: (nextQuestionIds: number[]) => void
+  onDeleteQuestion: (questionId: string) => void
+  onReorderQuestions: (nextQuestionIds: string[]) => void
+  questionTypeLabels?: Record<string, string>
 }) {
   const questionIds = useMemo(() => survey.questions.map((q) => q.id), [survey])
 
@@ -95,8 +97,8 @@ export function SurveyEditor({
         onDragEnd={({ active, over }) => {
           if (!over) return
           if (active.id === over.id) return
-          const oldIndex = questionIds.indexOf(active.id as number)
-          const newIndex = questionIds.indexOf(over.id as number)
+          const oldIndex = questionIds.indexOf(active.id as string)
+          const newIndex = questionIds.indexOf(over.id as string)
           if (oldIndex === -1 || newIndex === -1) return
           const nextIds = arrayMove(questionIds, oldIndex, newIndex)
           onReorderQuestions(nextIds)
@@ -119,6 +121,7 @@ export function SurveyEditor({
                     dragListeners={{}}
                     onSelect={() => onSelect({ type: "question", questionId: q.id })}
                     onDelete={() => onDeleteQuestion(q.id)}
+                    questionTypeLabels={questionTypeLabels}
                   />
                 }
               />
@@ -134,7 +137,7 @@ function SortableQuestionRow({
   questionId,
   questionCard,
 }: {
-  questionId: number
+  questionId: string
   questionCard: ReactElement<ComponentProps<typeof QuestionCard>>
 }) {
   const { attributes, listeners, setNodeRef, transform, transition } =

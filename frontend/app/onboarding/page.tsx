@@ -140,8 +140,11 @@ export default function OnboardingPage() {
           Welcome to VenueVoice
         </h1>
         <p className="mt-1 text-sm text-zinc-600">
-          Let's create your first business location.
-          We would love to hear more about your business to help you get the most out of VenueVoice, but you can skip any questions you're not comfortable answering. You can also edit this information later in your account settings.
+          First, Let's create your first business location.
+        </p>
+        <br></br>
+        <p className="mt-1 text-sm text-zinc-600">
+          We would love to hear more about your business to help you get the most out of VenueVoice, but you can skip any questions you're not comfortable answering.
         </p>
 
         <form className="mt-6 space-y-4" onSubmit={onSubmit}>
@@ -159,7 +162,7 @@ export default function OnboardingPage() {
 
           <label className="block">
             <span className="text-sm font-medium text-zinc-700">
-              Location Name
+              First Location Name
             </span>
             <input
               className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"

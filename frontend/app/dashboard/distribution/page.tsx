@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Download, Link2, Pencil, Plus, ToggleLeft, ToggleRight, Trash2, X, QrCode } from "lucide-react"
+import { useConfirm } from "@/components/ui/ConfirmDialog"
 import { QRCodeCanvas, QRCodeSVG } from "qrcode.react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -19,11 +20,12 @@ import {
   type SurveySummary,
 } from "@/lib/api/client"
 
-const BACKEND_BASE =
-  process.env.NEXT_PUBLIC_BACKEND_BASE_URL ?? "http://localhost:5000"
+const APP_ORIGIN =
+  process.env.NEXT_PUBLIC_APP_URL ??
+  (typeof window !== "undefined" ? window.location.origin : "http://localhost:3000")
 
-function qrUrl(slug: string) {
-  return `${BACKEND_BASE}/q/${slug}`
+function qrUrl(qrCodeId: string) {
+  return `${APP_ORIGIN}/r/${qrCodeId}`
 }
 
 // ─── QR Download Panel ────────────────────────────────────────────────────────
@@ -37,13 +39,13 @@ function QRPanel({
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const svgContainerRef = useRef<HTMLDivElement | null>(null)
-  const url = qrUrl(qr.slug)
+  const url = qrUrl(qr.id)
 
   function downloadPNG() {
     const canvas = canvasRef.current
     if (!canvas) return
     const link = document.createElement("a")
-    link.download = `qr-${qr.slug}.png`
+    link.download = `qr-${qr.id}.png`
     link.href = canvas.toDataURL("image/png")
     link.click()
   }
@@ -52,7 +54,7 @@ function QRPanel({
     const canvas = canvasRef.current
     if (!canvas) return
     const link = document.createElement("a")
-    link.download = `qr-${qr.slug}.jpeg`
+    link.download = `qr-${qr.id}.jpeg`
     link.href = canvas.toDataURL("image/jpeg", 0.95)
     link.click()
   }
@@ -66,7 +68,7 @@ function QRPanel({
     const svgStr = serializer.serializeToString(svgEl)
     const blob = new Blob([svgStr], { type: "image/svg+xml" })
     const link = document.createElement("a")
-    link.download = `qr-${qr.slug}.svg`
+    link.download = `qr-${qr.id}.svg`
     link.href = URL.createObjectURL(blob)
     link.click()
     URL.revokeObjectURL(link.href)
@@ -76,7 +78,7 @@ function QRPanel({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
       <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-base font-semibold text-zinc-900">QR Code — {qr.slug}</h2>
+          <h2 className="text-base font-semibold text-zinc-900">QR Code — {qr.title}</h2>
           <button
             type="button"
             onClick={onClose}
@@ -139,7 +141,7 @@ function QRPanel({
 // ─── QR Form Modal ─────────────────────────────────────────────────────────────
 
 interface QRFormData {
-  slug: string
+  title: string
   survey_id: string
   location_id: string
 }
@@ -164,18 +166,18 @@ function QRModal({
   const [form, setForm] = useState<QRFormData>(
     initial
       ? {
-          slug: initial.slug,
+          title: initial.title,
           survey_id: initial.survey_id,
           location_id: initial.location_id ?? "",
         }
-      : { slug: "", survey_id: surveys[0]?.id ?? "", location_id: "" },
+      : { title: "", survey_id: surveys[0]?.id ?? "", location_id: "" },
   )
 
   function set(field: keyof QRFormData, value: string) {
     setForm((f) => ({ ...f, [field]: value }))
   }
 
-  const slugPreview = form.slug.trim() ? qrUrl(form.slug.trim()) : null
+  const urlPreview = initial ? qrUrl(initial.id) : null
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
@@ -196,18 +198,23 @@ function QRModal({
         <div className="space-y-4">
           <label className="block">
             <span className="text-sm font-medium text-zinc-700">
-              Slug <span className="text-red-500">*</span>
+              Title <span className="text-red-500">*</span>
             </span>
             <input
               className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
               placeholder="e.g. cafe-table-1"
-              value={form.slug}
+              value={form.title}
               onChange={(e) =>
-                set("slug", e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"))
+                set("title", e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"))
               }
             />
-            {slugPreview && (
-              <p className="mt-1 truncate text-xs text-zinc-400">{slugPreview}</p>
+            {urlPreview && (
+              <p className="mt-1 truncate text-xs text-zinc-400">{urlPreview}</p>
+            )}
+            {!initial && (
+              <p className="mt-1 text-xs text-zinc-400">
+                QR code URL will be generated when saved
+              </p>
             )}
           </label>
 
@@ -265,7 +272,7 @@ function QRModal({
             <Button
               className="flex-1"
               onClick={() => onSave(form)}
-              disabled={loading || !form.slug.trim() || !form.survey_id}
+              disabled={loading || !form.title.trim() || !form.survey_id}
             >
               {loading ? "Saving…" : "Save"}
             </Button>
@@ -278,7 +285,11 @@ function QRModal({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+type QRSortKey = "title" | "survey" | "location" | "status"
+type SortDir = "asc" | "desc"
+
 export default function DistributionPage() {
+  const { confirm, ConfirmDialogRender } = useConfirm()
   const [qrCodes, setQRCodes] = useState<QRCodeResponse[]>([])
   const [surveys, setSurveys] = useState<SurveySummary[]>([])
   const [locations, setLocations] = useState<LocationResponse[]>([])
@@ -337,7 +348,7 @@ export default function DistributionPage() {
     setFormError(null)
     try {
       const payload: QRCodeCreate = {
-        slug: form.slug.trim(),
+        title: form.title.trim(),
         survey_id: form.survey_id,
         location_id: form.location_id || null,
       }
@@ -368,7 +379,13 @@ export default function DistributionPage() {
   }
 
   async function handleDelete(qr: QRCodeResponse) {
-    if (!confirm(`Deactivate QR code "${qr.slug}"?`)) return
+    const ok = await confirm({
+      title: "Deactivate QR code",
+      message: `Deactivate QR code "${qr.title}"?`,
+      confirmLabel: "Deactivate",
+      variant: "danger",
+    })
+    if (!ok) return
     const token = await getToken()
     if (!token) return
     try {
@@ -388,13 +405,61 @@ export default function DistributionPage() {
     return locations.find((l) => l.id === id)?.name ?? id.slice(0, 8) + "…"
   }
 
+  const [sortKey, setSortKey] = useState<QRSortKey>("title")
+  const [sortDir, setSortDir] = useState<SortDir>("asc")
+
+  const sortedQRCodes = [...qrCodes].sort((a, b) => {
+    let cmp = 0
+    switch (sortKey) {
+      case "title":
+        cmp = a.title.localeCompare(b.title)
+        break
+      case "survey":
+        cmp = surveyName(a.survey_id).localeCompare(surveyName(b.survey_id))
+        break
+      case "location":
+        cmp = locationName(a.location_id).localeCompare(locationName(b.location_id))
+        break
+      case "status":
+        cmp = (a.is_active ? 1 : 0) - (b.is_active ? 1 : 0)
+        break
+      default:
+        return 0
+    }
+    return sortDir === "asc" ? cmp : -cmp
+  })
+
+  function toggleSort(key: QRSortKey) {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"))
+    else {
+      setSortKey(key)
+      setSortDir("asc")
+    }
+  }
+
+  function SortHeader({ colKey, label }: { colKey: QRSortKey; label: string }) {
+    const active = sortKey === colKey
+    return (
+      <th
+        className="cursor-pointer select-none px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500 hover:text-zinc-600"
+        onClick={() => toggleSort(colKey)}
+      >
+        <span className="inline-flex items-center gap-1">
+          {label}
+          {active && (sortDir === "asc" ? " ↑" : " ↓")}
+        </span>
+      </th>
+    )
+  }
+
   return (
     <div className="space-y-6">
+      {ConfirmDialogRender}
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-950">
-            QR Distribution
+            Distribution
           </h1>
           <p className="mt-1 text-sm text-zinc-500">
             Create and manage QR codes that link to your surveys.
@@ -428,25 +493,17 @@ export default function DistributionPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-zinc-100 bg-zinc-50">
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                  Slug
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                  Survey
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                  Location
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                  Status
-                </th>
+                <SortHeader colKey="title" label="Title" />
+                <SortHeader colKey="survey" label="Survey" />
+                <SortHeader colKey="location" label="Location" />
+                <SortHeader colKey="status" label="Status" />
                 <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-zinc-500">
                   Actions
                 </th>
               </tr>
             </thead>
             <tbody>
-              {qrCodes.map((qr) => (
+              {sortedQRCodes.map((qr) => (
                 <tr
                   key={qr.id}
                   className="border-b border-zinc-100 last:border-0 hover:bg-zinc-50"
@@ -461,16 +518,16 @@ export default function DistributionPage() {
                         title="View & download QR"
                       >
                         <QRCodeCanvas
-                          value={qrUrl(qr.slug)}
+                          value={qrUrl(qr.title)}
                           size={36}
                           level="M"
                           includeMargin={false}
                         />
                       </button>
                       <div>
-                        <span className="font-medium text-zinc-900">{qr.slug}</span>
+                        <span className="font-medium text-zinc-900">{qr.title}</span>
                         <p className="mt-0.5 truncate text-xs text-zinc-400">
-                          {qrUrl(qr.slug)}
+                          {qrUrl(qr.title)}
                         </p>
                       </div>
                     </div>

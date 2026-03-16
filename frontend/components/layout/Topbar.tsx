@@ -36,10 +36,7 @@ export function Topbar() {
   return (
     <header className="flex items-center justify-between border-b border-zinc-200 bg-white px-6 py-4">
       <div>
-        <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-          Dashboard
-        </div>
-        <div className="text-sm font-semibold text-zinc-900">
+        <div className="text-lg font-semibold text-zinc-900">
           {companyName || "—"}
         </div>
       </div>

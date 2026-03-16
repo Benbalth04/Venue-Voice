@@ -6,3 +6,4 @@ pydantic[email]
 SQLAlchemy
 python-jose[cryptography]
 itsdangerous
+openpyxl

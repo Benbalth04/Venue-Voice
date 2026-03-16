@@ -9,6 +9,7 @@ export function QuestionCard({
   dragListeners,
   onSelect,
   onDelete,
+  questionTypeLabels,
 }: {
   question: Question
   selected: boolean
@@ -16,6 +17,7 @@ export function QuestionCard({
   dragListeners: unknown
   onSelect: () => void
   onDelete: () => void
+  questionTypeLabels?: Record<string, string>
 }) {
   return (
     <div
@@ -45,7 +47,7 @@ export function QuestionCard({
 
         <div className="min-w-0 flex-1">
           <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-            {question.type === "star" ? "Star rating" : "Free response"}
+            {questionTypeLabels?.[question.type] ?? questionTypeLabel(question.type)}
           </div>
           <div className="mt-1 truncate text-base font-semibold text-zinc-950">
             {question.title.text || "Untitled question"}
@@ -79,14 +81,32 @@ function GripIcon() {
       width="18"
       height="18"
       viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
+      fill="currentColor"
       aria-hidden="true"
     >
-      <path d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01" />
+      <circle cx="9" cy="6" r="1.5" />
+      <circle cx="9" cy="12" r="1.5" />
+      <circle cx="9" cy="18" r="1.5" />
+      <circle cx="15" cy="6" r="1.5" />
+      <circle cx="15" cy="12" r="1.5" />
+      <circle cx="15" cy="18" r="1.5" />
     </svg>
   )
+}
+
+function questionTypeLabel(type: string): string {
+  const labels: Record<string, string> = {
+    star: "Star rating",
+    text: "Short text",
+    long_text: "Long text",
+    nps: "NPS score",
+    multiple_choice: "Multiple choice",
+    checkbox: "Checkboxes",
+    yes_no: "Yes / No",
+    email: "Email",
+    phone: "Phone",
+  }
+  return labels[type] ?? type
 }
 
 function TrashIcon() {

@@ -1,9 +1,9 @@
 "use client"
 
 import type { Survey } from "@/lib/survey/types"
-import type { EditorSelection } from "@/components/SurveyEditor"
-import { SurveySettings } from "@/components/SurveySettings"
-import { QuestionSettings } from "@/components/QuestionSettings"
+import type { EditorSelection } from "@/components/survey/SurveyEditor"
+import { SurveySettings } from "@/components/survey/SurveySettings"
+import { QuestionSettings } from "@/components/survey/QuestionSettings"
 
 export function SettingsPanel({
   survey,

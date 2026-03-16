@@ -1,48 +1,34 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useState } from "react"
 import { Inter } from "next/font/google"
 import { defaultSurvey } from "@/lib/survey/defaultSurvey"
 import type { Question, Survey } from "@/lib/survey/types"
-import { Toolbar } from "@/components/Toolbar"
-import { SurveyEditor, type EditorSelection } from "@/components/SurveyEditor"
-import { SettingsPanel } from "@/components/SettingsPanel"
-import { SurveyPreview } from "@/components/SurveyPreview"
+import { Toolbar } from "@/components/survey/Toolbar"
+import { SurveyEditor, type EditorSelection } from "@/components/survey/SurveyEditor"
+import { SettingsPanel } from "@/components/survey/SettingsPanel"
+import { SurveyPreview } from "@/components/survey/SurveyPreview"
+import { SettingsSchemaProvider, useSettingsSchema } from "@/contexts/SettingsSchemaContext"
 
 const inter = Inter({ subsets: ["latin"] })
 
-export default function NewSurveyPage() {
+function NewSurveyPageContent() {
+  const { getDefaultsForType } = useSettingsSchema()
   const [survey, setSurvey] = useState<Survey>(defaultSurvey)
   const [selection, setSelection] = useState<EditorSelection>(null)
   const [showPreview, setShowPreview] = useState(false)
 
-  // IDs must never be reused, even if the highest-ID question was deleted.
-  const nextQuestionIdRef = useRef<number>(
-    survey.questions.reduce((m, q) => Math.max(m, q.id), 0) + 1,
-  )
-
-  function addQuestion(type: Question["type"]) {
-    const id = nextQuestionIdRef.current
-    nextQuestionIdRef.current += 1
-    const base: Omit<Question, "settings"> = {
+  function addQuestion(type: string) {
+    const id = crypto.randomUUID()
+    const q: Question = {
       id,
       version: 1,
-      type,
+      type: type as Question["type"],
       title: { text: "Untitled question", style: { size: "h2" } },
       description: { text: "", style: { size: "body" } },
       optional: false,
+      settings: getDefaultsForType(type) as Question["settings"],
     }
-
-    const q: Question =
-      type === "star"
-        ? {
-            ...base,
-            settings: { starCount: 5 },
-          }
-        : {
-            ...base,
-            settings: { placeholder: "Type your response..." },
-          }
 
     setSurvey((prev) => ({
       ...prev,
@@ -52,7 +38,7 @@ export default function NewSurveyPage() {
     setSelection({ type: "question", questionId: id })
   }
 
-  function deleteQuestion(questionId: number) {
+  function deleteQuestion(questionId: string) {
     const ok = window.confirm("Delete this question? This can't be undone.")
     if (!ok) return
     setSurvey((prev) => ({
@@ -65,7 +51,7 @@ export default function NewSurveyPage() {
     )
   }
 
-  function reorderQuestions(nextIds: number[]) {
+  function reorderQuestions(nextIds: string[]) {
     const byId = new Map(survey.questions.map((q) => [q.id, q]))
     const nextQuestions = nextIds
       .map((id) => byId.get(id))
@@ -79,7 +65,7 @@ export default function NewSurveyPage() {
   }
 
   return (
-    <div className={`${inter.className} min-h-screen bg-zinc-50`}>
+      <div className={`${inter.className} min-h-screen bg-zinc-50`}>
       <div className="mx-auto w-[80%] px-6 py-8">
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
@@ -109,7 +95,7 @@ export default function NewSurveyPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.2fr)_360px]">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(360px,680px)]">
           <main className="min-w-0">
             <SurveyEditor
               survey={survey}
@@ -122,10 +108,7 @@ export default function NewSurveyPage() {
 
           <aside className="lg:sticky lg:top-6 lg:self-start">
             <div className="flex flex-col gap-3">
-              <Toolbar
-                onAddStar={() => addQuestion("star")}
-                onAddText={() => addQuestion("text")}
-              />
+              <Toolbar onAdd={addQuestion} />
               <SettingsPanel
                 survey={survey}
                 selection={selection}
@@ -164,7 +147,15 @@ export default function NewSurveyPage() {
           </div>
         </div>
       ) : null}
-    </div>
+      </div>
+  )
+}
+
+export default function NewSurveyPage() {
+  return (
+    <SettingsSchemaProvider>
+      <NewSurveyPageContent />
+    </SettingsSchemaProvider>
   )
 }
 

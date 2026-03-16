@@ -1,0 +1,52 @@
+"use client"
+
+import { useMemo, useState } from "react"
+import type { Survey } from "@/lib/survey/types"
+import { SurveyRenderer, type SurveyResponses } from "@/components/survey/SurveyRenderer"
+
+export function SurveyPreview({ survey }: { survey: Survey }) {
+  const [responses, setResponses] = useState<SurveyResponses>({})
+
+  const canSubmit = useMemo(() => {
+    return true
+  }, [])
+
+  return (
+    <div
+      className="h-full w-full overflow-y-auto p-8"
+      style={{ backgroundColor: survey.theme.backgroundColor }}
+    >
+      <div className="w-full">
+        <SurveyRenderer
+          survey={survey}
+          responses={responses}
+          onResponseChange={(questionId, next) => {
+            setResponses((prev) => ({ ...prev, [questionId]: next }))
+          }}
+        />
+
+        <div className="mt-8">
+          <button
+            type="button"
+            className="w-full rounded-xl bg-violet-600 px-4 py-3 text-sm font-semibold text-white shadow-sm outline-none hover:bg-violet-700 focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={!canSubmit}
+            aria-label="Submit survey"
+            onClick={() => {
+              setResponses((prev) => prev)
+            }}
+          >
+            Submit
+          </button>
+          <div className="mt-6 flex justify-center">
+            <img
+              src="/venue_voice_logo_3.png"
+              alt="Venue Voice"
+              className="h-15 w-auto object-contain margin-bottom-0"
+              aria-hidden
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}

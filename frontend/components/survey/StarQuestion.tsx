@@ -48,7 +48,7 @@ export function StarQuestion({
             aria-checked={value === n}
             aria-label={`${n} star${n === 1 ? "" : "s"}`}
             onMouseEnter={() => setHover(n)}
-            onClick={() => onChange(n)}
+            onClick={() => onChange(value === n ? null : n)}
             onKeyDown={(e) => {
               if (e.key === "Backspace" || e.key === "Delete") onChange(null)
               if (e.key === "ArrowLeft") onChange(Math.max(1, (value ?? 1) - 1))

@@ -1,12 +1,12 @@
 export type Survey = {
-  id: number
+  /** Local change counter – incremented on every edit so components re-render.
+   *  This is NOT the server-side latest_version. */
   version: number
 
   title: TextContent
   subtitle?: TextContent
 
   theme: SurveyTheme
-
   settings: SurveySettings
 
   questions: Question[]
@@ -16,7 +16,6 @@ export type Align = "left" | "center" | "right"
 
 export type SurveySettings = {
   contentAlign: Align
-
   showProgressBar: boolean
   progressBarColor: string
 }
@@ -26,7 +25,6 @@ export type SurveyTheme = {
   backgroundColor: string
   textColor: string
   fontFamily: string
-  starSelectedColor: string
 }
 
 export type TextContent = {
@@ -40,10 +38,22 @@ export type TextStyle = {
   size: "h1" | "h2" | "h3" | "body"
 }
 
+export type QuestionType =
+  | "star"
+  | "text"
+  | "long_text"
+  | "nps"
+  | "multiple_choice"
+  | "checkbox"
+  | "yes_no"
+  | "email"
+  | "phone"
+
 export type Question = {
-  id: number
+  /** UUID – unique within the survey schema */
+  id: string
   version: number
-  type: "star" | "text"
+  type: QuestionType
 
   title: TextContent
   description?: TextContent
@@ -54,13 +64,59 @@ export type Question = {
   settings: QuestionSettings
 }
 
-export type QuestionSettings = StarQuestionSettings | TextQuestionSettings
+export type QuestionSettings =
+  | StarQuestionSettings
+  | TextQuestionSettings
+  | LongTextQuestionSettings
+  | NpsQuestionSettings
+  | MultipleChoiceSettings
+  | CheckboxSettings
+  | YesNoSettings
+  | EmailQuestionSettings
+  | PhoneQuestionSettings
 
 export type StarQuestionSettings = {
   starCount: number
+  selected_colour?: string
 }
 
 export type TextQuestionSettings = {
   placeholder?: string
 }
 
+export type LongTextQuestionSettings = {
+  placeholder?: string
+}
+
+export type NpsQuestionSettings = {
+  max_score?: number
+  min_label?: string
+  max_label?: string
+  minLabel?: string
+  maxLabel?: string
+  selected_colour?: string
+}
+
+export type MultipleChoiceSettings = {
+  options: string[]
+  selected_colour?: string
+}
+
+export type CheckboxSettings = {
+  options: string[]
+  selected_colour?: string
+}
+
+export type YesNoSettings = {
+  yesLabel?: string
+  noLabel?: string
+  selected_colour?: string
+}
+
+export type EmailQuestionSettings = {
+  placeholder?: string
+}
+
+export type PhoneQuestionSettings = {
+  placeholder?: string
+}

@@ -1,7 +1,6 @@
 import type { Survey } from "@/lib/survey/types"
 
 export const defaultSurvey: Survey = {
-  id: 1,
   version: 1,
 
   title: {
@@ -19,7 +18,6 @@ export const defaultSurvey: Survey = {
     backgroundColor: "#FFFFFF",
     textColor: "#1E1E1E",
     fontFamily: "Inter",
-    starSelectedColor: "#7C3AED",
   },
 
   settings: {
@@ -30,7 +28,7 @@ export const defaultSurvey: Survey = {
 
   questions: [
     {
-      id: 1,
+      id: crypto.randomUUID(),
       version: 1,
       type: "star",
       title: {
@@ -44,8 +42,8 @@ export const defaultSurvey: Survey = {
       optional: false,
       settings: {
         starCount: 5,
+        selected_colour: "#7C3AED",
       },
     },
   ],
 }
-

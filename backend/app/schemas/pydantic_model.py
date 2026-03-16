@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Literal
+from typing import Any, Literal
 from pydantic import EmailStr
 
 class User(BaseModel):
@@ -81,13 +81,13 @@ class LocationResponse(BaseModel):
 # --------------------------------------------------
 
 class QRCodeCreate(BaseModel):
-    slug: str
+    title: str
     survey_id: str
     location_id: str | None = None
 
 
 class QRCodeUpdate(BaseModel):
-    slug: str | None = None
+    title: str | None = None
     survey_id: str | None = None
     location_id: str | None = None
     is_active: bool | None = None
@@ -95,7 +95,7 @@ class QRCodeUpdate(BaseModel):
 
 class QRCodeResponse(BaseModel):
     id: str
-    slug: str
+    title: str
     survey_id: str
     location_id: str | None
     is_active: bool
@@ -157,10 +157,10 @@ class DashboardSurveySummary(BaseModel):
 
 class DashboardQRCodeSummary(BaseModel):
     id: str
-    name: str
+    title: str
     survey_id: str
     location_id: str | None
-    active: bool
+    is_active: bool
     scan_count: int
 
 
@@ -174,6 +174,147 @@ class DashboardResponseSummary(BaseModel):
     survey_version_id: str
     location_id: str | None
     submitted_at: str
+
+
+# --------------------------------------------------
+# SURVEYS (CRUD)
+# --------------------------------------------------
+
+class SurveyCreate(BaseModel):
+    title: str
+    survey_schema_json: dict[str, Any]
+
+
+class SurveySaveVersion(BaseModel):
+    survey_schema_json: dict[str, Any]
+    version: int
+
+
+class SurveyUpdateMeta(BaseModel):
+    title: str | None = None
+    status: Literal["draft", "active", "archived"] | None = None
+
+
+class SurveyListItem(BaseModel):
+    id: str
+    title: str
+    status: str
+    latest_version: int
+    created_at: str
+    updated_at: str
+
+
+class SurveyWithSchema(SurveyListItem):
+    survey_schema_json: dict[str, Any]
+
+
+class QuestionTypeResponse(BaseModel):
+    type: str
+    category: str
+    label: str
+    is_numeric: bool
+
+
+# --------------------------------------------------
+# ANALYTICS
+# --------------------------------------------------
+
+class AnalyticsResponseRow(BaseModel):
+    response_id: str
+    session_id: str
+    survey_name: str
+    qr_code_name: str
+    location_name: str | None
+    scan_time: str           # ISO-8601 datetime string
+    completed: bool
+    time_to_complete_seconds: int | None
+    questions_answered: int
+    survey_version_id: str
+    unread: bool = True      # True if user has not viewed this response's answers
+
+
+class AnalyticsResponseList(BaseModel):
+    rows: list[AnalyticsResponseRow]
+    total_count: int
+    page: int
+    page_size: int
+
+
+class AnalyticsFilterOption(BaseModel):
+    id: str
+    name: str
+
+
+class AnalyticsFiltersResponse(BaseModel):
+    surveys: list[AnalyticsFilterOption]
+    qr_codes: list[AnalyticsFilterOption]
+    locations: list[AnalyticsFilterOption]
+
+
+class AnalyticsAnswerDetail(BaseModel):
+    question_text: str
+    answer_value: str
+
+
+class AnalyticsResponseDetail(BaseModel):
+    response_id: str
+    survey_name: str
+    answers: list[AnalyticsAnswerDetail]
+
+
+# --------------------------------------------------
+# SURVEY SETTINGS SCHEMA (centralised)
+# --------------------------------------------------
+
+class QuestionSettingDefinition(BaseModel):
+    key: str
+    label: str
+    type: str  # boolean, select, integer, string, color, options
+    required: bool = False
+    default_value: Any = None
+    allowed_values: list[Any] | None = None
+    validation_rules: dict[str, Any] | None = None
+
+
+class QuestionTypeSettingsSchema(BaseModel):
+    question_type: str
+    settings: list[QuestionSettingDefinition]
+
+
+class SettingsSchemaResponse(BaseModel):
+    question_types: list[QuestionTypeSettingsSchema]
+
+
+class ThemeSettingDefinition(BaseModel):
+    key: str
+    label: str
+    type: str
+    default_value: Any = None
+    allowed_values: list[Any] | None = None
+
+
+class ThemeSettingsSchemaResponse(BaseModel):
+    settings: list[ThemeSettingDefinition]
+
+
+class SurveyThemeSettings(BaseModel):
+    font: str = "Inter"
+    content_alignment: str = "left"
+    primary_color: str = "#7C3AED"
+    background_color: str = "#FFFFFF"
+    show_progress_bar: bool = True
+    progress_bar_color: str = "#7C3AED"
+
+
+class SurveyValidationError(BaseModel):
+    question_id: str | None = None
+    setting: str | None = None
+    message: str
+
+
+class SurveyValidationResult(BaseModel):
+    valid: bool
+    errors: list[SurveyValidationError] = []
 
 
 class DashboardData(BaseModel):
