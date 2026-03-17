@@ -1,7 +1,9 @@
 import os
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import RedirectResponse
+
+from ..core.errors.exceptions import ConflictError, NotFoundError, ValidationError
 from sqlalchemy.orm import Session, joinedload
 
 
@@ -29,7 +31,7 @@ public_router = APIRouter()
 def _get_company(user: UserORM, db: Session) -> CompanyORM:
     company = db.query(CompanyORM).filter(CompanyORM.owner_user_id == user.id).first()
     if not company:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
+        raise NotFoundError(code="COMPANY_NOT_FOUND", message="Company not found")
     return company
 
 
@@ -37,14 +39,14 @@ def _get_qr_or_404(qr_id: str, company_id: uuid.UUID, db: Session) -> QRCodeORM:
     try:
         uid = uuid.UUID(qr_id)
     except ValueError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="QR code not found")
+        raise NotFoundError(code="QR_CODE_NOT_FOUND", message="QR code not found")
 
     qr = db.query(QRCodeORM).filter(
         QRCodeORM.id == uid,
         QRCodeORM.company_id == company_id,
     ).first()
     if not qr:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="QR code not found")
+        raise NotFoundError(code="QR_CODE_NOT_FOUND", message="QR code not found")
     return qr
 
 
@@ -90,7 +92,7 @@ def list_qr_codes(
     ]
 
 
-@router.post("/qr-codes", response_model=QRCodeResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/qr-codes", response_model=QRCodeResponse, status_code=201)
 def create_qr_code(
     payload: QRCodeCreate,
     user: UserORM = Depends(get_current_user),
@@ -102,14 +104,14 @@ def create_qr_code(
     try:
         survey_uid = uuid.UUID(payload.survey_id)
     except ValueError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid survey_id")
+        raise ValidationError(code="INVALID_SURVEY_ID", message="Invalid survey_id")
 
     survey = db.query(SurveyORM).filter(
         SurveyORM.id == survey_uid,
         SurveyORM.company_id == company.id,
     ).first()
     if not survey:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Survey not found")
+        raise NotFoundError(code="SURVEY_NOT_FOUND", message="Survey not found")
 
     # Validate location belongs to company (if provided)
     location_uid = None
@@ -117,21 +119,18 @@ def create_qr_code(
         try:
             location_uid = uuid.UUID(payload.location_id)
         except ValueError:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid location_id")
+            raise ValidationError(code="INVALID_LOCATION_ID", message="Invalid location_id")
         loc = db.query(LocationORM).filter(
             LocationORM.id == location_uid,
             LocationORM.company_id == company.id,
         ).first()
         if not loc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Location not found")
+            raise NotFoundError(code="LOCATION_NOT_FOUND", message="Location not found")
 
     # Check title uniqueness
     existing = db.query(QRCodeORM).filter(QRCodeORM.title == payload.title.strip()).first()
     if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Title is already in use",
-        )
+        raise ConflictError(code="QR_TITLE_CONFLICT", message="Title is already in use")
 
     qr = QRCodeORM(
         company_id=company.id,
@@ -163,33 +162,33 @@ def update_qr_code(
             QRCodeORM.id != qr.id,
         ).first()
         if existing:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Title is already in use")
+            raise ConflictError(code="QR_TITLE_CONFLICT", message="Title is already in use")
         qr.title = title
 
     if payload.survey_id is not None:
         try:
             survey_uid = uuid.UUID(payload.survey_id)
         except ValueError:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid survey_id")
+            raise ValidationError(code="INVALID_SURVEY_ID", message="Invalid survey_id")
         survey = db.query(SurveyORM).filter(
             SurveyORM.id == survey_uid,
             SurveyORM.company_id == company.id,
         ).first()
         if not survey:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Survey not found")
+            raise NotFoundError(code="SURVEY_NOT_FOUND", message="Survey not found")
         qr.survey_id = survey_uid
 
     if payload.location_id is not None:
         try:
             location_uid = uuid.UUID(payload.location_id)
         except ValueError:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid location_id")
+            raise ValidationError(code="INVALID_LOCATION_ID", message="Invalid location_id")
         loc = db.query(LocationORM).filter(
             LocationORM.id == location_uid,
             LocationORM.company_id == company.id,
         ).first()
         if not loc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Location not found")
+            raise NotFoundError(code="LOCATION_NOT_FOUND", message="Location not found")
         qr.location_id = location_uid
     elif "location_id" in payload.model_dump(exclude_unset=True) and payload.location_id is None:
         qr.location_id = None
@@ -202,7 +201,7 @@ def update_qr_code(
     return _to_response(qr)
 
 
-@router.delete("/qr-codes/{qr_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/qr-codes/{qr_id}", status_code=204)
 def deactivate_qr_code(
     qr_id: str,
     user: UserORM = Depends(get_current_user),
@@ -230,7 +229,7 @@ def resolve_qr(
     ).first()
 
     if not qr:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="QR code not found or inactive")
+        raise NotFoundError(code="QR_CODE_NOT_FOUND", message="QR code not found or inactive")
 
     # Track the scan
     scan = ScanEventORM(

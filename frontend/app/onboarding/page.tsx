@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { setupAccount } from "@/lib/api/client"
+import { setupAccount, extractErrorMessage } from "@/lib/api/client"
 import { useAuth } from "@/contexts/AuthContext"
 import { AuthGuard } from "@/components/auth/AuthGuard"
 import { OnboardingIncompleteGuard } from "@/components/auth/OnboardingIncompleteGuard"
@@ -87,7 +87,7 @@ function OnboardingPageContent() {
 
       router.push("/dashboard")
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Setup failed")
+      setError(extractErrorMessage(err, "Setup failed"))
     } finally {
       setLoading(false)
     }

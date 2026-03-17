@@ -2,8 +2,10 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+
+from app.core.errors.exceptions import ConflictError, NotFoundError, PermissionError, ValidationError
 
 from app.auth.jwt import get_current_user
 from app.db.postgres import get_db_connection
@@ -152,7 +154,7 @@ def _get_user_company(
 ) -> CompanyORM:
     company = db.query(CompanyORM).filter(CompanyORM.owner_user_id == current_user.id).first()
     if not company:
-        raise HTTPException(status_code=404, detail="Company not found for user")
+        raise NotFoundError(code="COMPANY_NOT_FOUND", message="Company not found for user")
     return company
 
 
@@ -187,12 +189,12 @@ def _get_survey_or_404(survey_id: str, user: Any, db: Session, company_id = None
     try:
         sid = uuid.UUID(survey_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid survey ID")
+        raise ValidationError(code="INVALID_SURVEY_ID", message="Invalid survey ID")
     survey = db.query(SurveyORM).filter(SurveyORM.id == sid).first()
     if not survey:
-        raise HTTPException(status_code=404, detail="Survey not found")
+        raise NotFoundError(code="SURVEY_NOT_FOUND", message="Survey not found")
     if survey.company_id != company_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+        raise PermissionError(code="ACCESS_DENIED", message="Access denied")
     return survey
 
 
@@ -204,7 +206,7 @@ def _get_latest_version_or_404(survey_id: uuid.UUID, db: Session) -> SurveyVersi
         .first()
     )
     if not sv:
-        raise HTTPException(status_code=404, detail="No versions found for this survey")
+        raise NotFoundError(code="SURVEY_VERSION_NOT_FOUND", message="No versions found for this survey")
     return sv
 
 # ------------------------------------------------------------------
@@ -287,7 +289,7 @@ def create_survey(
 ):
     title = payload.title.strip()
     if not title:
-        raise HTTPException(status_code=422, detail="Survey title cannot be empty")
+        raise ValidationError(code="INVALID_SURVEY_TITLE", message="Survey title cannot be empty", status_code=422)
     
     company = _get_user_company(current_user, db)
     company_id = company.id
@@ -302,13 +304,11 @@ def create_survey(
         .first()
     )
     if existing:
-        raise HTTPException(
-            status_code=409, detail=f"A survey named '{title}' already exists"
-        )
+        raise ConflictError(code="SURVEY_TITLE_CONFLICT", message=f"A survey named '{title}' already exists")
 
     valid, errors = validate_survey_schema(payload.survey_schema_json, db)
     if not valid:
-        raise HTTPException(status_code=422, detail={"schema_errors": errors})
+        raise ValidationError(code="INVALID_SURVEY_SCHEMA", message="Survey schema validation failed", details={"schema_errors": errors}, status_code=422)
 
     survey = SurveyORM(
         company_id=company_id,
@@ -352,9 +352,9 @@ def save_survey_version(
 
     # Optimistic concurrency control
     if payload.version != survey.latest_version:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
+        raise ConflictError(
+            code="VERSION_CONFLICT",
+            message=(
                 f"Version conflict: expected {survey.latest_version}, "
                 f"got {payload.version}. Reload the survey and try again."
             ),
@@ -362,7 +362,7 @@ def save_survey_version(
 
     valid, errors = validate_survey_schema(payload.survey_schema_json, db)
     if not valid:
-        raise HTTPException(status_code=422, detail={"schema_errors": errors})
+        raise ValidationError(code="INVALID_SURVEY_SCHEMA", message="Survey schema validation failed", details={"schema_errors": errors}, status_code=422)
 
     # Do not create a duplicate version row when there are no schema changes.
     if current_sv.schema_json == payload.survey_schema_json:
@@ -410,7 +410,7 @@ def update_survey_meta(
     if payload.title is not None:
         new_title = payload.title.strip()
         if not new_title:
-            raise HTTPException(status_code=422, detail="Title cannot be empty")
+            raise ValidationError(code="INVALID_SURVEY_TITLE", message="Title cannot be empty", status_code=422)
         conflict = (
             db.query(SurveyORM)
             .filter(
@@ -421,9 +421,7 @@ def update_survey_meta(
             .first()
         )
         if conflict:
-            raise HTTPException(
-                status_code=409, detail=f"A survey named '{new_title}' already exists"
-            )
+            raise ConflictError(code="SURVEY_TITLE_CONFLICT", message=f"A survey named '{new_title}' already exists")
         survey.name = new_title
 
     if payload.status is not None:
@@ -448,7 +446,7 @@ def publish_survey(
     sv = _get_latest_version_or_404(survey.id, db)
     valid, errors = validate_survey_schema(sv.schema_json, db)
     if not valid:
-        raise HTTPException(status_code=422, detail={"schema_errors": errors})
+        raise ValidationError(code="INVALID_SURVEY_SCHEMA", message="Survey schema validation failed", details={"schema_errors": errors}, status_code=422)
     survey.status = SurveyStatus.active
     survey.updated_at = datetime.now(timezone.utc)
     db.commit()

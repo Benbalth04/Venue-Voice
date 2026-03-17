@@ -8,6 +8,7 @@ import {
   fetchSurveyForSession,
   submitSurvey,
   SurveySubmissionValidationError,
+  extractErrorMessage,
 } from "@/lib/api/client"
 
 const BACKEND_BASE = process.env.NEXT_PUBLIC_BACKEND_BASE_URL
@@ -102,7 +103,7 @@ export default function PublicSurveyPageContent() {
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to load survey")
+          setError(extractErrorMessage(err, "Failed to load survey"))
         }
       } finally {
         if (!cancelled) setLoading(false)
@@ -157,10 +158,10 @@ export default function PublicSurveyPageContent() {
       window.location.href = result.redirect_url
     } catch (err) {
       if (err instanceof SurveySubmissionValidationError) {
-        setSubmitError(err.message)
+        setSubmitError(err.message ?? "You still have questions to complete.")
         setBackendMissingIds(err.missingRequired)
       } else {
-        setSubmitError(err instanceof Error ? err.message : "Failed to submit")
+        setSubmitError(extractErrorMessage(err, "Failed to submit"))
         setBackendMissingIds([])
       }
       setSubmitAttempted(true)

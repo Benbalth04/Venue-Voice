@@ -10,6 +10,7 @@ import {
   deleteLocation,
   fetchLocations,
   updateLocation,
+  extractErrorMessage,
   type LocationCreate,
   type LocationResponse,
 } from "@/lib/api/client"
@@ -171,7 +172,7 @@ export default function LocationsPage() {
       const data = await fetchLocations(token)
       setLocations(data)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load")
+      setError(extractErrorMessage(err, "Failed to load locations"))
     } finally {
       setLoading(false)
     }
@@ -212,7 +213,7 @@ export default function LocationsPage() {
       }
       setModalOpen(false)
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : "Save failed")
+      setFormError(extractErrorMessage(err, "Save failed"))
     } finally {
       setFormLoading(false)
     }
@@ -238,7 +239,7 @@ export default function LocationsPage() {
       await deleteLocation(token, loc.id)
       setLocations((prev) => prev.map((l) => (l.id === loc.id ? { ...l, is_active: false } : l)))
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Delete failed")
+      alert(extractErrorMessage(err, "Delete failed"))
     }
   }
 

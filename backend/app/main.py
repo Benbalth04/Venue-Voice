@@ -9,8 +9,12 @@ from .routes.distribution import router as distribution_router, public_router as
 from .routes.surveys import router as surveys_router
 from .routes.survey_public import router as survey_public_router
 from .routes.analytics import router as analytics_router
+from .core.errors.app_error import AppError
+from .core.errors.handlers import app_error_handler, generic_exception_handler
 
 app = FastAPI()
+app.add_exception_handler(AppError, app_error_handler)
+app.add_exception_handler(Exception, generic_exception_handler)
 app.include_router(users_router, prefix="/api/v1", tags=["users"])
 app.include_router(dashboard_router, prefix="/api/v1", tags=["dashboard"])
 app.include_router(locations_router, prefix="/api/v1", tags=["locations"])

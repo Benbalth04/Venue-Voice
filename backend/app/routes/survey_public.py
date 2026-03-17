@@ -8,8 +8,10 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse
+
+from ..core.errors.exceptions import ConflictError, NotFoundError, ValidationError
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -321,7 +323,7 @@ def get_survey_for_session(
         session_uid = uuid.UUID(session)
         qr_uid = uuid.UUID(qr)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid session or QR code ID")
+        raise ValidationError(code="INVALID_SESSION_OR_QR_ID", message="Invalid session or QR code ID")
 
     sess = (
         db.query(SurveySessionORM)
@@ -332,7 +334,7 @@ def get_survey_for_session(
         .first()
     )
     if not sess:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise NotFoundError(code="SESSION_NOT_FOUND", message="Session not found")
 
     sv = (
         db.query(SurveyVersionORM)
@@ -340,7 +342,7 @@ def get_survey_for_session(
         .first()
     )
     if not sv:
-        raise HTTPException(status_code=404, detail="Survey version not found")
+        raise NotFoundError(code="SURVEY_VERSION_NOT_FOUND", message="Survey version not found")
 
     return {
         "survey_version_id": str(sv.id),
@@ -394,13 +396,13 @@ def submit_survey(
     answers = body.answers or {}
 
     if not session_id or not qr_code_id:
-        raise HTTPException(status_code=400, detail="session_id and qr_code_id required")
+        raise ValidationError(code="MISSING_SESSION_OR_QR_ID", message="session_id and qr_code_id required")
 
     try:
         session_uid = uuid.UUID(str(session_id))
         qr_uid = uuid.UUID(str(qr_code_id))
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid session or QR code ID")
+        raise ValidationError(code="INVALID_SESSION_OR_QR_ID", message="Invalid session or QR code ID")
 
     sess = (
         db.query(SurveySessionORM)
@@ -411,7 +413,7 @@ def submit_survey(
         .first()
     )
     if not sess:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise NotFoundError(code="SESSION_NOT_FOUND", message="Session not found")
 
     existing = (
         db.query(SurveyResponseORM)
@@ -419,9 +421,9 @@ def submit_survey(
         .first()
     )
     if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Survey already submitted for this session",
+        raise ConflictError(
+            code="SURVEY_ALREADY_SUBMITTED",
+            message="Survey already submitted for this session",
         )
 
     # Load schema to validate compulsory questions
@@ -431,7 +433,7 @@ def submit_survey(
         .first()
     )
     if not sv:
-        raise HTTPException(status_code=404, detail="Survey version not found")
+        raise NotFoundError(code="SURVEY_VERSION_NOT_FOUND", message="Survey version not found")
 
     schema = sv.schema_json or {}
     questions = schema.get("questions") or []
@@ -441,12 +443,11 @@ def submit_survey(
         if _is_answer_empty(answers.get(qid))
     ]
     if missing_required:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "message": "You still have questions to complete",
-                "missing_required": missing_required,
-            },
+        raise ValidationError(
+            code="MISSING_REQUIRED_ANSWERS",
+            message="You still have questions to complete",
+            details={"missing_required": missing_required},
+            status_code=422,
         )
 
     # Load questions for this survey version (question_key = schema question id)
@@ -600,7 +601,7 @@ def get_thank_you_data(
         session_uid = uuid.UUID(session)
         qr_uid = uuid.UUID(qr)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid session or QR code ID")
+        raise ValidationError(code="INVALID_SESSION_OR_QR_ID", message="Invalid session or QR code ID")
 
     resp = (
         db.query(SurveyResponseORM)
@@ -611,11 +612,11 @@ def get_thank_you_data(
         .first()
     )
     if not resp:
-        raise HTTPException(status_code=404, detail="Submission not found")
+        raise NotFoundError(code="SUBMISSION_NOT_FOUND", message="Submission not found")
 
     sess = db.query(SurveySessionORM).filter(SurveySessionORM.id == resp.session_id).first()
     if not sess:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise NotFoundError(code="SESSION_NOT_FOUND", message="Session not found")
 
     company = db.query(CompanyORM).filter(CompanyORM.id == sess.company_id).first()
     thank_you_message = (

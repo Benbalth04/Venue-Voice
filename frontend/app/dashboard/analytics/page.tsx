@@ -16,6 +16,7 @@ import {
   fetchAnalyticsFilters,
   fetchAnalyticsResponseDetail,
   fetchAnalyticsResponses,
+  extractErrorMessage,
   type AnalyticsAnswerDetail,
   type AnalyticsFilterOption,
   type AnalyticsFilters,
@@ -96,7 +97,7 @@ function ReviewModal({
         setAnswers(detail.answers)
         onMarkRead?.(responseId)
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load response")
+        if (!cancelled) setError(extractErrorMessage(e, "Failed to load response"))
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -415,7 +416,7 @@ export default function AnalyticsPage() {
       setTotalCount(data.total_count)
     } catch (e) {
       if ((e as Error).name === "AbortError") return
-      setError(e instanceof Error ? e.message : "Something went wrong while loading analytics.")
+      setError(extractErrorMessage(e, "Something went wrong while loading analytics."))
     } finally {
       setLoading(false)
     }
@@ -450,7 +451,7 @@ export default function AnalyticsPage() {
       if (!token) throw new Error("Not authenticated")
       await downloadAnalyticsExport(token, format, buildApiFilters())
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Export failed")
+      alert(extractErrorMessage(e, "Export failed"))
     } finally {
       setExporting(null)
     }

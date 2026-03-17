@@ -24,6 +24,7 @@ import {
   archiveSurvey,
   duplicateSurvey,
   updateSurveyMeta,
+  extractErrorMessage,
   type SurveyListItem,
 } from "@/lib/api/client"
 import { defaultSurvey } from "@/lib/survey/defaultSurvey"
@@ -167,7 +168,7 @@ export default function SurveysListPage() {
       const data = await fetchSurveysList(token)
       setSurveys(data)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load surveys")
+      setError(extractErrorMessage(err, "Failed to load surveys"))
     } finally {
       setLoading(false)
     }
@@ -189,7 +190,7 @@ export default function SurveysListPage() {
       const survey = await createSurvey(token, title, surveyToApi(defaultSurvey) as Record<string, unknown>)
       router.push(`/dashboard/surveys/${survey.id}`)
     } catch (err) {
-      setCreateError(err instanceof Error ? err.message : "Failed to create survey")
+      setCreateError(extractErrorMessage(err, "Failed to create survey"))
       setCreating(false)
     }
   }
@@ -248,7 +249,7 @@ export default function SurveysListPage() {
       await load()
       setEditingSurvey(null)
     } catch (err) {
-      setRenameError(err instanceof Error ? err.message : "Failed to update title")
+      setRenameError(extractErrorMessage(err, "Failed to update title"))
     } finally {
       setRenaming(false)
     }

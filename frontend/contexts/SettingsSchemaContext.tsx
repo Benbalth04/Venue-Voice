@@ -11,6 +11,7 @@ import {
 import {
   fetchSettingsSchema,
   fetchThemeSettingsSchema,
+  extractErrorMessage,
   type QuestionSettingDefinition,
   type SettingsSchemaResponse,
   type ThemeSettingDefinition,
@@ -47,7 +48,7 @@ export function SettingsSchemaProvider({ children }: { children: ReactNode }) {
         setSchema(s)
         setThemeSchema(t)
       })
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load schema"))
+      .catch((err) => setError(extractErrorMessage(err, "Failed to load schema")))
       .finally(() => setLoading(false))
   }, [])
 

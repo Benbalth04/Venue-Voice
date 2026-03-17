@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -26,6 +26,9 @@ from ..services.analytics_service import (
     get_analytics_responses,
     get_response_detail,
 )
+from ..core.errors.app_error import AppError
+from ..core.errors.error_category import ErrorCategory
+from ..core.errors.exceptions import ValidationError
 
 router = APIRouter()
 
@@ -43,7 +46,7 @@ def _shared_filter_params(
     sort_direction: Literal["asc", "desc"] = Query("desc"),
 ):
     if date_start and date_end and date_start > date_end:
-        raise HTTPException(status_code=400, detail="date_start must be before date_end")
+        raise ValidationError(code="INVALID_DATE_RANGE", message="date_start must be before date_end")
     return dict(
         page=page,
         page_size=page_size,
@@ -69,10 +72,15 @@ def analytics_filters(
     """Return available filter values for surveys, QR codes, and locations."""
     try:
         return get_analytics_filters(user_id=current_user.id, db=db)
-    except HTTPException:
+    except AppError:
         raise
     except Exception:
-        raise HTTPException(status_code=500, detail="Failed to load filter options")
+        raise AppError(
+            category=ErrorCategory.UNKNOWN,
+            code="INTERNAL_SERVER_ERROR",
+            message="Failed to load filter options",
+            status_code=500,
+        )
 
 
 # ------------------------------------------------------------------
@@ -87,10 +95,15 @@ def analytics_responses(
     """Paginated, filterable, sortable list of survey sessions."""
     try:
         return get_analytics_responses(user_id=current_user.id, db=db, **params)
-    except HTTPException:
+    except AppError:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to load analytics: {exc}")
+        raise AppError(
+            category=ErrorCategory.UNKNOWN,
+            code="INTERNAL_SERVER_ERROR",
+            message=f"Failed to load analytics: {exc}",
+            status_code=500,
+        )
 
 
 # ------------------------------------------------------------------
@@ -106,14 +119,19 @@ def analytics_response_detail(
     try:
         rid = uuid.UUID(response_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid response_id UUID")
+        raise ValidationError(code="INVALID_RESPONSE_ID", message="Invalid response_id UUID")
 
     try:
         return get_response_detail(response_id=rid, user_id=current_user.id, db=db)
-    except HTTPException:
+    except AppError:
         raise
     except Exception:
-        raise HTTPException(status_code=500, detail="Failed to load response detail")
+        raise AppError(
+            category=ErrorCategory.UNKNOWN,
+            code="INTERNAL_SERVER_ERROR",
+            message="Failed to load response detail",
+            status_code=500,
+        )
 
 
 # ------------------------------------------------------------------
@@ -138,10 +156,15 @@ def export_csv(
             media_type="text/csv",
             headers={"Content-Disposition": "attachment; filename=analytics_responses.csv"},
         )
-    except HTTPException:
+    except AppError:
         raise
     except Exception:
-        raise HTTPException(status_code=500, detail="Failed to generate CSV export")
+        raise AppError(
+            category=ErrorCategory.UNKNOWN,
+            code="INTERNAL_SERVER_ERROR",
+            message="Failed to generate CSV export",
+            status_code=500,
+        )
 
 
 # ------------------------------------------------------------------
@@ -165,7 +188,12 @@ def export_excel(
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": "attachment; filename=analytics_responses.xlsx"},
         )
-    except HTTPException:
+    except AppError:
         raise
     except Exception:
-        raise HTTPException(status_code=500, detail="Failed to generate Excel export")
+        raise AppError(
+            category=ErrorCategory.UNKNOWN,
+            code="INTERNAL_SERVER_ERROR",
+            message="Failed to generate Excel export",
+            status_code=500,
+        )

@@ -14,6 +14,7 @@ import {
   fetchQRCodes,
   fetchSurveys,
   updateQRCode,
+  extractErrorMessage,
   type LocationResponse,
   type QRCodeCreate,
   type QRCodeResponse,
@@ -322,7 +323,7 @@ export default function DistributionPage() {
       setSurveys(svs)
       setLocations(locs)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load")
+      setError(extractErrorMessage(err, "Failed to load"))
     } finally {
       setLoading(false)
     }
@@ -362,7 +363,7 @@ export default function DistributionPage() {
       }
       setModalOpen(false)
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : "Save failed")
+      setFormError(extractErrorMessage(err, "Save failed"))
     } finally {
       setFormLoading(false)
     }
@@ -393,7 +394,7 @@ export default function DistributionPage() {
       await deleteQRCode(token, qr.id)
       setQRCodes((prev) => prev.map((q) => (q.id === qr.id ? { ...q, is_active: false } : q)))
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed")
+      alert(extractErrorMessage(err, "Failed to deactivate QR code"))
     }
   }
 

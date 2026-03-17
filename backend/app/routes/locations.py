@@ -1,6 +1,8 @@
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+
+from ..core.errors.exceptions import NotFoundError
 
 from ..auth.jwt import get_current_user
 from ..db.postgres import get_db_connection
@@ -13,7 +15,7 @@ router = APIRouter()
 def _get_company(user: UserORM, db: Session) -> CompanyORM:
     company = db.query(CompanyORM).filter(CompanyORM.owner_user_id == user.id).first()
     if not company:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
+        raise NotFoundError(code="COMPANY_NOT_FOUND", message="Company not found")
     return company
 
 
@@ -21,14 +23,14 @@ def _get_location_or_404(location_id: str, company_id: uuid.UUID, db: Session) -
     try:
         uid = uuid.UUID(location_id)
     except ValueError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Location not found")
+        raise NotFoundError(code="LOCATION_NOT_FOUND", message="Location not found")
 
     loc = db.query(LocationORM).filter(
         LocationORM.id == uid,
         LocationORM.company_id == company_id,
     ).first()
     if not loc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Location not found")
+        raise NotFoundError(code="LOCATION_NOT_FOUND", message="Location not found")
     return loc
 
 
@@ -60,7 +62,7 @@ def list_locations(
     return [_to_response(loc) for loc in locations]
 
 
-@router.post("/locations", response_model=LocationResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/locations", response_model=LocationResponse, status_code=201)
 def create_location(
     payload: LocationCreate,
     user: UserORM = Depends(get_current_user),
@@ -110,7 +112,7 @@ def update_location(
     return _to_response(loc)
 
 
-@router.delete("/locations/{location_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/locations/{location_id}", status_code=204)
 def deactivate_location(
     location_id: str,
     user: UserORM = Depends(get_current_user),

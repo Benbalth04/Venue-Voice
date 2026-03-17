@@ -5,13 +5,14 @@ import uuid
 from typing import TYPE_CHECKING, Any
 from urllib.request import urlopen, Request
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import jwt
 from sqlalchemy.orm import Session
 
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import User as UserORM
+from ..core.errors.exceptions import AuthError
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -53,7 +54,7 @@ def verify_supabase_jwt(token: str) -> dict[str, Any]:
         header = jwt.get_unverified_header(token)
         kid = header.get("kid")
         if not kid:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing kid")
+            raise AuthError(code="MISSING_KID", message="Missing kid")
 
         keys = jwks.get("keys", [])
         key = next((k for k in keys if k.get("kid") == kid), None)
@@ -64,7 +65,7 @@ def verify_supabase_jwt(token: str) -> dict[str, Any]:
             keys = jwks.get("keys", [])
             key = next((k for k in keys if k.get("kid") == kid), None)
         if not key:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unknown kid")
+            raise AuthError(code="UNKNOWN_KID", message="Unknown kid")
 
         audience = os.getenv("PUBLIC_SUPABASE_JWT_AUD")
         payload = jwt.decode(
@@ -76,15 +77,15 @@ def verify_supabase_jwt(token: str) -> dict[str, Any]:
             options={"verify_at_hash": False},
         )
         return payload
-    except HTTPException:
+    except AuthError:
         raise
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Invalid token: {e}")
+        raise AuthError(code="INVALID_TOKEN", message=f"Invalid token: {e}")
 
 
 def get_current_user_payload(creds: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),) -> dict[str, Any]:
     if not creds or not creds.credentials:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
+        raise AuthError(code="MISSING_BEARER_TOKEN", message="Missing bearer token")
     return verify_supabase_jwt(creds.credentials)
 
 def _ensure_application_user(jwt_payload: dict[str, Any], db: Session,) -> UserORM:
@@ -94,7 +95,7 @@ def _ensure_application_user(jwt_payload: dict[str, Any], db: Session,) -> UserO
     meta = jwt_payload.get("user_metadata") or {}
 
     if not sub:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token: missing sub")
+        raise AuthError(code="INVALID_TOKEN", message="Invalid token: missing sub")
 
     user_id = uuid.UUID(str(sub))
     existing = db.query(UserORM).filter(UserORM.id == user_id).first()
@@ -120,4 +121,3 @@ def get_current_user(
     jwt_payload: dict[str, Any] = Depends(get_current_user_payload), db_session = Depends(get_db_connection),):
     """Verify JWT, auto-bootstrap user if missing, return application user."""
     return _ensure_application_user(jwt_payload, db_session)
-

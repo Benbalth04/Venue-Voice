@@ -8,6 +8,7 @@ import { supabase } from "@/lib/supabase/client"
 import {
   fetchDashboard,
   fetchDashboardSubmissionsByDate,
+  extractErrorMessage,
   type DashboardData,
   type DashboardResponseSummary,
 } from "@/lib/api/client"
@@ -36,7 +37,7 @@ export default function DashboardOverviewPage() {
         const dashboard = await fetchDashboard(session.access_token)
         if (mounted) setData(dashboard)
       } catch (err) {
-        if (mounted) setError(err instanceof Error ? err.message : "Failed to load")
+        if (mounted) setError(extractErrorMessage(err, "Failed to load dashboard"))
       } finally {
         if (mounted) setLoading(false)
       }

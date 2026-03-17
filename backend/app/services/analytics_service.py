@@ -34,6 +34,9 @@ from ..schemas.pydantic_model import (
     AnalyticsResponseList,
     AnalyticsResponseRow,
 )
+from ..core.errors.app_error import AppError
+from ..core.errors.error_category import ErrorCategory
+from ..core.errors.exceptions import NotFoundError, PermissionError, ValidationError
 
 _VALID_SORT_COLUMNS = {
     "scan_time", "time_to_complete", "questions_answered",
@@ -44,8 +47,7 @@ _VALID_SORT_COLUMNS = {
 def _get_company_or_403(user_id: uuid.UUID, db: Session) -> CompanyORM:
     company = db.query(CompanyORM).filter(CompanyORM.owner_user_id == user_id).first()
     if not company:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="No company associated with this user")
+        raise PermissionError(code="NO_COMPANY_FOR_USER", message="No company associated with this user")
     return company
 
 
@@ -65,21 +67,19 @@ def get_analytics_responses(
     sort_direction: str = "desc",
     no_location: bool = False,
 ) -> AnalyticsResponseList:
-    from fastapi import HTTPException
-
     company = _get_company_or_403(user_id, db)
 
     if page < 1:
-        raise HTTPException(status_code=400, detail="page must be >= 1")
+        raise ValidationError(code="INVALID_PAGE", message="page must be >= 1")
     if not 1 <= page_size <= 500:
-        raise HTTPException(status_code=400, detail="page_size must be between 1 and 500")
+        raise ValidationError(code="INVALID_PAGE_SIZE", message="page_size must be between 1 and 500")
     if sort_column not in _VALID_SORT_COLUMNS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid sort_column. Valid: {sorted(_VALID_SORT_COLUMNS)}",
+        raise ValidationError(
+            code="INVALID_SORT_COLUMN",
+            message=f"Invalid sort_column. Valid: {sorted(_VALID_SORT_COLUMNS)}",
         )
     if sort_direction not in ("asc", "desc"):
-        raise HTTPException(status_code=400, detail="sort_direction must be 'asc' or 'desc'")
+        raise ValidationError(code="INVALID_SORT_DIRECTION", message="sort_direction must be 'asc' or 'desc'")
 
     # ------------------------------------------------------------------
     # Answer count sub-query (avoid N+1): count per session
@@ -146,14 +146,14 @@ def get_analytics_responses(
         try:
             sid = uuid.UUID(survey_id)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid survey_id UUID")
+            raise ValidationError(code="INVALID_SURVEY_ID", message="Invalid survey_id UUID")
         q = q.filter(SurveyORM.id == sid)
 
     if qr_code_id:
         try:
             qid = uuid.UUID(qr_code_id)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid qr_code_id UUID")
+            raise ValidationError(code="INVALID_QR_CODE_ID", message="Invalid qr_code_id UUID")
         q = q.filter(SurveySessionORM.qr_code_id == qid)
 
     if location_id == "__none__" or no_location:
@@ -162,7 +162,7 @@ def get_analytics_responses(
         try:
             lid = uuid.UUID(location_id)
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid location_id UUID")
+            raise ValidationError(code="INVALID_LOCATION_ID", message="Invalid location_id UUID")
         q = q.filter(LocationSnapshotORM.location_id == lid)
 
     if completed is True:
@@ -291,8 +291,6 @@ def get_analytics_filters(*, user_id: uuid.UUID, db: Session) -> AnalyticsFilter
 def get_response_detail(
     *, response_id: uuid.UUID, user_id: uuid.UUID, db: Session
 ) -> AnalyticsResponseDetail:
-    from fastapi import HTTPException
-
     company = _get_company_or_403(user_id, db)
 
     # Verify company ownership via session
@@ -306,7 +304,7 @@ def get_response_detail(
         .first()
     )
     if not resp:
-        raise HTTPException(status_code=404, detail="Response not found")
+        raise NotFoundError(code="RESPONSE_NOT_FOUND", message="Response not found")
 
     # Mark as read when user views the answers
     mark_response_read(user_id=user_id, response_id=response_id, db=db)
@@ -398,10 +396,11 @@ def build_excel_bytes(rows: list[AnalyticsResponseRow]) -> bytes:
     try:
         import openpyxl
     except ImportError:
-        from fastapi import HTTPException
-        raise HTTPException(
+        raise AppError(
+            category=ErrorCategory.EXTERNAL,
+            code="EXCEL_EXPORT_UNAVAILABLE",
+            message="Excel export unavailable: openpyxl not installed",
             status_code=500,
-            detail="Excel export unavailable: openpyxl not installed",
         )
 
     wb = openpyxl.Workbook()

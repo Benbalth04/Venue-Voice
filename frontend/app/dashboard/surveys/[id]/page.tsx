@@ -20,6 +20,7 @@ import {
   saveSurveyVersion,
   publishSurvey,
   SurveyStructureValidationError,
+  extractErrorMessage,
   type QuestionTypeResponse,
   type SurveyListItem,
   type SurveyValidationErrorItem,
@@ -119,7 +120,7 @@ export default function SurveyEditorPage() {
           setLastDraftSavedAt(null)
         }
       } catch (err) {
-        setLoadError(err instanceof Error ? err.message : "Failed to load survey")
+        setLoadError(extractErrorMessage(err, "Failed to load survey"))
       } finally {
         setLoading(false)
         isFirstLoad.current = false
@@ -236,7 +237,7 @@ export default function SurveyEditorPage() {
         setValidationErrors(err.schemaErrors)
         setSaveError(err.message)
       } else {
-        const msg = err instanceof Error ? err.message : "Save failed"
+        const msg = extractErrorMessage(err, "Save failed")
         setValidationErrors([])
         if (msg.toLowerCase().includes("conflict") || msg.includes("409")) {
           setSaveError(
@@ -316,7 +317,7 @@ export default function SurveyEditorPage() {
         setValidationErrors(err.schemaErrors)
         setSaveError(err.message)
       } else {
-        alert(err instanceof Error ? err.message : "Failed to publish")
+        alert(extractErrorMessage(err, "Failed to publish"))
       }
     }
   }

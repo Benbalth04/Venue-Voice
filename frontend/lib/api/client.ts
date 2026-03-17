@@ -1,4 +1,49 @@
+import {
+  normalizeApiError,
+  normalizeUnknownError,
+  type NormalizedError,
+} from "./errors"
+
+export type { NormalizedError } from "./errors"
+export {
+  normalizeApiError,
+  normalizeUnknownError,
+  isNormalizedError,
+  showError,
+  extractErrorMessage,
+} from "./errors"
+
 const BACKEND_BASE = process.env.NEXT_PUBLIC_BACKEND_BASE_URL
+
+// ------------------------------------------------------------------
+// Core fetch wrapper
+//
+// Every request goes through this single function.  On a non-2xx
+// response it parses the body and throws a NormalizedError.  Network
+// failures and JSON parse errors are also converted to NormalizedError
+// so callers always receive a consistent shape.
+// ------------------------------------------------------------------
+async function apiFetch<T>(input: string, init?: RequestInit): Promise<T> {
+  let res: Response
+  try {
+    res = await fetch(input, init)
+  } catch (err) {
+    throw normalizeUnknownError(err)
+  }
+
+  let data: unknown = null
+  try {
+    data = await res.json()
+  } catch {
+    // Non-JSON or empty body – leave data as null
+  }
+
+  if (!res.ok) {
+    throw normalizeApiError(data, res.status)
+  }
+
+  return data as T
+}
 
 // ------------------------------------------------------------------
 // Interface Definitions
@@ -147,7 +192,7 @@ export class SurveyStructureValidationError extends Error {
   }
 }
 
-// Survey lists 
+// Survey lists
 export interface SurveySummary {
   id: string
   name: string
@@ -229,13 +274,18 @@ export interface DashboardData {
   active_locations: DashboardLocationSummary[]
 }
 
-// Survey API 
+// Survey API
 export interface SurveyListItem {
   id: string
   title: string
   status: "draft" | "active" | "archived"
   latest_version: number
   updated_at: string
+}
+
+export interface SurveyWithSchema extends SurveyListItem {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  survey_schema_json: Record<string, any>
 }
 
 // Analytics
@@ -296,27 +346,62 @@ export interface AnalyticsFilters {
 }
 
 // ------------------------------------------------------------------
+// Auth helpers
+// ------------------------------------------------------------------
+function authHeaders(accessToken: string): Record<string, string> {
+  return {
+    Authorization: `Bearer ${accessToken}`,
+    "Content-Type": "application/json",
+  }
+}
+
+function authGetHeaders(accessToken: string): Record<string, string> {
+  return { Authorization: `Bearer ${accessToken}` }
+}
+
+// ------------------------------------------------------------------
 // Public Survey Completion (no auth)
 // ------------------------------------------------------------------
+
+/**
+ * Validate a QR code and create a session.
+ *
+ * NOTE: The backend returns a *success* 200/404 body with a `valid` flag
+ * (not a thrown error) for the QR redirect flow.  We intentionally do NOT
+ * throw here so the caller can inspect `result.valid` and react accordingly.
+ * Network failures will still throw a NormalizedError.
+ */
 export async function fetchSurveyRedirect(qrCodeId: string): Promise<SurveyRedirectResponse> {
-  const res = await fetch(
-    `${BACKEND_BASE}/api/v1/survey/redirect?r=${encodeURIComponent(qrCodeId)}`,
-  )
-  return res.json()
+  let res: Response
+  try {
+    res = await fetch(
+      `${BACKEND_BASE}/api/v1/survey/redirect?r=${encodeURIComponent(qrCodeId)}`,
+    )
+  } catch (err) {
+    throw normalizeUnknownError(err)
+  }
+
+  let data: unknown = null
+  try {
+    data = await res.json()
+  } catch {
+    // empty body – handled below
+  }
+
+  if (!res.ok) {
+    throw normalizeApiError(data, res.status)
+  }
+
+  return data as SurveyRedirectResponse
 }
 
 export async function fetchSurveyForSession(
   sessionId: string,
   qrCodeId: string,
 ): Promise<SurveyForSessionResponse> {
-  const res = await fetch(
+  return apiFetch<SurveyForSessionResponse>(
     `${BACKEND_BASE}/api/v1/survey?session=${encodeURIComponent(sessionId)}&qr=${encodeURIComponent(qrCodeId)}`,
   )
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail ?? "Failed to load survey")
-  }
-  return res.json()
 }
 
 export async function submitSurvey(
@@ -324,65 +409,69 @@ export async function submitSurvey(
   qrCodeId: string,
   answers: Record<string, unknown>,
 ): Promise<SurveySubmitResponse> {
-  const res = await fetch(`${BACKEND_BASE}/api/v1/survey/submit`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      session_id: sessionId,
-      qr_code_id: qrCodeId,
-      answers,
-    }),
-  })
-  const data = await res.json().catch(() => ({}))
+  let res: Response
+  try {
+    res = await fetch(`${BACKEND_BASE}/api/v1/survey/submit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId, qr_code_id: qrCodeId, answers }),
+    })
+  } catch (err) {
+    throw normalizeUnknownError(err)
+  }
+
+  let data: unknown = null
+  try {
+    data = await res.json()
+  } catch {
+    // empty body
+  }
+
   if (!res.ok) {
-    const detail = data.detail
-    if (typeof detail === "object" && detail?.missing_required) {
+    const normalized = normalizeApiError(data, res.status)
+    // Preserve the special SurveySubmissionValidationError path so that
+    // PublicSurveyPageContent can highlight individual missing questions.
+    if (
+      res.status === 422 &&
+      normalized.code === "MISSING_REQUIRED_ANSWERS" &&
+      Array.isArray(normalized.details?.missing_required)
+    ) {
       throw new SurveySubmissionValidationError(
-        detail.message ?? "You still have questions to complete",
-        detail.missing_required ?? [],
+        normalized.message,
+        normalized.details!.missing_required as string[],
       )
     }
-    throw new Error(typeof detail === "string" ? detail : "Failed to submit survey")
+    throw normalized
   }
-  return data
+
+  return data as SurveySubmitResponse
 }
 
 export async function fetchThankYouData(
   sessionId: string,
   qrCodeId: string,
 ): Promise<ThankYouDataResponse> {
-  const res = await fetch(
+  return apiFetch<ThankYouDataResponse>(
     `${BACKEND_BASE}/api/v1/survey/thank-you?session=${encodeURIComponent(sessionId)}&qr=${encodeURIComponent(qrCodeId)}`,
   )
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail ?? "Failed to load thank-you page")
-  }
-  return res.json()
 }
 
+// ------------------------------------------------------------------
+// Auth / User
+// ------------------------------------------------------------------
 export async function fetchUser(accessToken: string): Promise<UserResponse> {
-  const res = await fetch(`${BACKEND_BASE}/api/v1/user`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
+  return apiFetch<UserResponse>(`${BACKEND_BASE}/api/v1/user`, {
+    headers: authGetHeaders(accessToken),
   })
-  if (!res.ok) {
-    throw new Error("Failed to fetch user")
-  }
-  return res.json()
 }
 
 export async function setupAccount(
   accessToken: string,
   payload: SetupAccountPayload,
 ): Promise<{ ok: boolean }> {
-  const res = await fetch(`${BACKEND_BASE}/api/v1/setup-account`, {
+  return apiFetch<{ ok: boolean }>(`${BACKEND_BASE}/api/v1/setup-account`, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
+    headers: authHeaders(accessToken),
     body: JSON.stringify({
       company_name: payload.company_name,
       location_name: payload.location_name,
@@ -395,40 +484,26 @@ export async function setupAccount(
       how_heard: payload.how_heard ?? undefined,
     }),
   })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail ?? "Setup failed")
-  }
-  return res.json()
 }
 
-// --------------------------------------------------
-// LOCATIONS
-// --------------------------------------------------
-
-
+// ------------------------------------------------------------------
+// Locations
+// ------------------------------------------------------------------
 export async function fetchLocations(accessToken: string): Promise<LocationResponse[]> {
-  const res = await fetch(`${BACKEND_BASE}/api/v1/locations`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
+  return apiFetch<LocationResponse[]>(`${BACKEND_BASE}/api/v1/locations`, {
+    headers: authGetHeaders(accessToken),
   })
-  if (!res.ok) throw new Error("Failed to fetch locations")
-  return res.json()
 }
 
 export async function createLocation(
   accessToken: string,
   payload: LocationCreate,
 ): Promise<LocationResponse> {
-  const res = await fetch(`${BACKEND_BASE}/api/v1/locations`, {
+  return apiFetch<LocationResponse>(`${BACKEND_BASE}/api/v1/locations`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    headers: authHeaders(accessToken),
     body: JSON.stringify(payload),
   })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail ?? "Failed to create location")
-  }
-  return res.json()
 }
 
 export async function updateLocation(
@@ -436,98 +511,72 @@ export async function updateLocation(
   id: string,
   payload: LocationUpdate,
 ): Promise<LocationResponse> {
-  const res = await fetch(`${BACKEND_BASE}/api/v1/locations/${id}`, {
+  return apiFetch<LocationResponse>(`${BACKEND_BASE}/api/v1/locations/${id}`, {
     method: "PATCH",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    headers: authHeaders(accessToken),
     body: JSON.stringify(payload),
   })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail ?? "Failed to update location")
-  }
-  return res.json()
 }
 
 export async function deleteLocation(accessToken: string, id: string): Promise<void> {
-  const res = await fetch(`${BACKEND_BASE}/api/v1/locations/${id}`, {
+  await apiFetch<unknown>(`${BACKEND_BASE}/api/v1/locations/${id}`, {
     method: "DELETE",
-    headers: { Authorization: `Bearer ${accessToken}` },
+    headers: authGetHeaders(accessToken),
   })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail ?? "Failed to delete location")
-  }
 }
 
-// --------------------------------------------------
-// QUESTION TYPES (from question_types table)
-// --------------------------------------------------
+// ------------------------------------------------------------------
+// Question Types
+// ------------------------------------------------------------------
 export async function fetchQuestionTypes(accessToken: string): Promise<QuestionTypeResponse[]> {
-  const res = await fetch(`${BACKEND_BASE}/api/v1/surveys/question-types`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
+  return apiFetch<QuestionTypeResponse[]>(`${BACKEND_BASE}/api/v1/surveys/question-types`, {
+    headers: authGetHeaders(accessToken),
   })
-  if (!res.ok) throw new Error("Failed to fetch question types")
-  return res.json()
 }
 
-/** Public endpoint - no auth required. Use for survey creator. */
+/** Public endpoint – no auth required. */
 export async function fetchQuestionTypesPublic(): Promise<QuestionTypeResponse[]> {
-  const res = await fetch(`${BACKEND_BASE}/api/v1/survey/question-types`)
-  if (!res.ok) throw new Error("Failed to fetch question types")
-  return res.json()
+  return apiFetch<QuestionTypeResponse[]>(`${BACKEND_BASE}/api/v1/survey/question-types`)
 }
 
-// --------------------------------------------------
-// SETTINGS SCHEMA (centralised survey settings - no auth)
-// --------------------------------------------------
-
+// ------------------------------------------------------------------
+// Settings Schema (public)
+// ------------------------------------------------------------------
 export async function fetchSettingsSchema(): Promise<SettingsSchemaResponse> {
-  const res = await fetch(`${BACKEND_BASE}/api/v1/survey/settings-schema`)
-  if (!res.ok) throw new Error("Failed to fetch settings schema")
-  return res.json()
+  return apiFetch<SettingsSchemaResponse>(`${BACKEND_BASE}/api/v1/survey/settings-schema`)
 }
 
 export async function fetchThemeSettingsSchema(): Promise<ThemeSettingsSchemaResponse> {
-  const res = await fetch(`${BACKEND_BASE}/api/v1/survey/theme-settings-schema`)
-  if (!res.ok) throw new Error("Failed to fetch theme settings schema")
-  return res.json()
-}
-// --------------------------------------------------
-// SURVEYS LIST (for QR code form)
-// --------------------------------------------------
-export async function fetchSurveys(accessToken: string): Promise<SurveySummary[]> {
-  const res = await fetch(`${BACKEND_BASE}/api/v1/surveys`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  })
-  if (!res.ok) throw new Error("Failed to fetch surveys")
-  return res.json()
+  return apiFetch<ThemeSettingsSchemaResponse>(`${BACKEND_BASE}/api/v1/survey/theme-settings-schema`)
 }
 
-// --------------------------------------------------
-// QR CODES
-// --------------------------------------------------
-export async function fetchQRCodes(accessToken: string): Promise<QRCodeResponse[]> {
-  const res = await fetch(`${BACKEND_BASE}/api/v1/qr-codes`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
+// ------------------------------------------------------------------
+// Surveys list (for QR code form)
+// ------------------------------------------------------------------
+export async function fetchSurveys(accessToken: string): Promise<SurveySummary[]> {
+  return apiFetch<SurveySummary[]>(`${BACKEND_BASE}/api/v1/surveys`, {
+    headers: authGetHeaders(accessToken),
   })
-  if (!res.ok) throw new Error("Failed to fetch QR codes")
-  return res.json()
+}
+
+// ------------------------------------------------------------------
+// QR Codes
+// ------------------------------------------------------------------
+export async function fetchQRCodes(accessToken: string): Promise<QRCodeResponse[]> {
+  return apiFetch<QRCodeResponse[]>(`${BACKEND_BASE}/api/v1/qr-codes`, {
+    headers: authGetHeaders(accessToken),
+  })
 }
 
 export async function createQRCode(
   accessToken: string,
   payload: QRCodeCreate,
 ): Promise<QRCodeResponse> {
-  const res = await fetch(`${BACKEND_BASE}/api/v1/qr-codes`, {
+  return apiFetch<QRCodeResponse>(`${BACKEND_BASE}/api/v1/qr-codes`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    headers: authHeaders(accessToken),
     body: JSON.stringify(payload),
   })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail ?? "Failed to create QR code")
-  }
-  return res.json()
 }
 
 export async function updateQRCode(
@@ -535,72 +584,42 @@ export async function updateQRCode(
   id: string,
   payload: QRCodeUpdate,
 ): Promise<QRCodeResponse> {
-  const res = await fetch(`${BACKEND_BASE}/api/v1/qr-codes/${id}`, {
+  return apiFetch<QRCodeResponse>(`${BACKEND_BASE}/api/v1/qr-codes/${id}`, {
     method: "PATCH",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    headers: authHeaders(accessToken),
     body: JSON.stringify(payload),
   })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail ?? "Failed to update QR code")
-  }
-  return res.json()
 }
 
 export async function deleteQRCode(accessToken: string, id: string): Promise<void> {
-  const res = await fetch(`${BACKEND_BASE}/api/v1/qr-codes/${id}`, {
+  await apiFetch<unknown>(`${BACKEND_BASE}/api/v1/qr-codes/${id}`, {
     method: "DELETE",
-    headers: { Authorization: `Bearer ${accessToken}` },
+    headers: authGetHeaders(accessToken),
   })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail ?? "Failed to delete QR code")
-  }
 }
 
-// --------------------------------------------------
-// DASHBOARD
-// --------------------------------------------------
-export async function fetchDashboard(
-  accessToken: string,
-): Promise<DashboardData> {
-  const res = await fetch(`${BACKEND_BASE}/api/v1/dashboard`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
+// ------------------------------------------------------------------
+// Dashboard
+// ------------------------------------------------------------------
+export async function fetchDashboard(accessToken: string): Promise<DashboardData> {
+  return apiFetch<DashboardData>(`${BACKEND_BASE}/api/v1/dashboard`, {
+    headers: authGetHeaders(accessToken),
   })
-  if (!res.ok) {
-    throw new Error("Failed to fetch dashboard")
-  }
-  return res.json()
 }
 
 export async function fetchDashboardSubmissionsByDate(
   accessToken: string,
   date: string,
 ): Promise<DashboardResponseSummary[]> {
-  const res = await fetch(
+  return apiFetch<DashboardResponseSummary[]>(
     `${BACKEND_BASE}/api/v1/dashboard/submissions?date=${encodeURIComponent(date)}`,
-    {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    },
+    { headers: authGetHeaders(accessToken) },
   )
-  if (!res.ok) {
-    throw new Error("Failed to fetch submissions")
-  }
-  return res.json()
 }
 
 // ------------------------------------------------------------------
 // Survey API
 // ------------------------------------------------------------------
-export interface SurveyWithSchema extends SurveyListItem {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  survey_schema_json: Record<string, any>
-}
-
 function normalizeSurveyListItem(raw: Record<string, unknown>): SurveyListItem {
   const statusRaw = String(raw.status ?? "draft")
   const status =
@@ -622,27 +641,42 @@ async function surveyRequest<T>(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   body?: Record<string, any>,
 ): Promise<T> {
-  const res = await fetch(`${BACKEND_BASE}/api/v1${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  })
+  let res: Response
+  try {
+    res = await fetch(`${BACKEND_BASE}/api/v1${path}`, {
+      method,
+      headers: authHeaders(accessToken),
+      body: body ? JSON.stringify(body) : undefined,
+    })
+  } catch (err) {
+    throw normalizeUnknownError(err)
+  }
+
+  let data: unknown = null
+  try {
+    data = await res.json()
+  } catch {
+    // empty body
+  }
+
   if (!res.ok) {
-    const data = await res.json().catch(() => ({}))
-    const detail = data?.detail
-    if (res.status === 422 && detail && Array.isArray(detail.schema_errors)) {
-      throw new SurveySubmissionValidationError(
-        "Survey validation failed",
-        detail.missing_required ?? [],
+    const normalized = normalizeApiError(data, res.status)
+    // Re-throw as SurveyStructureValidationError so the survey editor can
+    // display per-question validation errors inline.
+    if (
+      res.status === 422 &&
+      normalized.code === "INVALID_SURVEY_SCHEMA" &&
+      Array.isArray(normalized.details?.schema_errors)
+    ) {
+      throw new SurveyStructureValidationError(
+        normalized.message,
+        normalized.details!.schema_errors as SurveyValidationErrorItem[],
       )
     }
-    const msg = typeof detail === "string" ? detail : detail?.detail ?? `Request failed (${res.status})`
-    throw new Error(msg)
+    throw normalized
   }
-  return res.json()
+
+  return data as T
 }
 
 export function fetchSurveysList(token: string): Promise<SurveyListItem[]> {
@@ -726,14 +760,7 @@ async function _analyticsRequest<T>(
   params?: URLSearchParams,
 ): Promise<T> {
   const url = `${BACKEND_BASE}/api/v1${path}${params && params.toString() ? `?${params}` : ""}`
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  })
-  if (!res.ok) {
-    const detail = await res.json().catch(() => ({}))
-    throw new Error(detail?.detail ?? `Analytics request failed (${res.status})`)
-  }
-  return res.json()
+  return apiFetch<T>(url, { headers: authGetHeaders(token) })
 }
 
 export function fetchAnalyticsFilters(token: string): Promise<AnalyticsFiltersResponse> {
@@ -777,8 +804,24 @@ export async function downloadAnalyticsExport(
 ): Promise<void> {
   const params = _buildAnalyticsParams(filters)
   const url = `${BACKEND_BASE}/api/v1/analytics/responses/export/${format}?${params}`
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
-  if (!res.ok) throw new Error(`Export failed (${res.status})`)
+
+  let res: Response
+  try {
+    res = await fetch(url, { headers: authGetHeaders(token) })
+  } catch (err) {
+    throw normalizeUnknownError(err)
+  }
+
+  if (!res.ok) {
+    let data: unknown = null
+    try {
+      data = await res.json()
+    } catch {
+      // empty body
+    }
+    throw normalizeApiError(data, res.status)
+  }
+
   const blob = await res.blob()
   const a = document.createElement("a")
   a.href = URL.createObjectURL(blob)
