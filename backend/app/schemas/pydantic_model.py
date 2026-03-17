@@ -10,7 +10,7 @@ class User(BaseModel):
     onboarding_complete: bool = False
 
 
-class MeResponse(BaseModel):
+class UserResponse(BaseModel):
     id: str
     email: str
     first_name: str
@@ -97,7 +97,9 @@ class QRCodeResponse(BaseModel):
     id: str
     title: str
     survey_id: str
+    survey_title: str | None
     location_id: str | None
+    location_name: str | None
     is_active: bool
     created_at: str
     updated_at: str

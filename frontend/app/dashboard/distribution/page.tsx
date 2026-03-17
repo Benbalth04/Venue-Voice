@@ -20,10 +20,7 @@ import {
   type SurveySummary,
 } from "@/lib/api/client"
 
-const APP_ORIGIN =
-  process.env.NEXT_PUBLIC_APP_URL ??
-  (typeof window !== "undefined" ? window.location.origin : "http://localhost:3000")
-
+const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN
 function qrUrl(qrCodeId: string) {
   return `${APP_ORIGIN}/r/${qrCodeId}`
 }
@@ -167,10 +164,14 @@ function QRModal({
     initial
       ? {
           title: initial.title,
-          survey_id: initial.survey_id,
+          survey_id: initial.survey_id ?? "",   // convert null to ""
           location_id: initial.location_id ?? "",
         }
-      : { title: "", survey_id: surveys[0]?.id ?? "", location_id: "" },
+      : {
+          title: "",
+          survey_id: surveys[0]?.id ?? "",      // keep as fallback
+          location_id: "",
+        }
   )
 
   function set(field: keyof QRFormData, value: string) {
@@ -396,8 +397,9 @@ export default function DistributionPage() {
     }
   }
 
-  function surveyName(id: string) {
-    return surveys.find((s) => s.id === id)?.name ?? id.slice(0, 8) + "…"
+  function surveyName(name: string | null) {
+    if (!name) return "—"
+    return surveys.find((s) => s.id === name)?.name ?? name.slice(0, 8) + "…"
   }
 
   function locationName(id: string | null) {
@@ -415,10 +417,10 @@ export default function DistributionPage() {
         cmp = a.title.localeCompare(b.title)
         break
       case "survey":
-        cmp = surveyName(a.survey_id).localeCompare(surveyName(b.survey_id))
+        cmp = surveyName(a.survey_title).localeCompare(surveyName(b.survey_title))
         break
       case "location":
-        cmp = locationName(a.location_id).localeCompare(locationName(b.location_id))
+        cmp = locationName(a.location_name).localeCompare(locationName(b.location_name))
         break
       case "status":
         cmp = (a.is_active ? 1 : 0) - (b.is_active ? 1 : 0)
@@ -526,14 +528,11 @@ export default function DistributionPage() {
                       </button>
                       <div>
                         <span className="font-medium text-zinc-900">{qr.title}</span>
-                        <p className="mt-0.5 truncate text-xs text-zinc-400">
-                          {qrUrl(qr.title)}
-                        </p>
                       </div>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-zinc-700">{surveyName(qr.survey_id)}</td>
-                  <td className="px-4 py-3 text-zinc-600">{locationName(qr.location_id)}</td>
+                  <td className="px-4 py-3 text-zinc-700">{qr.survey_title || "No survey"}</td>
+                  <td className="px-4 py-3 text-zinc-600">{qr.location_name || "No location"}</td>
                   <td className="px-4 py-3">
                     <span
                       className={[

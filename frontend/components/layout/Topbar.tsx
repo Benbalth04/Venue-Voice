@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { Bell, User } from "lucide-react"
 import { supabase } from "@/lib/supabase/client"
-import { fetchMe } from "@/lib/api/client"
+import { fetchUser } from "@/lib/api/client"
 
 export function Topbar() {
   const [companyName, setCompanyName] = useState<string>("")
@@ -19,7 +19,7 @@ export function Topbar() {
       if (!session?.access_token || !mounted) return
 
       try {
-        const me = await fetchMe(session.access_token)
+        const me = await fetchUser(session.access_token)
         if (!mounted) return
         setCompanyName(me.company_name ?? "")
         setDisplayName(

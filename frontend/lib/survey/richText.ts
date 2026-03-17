@@ -80,7 +80,7 @@ export function surveyFromApi(raw: Record<string, unknown>): Survey {
       type: q.type as Survey["questions"][0]["type"],
       title: fromHtml(q.title as HtmlValue, "h2"),
       description: q.description ? fromHtml(q.description as HtmlValue, "body") : undefined,
-      optional: Boolean(q.optional),
+      optional: q.optional === true,
       contentAlign: q.contentAlign as Survey["questions"][0]["contentAlign"],
       settings: (q.settings || {}) as Survey["questions"][0]["settings"],
     })),

@@ -246,6 +246,7 @@ def list_surveys(
         .order_by(SurveyORM.updated_at.desc())
         .all()
     )
+    
     return [_survey_to_list_item(s) for s in surveys]
 
 

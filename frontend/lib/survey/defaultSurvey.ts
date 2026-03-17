@@ -26,24 +26,5 @@ export const defaultSurvey: Survey = {
     progressBarColor: "#7C3AED",
   },
 
-  questions: [
-    {
-      id: crypto.randomUUID(),
-      version: 1,
-      type: "star",
-      title: {
-        text: "How was your experience?",
-        style: { size: "h2" },
-      },
-      description: {
-        text: "Please rate your overall experience",
-        style: { size: "body" },
-      },
-      optional: false,
-      settings: {
-        starCount: 5,
-        selected_colour: "#7C3AED",
-      },
-    },
-  ],
+  questions: [],
 }

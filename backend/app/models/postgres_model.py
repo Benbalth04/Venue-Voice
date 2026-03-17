@@ -350,7 +350,6 @@ class Answer(Base):
 # --------------------------------------------------
 # QR CODES
 # --------------------------------------------------
-
 class QRCode(Base):
     __tablename__ = "qr_codes"
 
@@ -380,9 +379,11 @@ class QRCode(Base):
         index=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now()
-    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    # Relationships
+    survey: Mapped["Survey"] = relationship("Survey", lazy="joined", uselist=False, foreign_keys=[survey_id])
+    location: Mapped["Location"] = relationship("Location", lazy="joined", uselist=False, foreign_keys=[location_id])
 
 
 # --------------------------------------------------

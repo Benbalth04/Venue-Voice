@@ -19,7 +19,7 @@ import {
   fetchSurveyLatest,
   saveSurveyVersion,
   publishSurvey,
-  SurveyValidationError,
+  SurveyStructureValidationError,
   type QuestionTypeResponse,
   type SurveyListItem,
   type SurveyValidationErrorItem,
@@ -232,7 +232,7 @@ export default function SurveyEditorPage() {
       setLastDraftSavedAt(null)
       deleteSurveyDraft(surveyId)
     } catch (err) {
-      if (err instanceof SurveyValidationError) {
+      if (err instanceof SurveyStructureValidationError) {
         setValidationErrors(err.schemaErrors)
         setSaveError(err.message)
       } else {
@@ -312,7 +312,7 @@ export default function SurveyEditorPage() {
       const updated = await publishSurvey(token, surveyId)
       setSurveyMeta(updated)
     } catch (err) {
-      if (err instanceof SurveyValidationError) {
+      if (err instanceof SurveyStructureValidationError) {
         setValidationErrors(err.schemaErrors)
         setSaveError(err.message)
       } else {

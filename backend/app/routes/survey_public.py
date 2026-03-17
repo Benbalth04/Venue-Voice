@@ -34,7 +34,7 @@ from ..models.postgres_model import (
 
 router = APIRouter()
 
-FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
+FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN")
 
 
 # --------------------------------------------------
@@ -364,6 +364,19 @@ class AbandonBody(BaseModel):
     qr_code_id: str
 
 
+def _is_answer_empty(val: Any) -> bool:
+    """Return True if the answer is empty (not provided or blank)."""
+    if val is None:
+        return True
+    if isinstance(val, list):
+        return len(val) == 0
+    if isinstance(val, str):
+        return not val.strip()
+    if isinstance(val, (int, float)):
+        return False  # 0 is valid for NPS
+    return True
+
+
 # --------------------------------------------------
 # POST /survey/submit - Submit survey responses
 # --------------------------------------------------
@@ -409,6 +422,31 @@ def submit_survey(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Survey already submitted for this session",
+        )
+
+    # Load schema to validate compulsory questions
+    sv = (
+        db.query(SurveyVersionORM)
+        .filter(SurveyVersionORM.id == sess.survey_version_id)
+        .first()
+    )
+    if not sv:
+        raise HTTPException(status_code=404, detail="Survey version not found")
+
+    schema = sv.schema_json or {}
+    questions = schema.get("questions") or []
+    required_ids = [str(q.get("id")) for q in questions if not q.get("optional")]
+    missing_required = [
+        qid for qid in required_ids
+        if _is_answer_empty(answers.get(qid))
+    ]
+    if missing_required:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "You still have questions to complete",
+                "missing_required": missing_required,
+            },
         )
 
     # Load questions for this survey version (question_key = schema question id)

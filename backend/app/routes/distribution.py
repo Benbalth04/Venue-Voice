@@ -2,7 +2,8 @@ import os
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
+
 
 from ..auth.jwt import get_current_user
 from ..db.postgres import get_db_connection
@@ -47,61 +48,46 @@ def _get_qr_or_404(qr_id: str, company_id: uuid.UUID, db: Session) -> QRCodeORM:
     return qr
 
 
-def _to_response(qr: QRCodeORM) -> QRCodeResponse:
+def _to_response(qr: QRCodeORM, survey_title: str | None = None, location_name: str | None = None) -> QRCodeResponse:
     return QRCodeResponse(
         id=str(qr.id),
         title=qr.title,
         survey_id=str(qr.survey_id),
+        survey_title=survey_title,
         location_id=str(qr.location_id) if qr.location_id else None,
+        location_name=location_name,
         is_active=qr.is_active,
         created_at=qr.created_at.isoformat(),
         updated_at=qr.updated_at.isoformat(),
     )
 
-
-# --------------------------------------------------
-# Surveys list (for dropdown in QR form)
-# --------------------------------------------------
-
-@router.get("/surveys", response_model=list[SurveySummaryResponse])
-def list_surveys(
-    user: UserORM = Depends(get_current_user),
-    db: Session = Depends(get_db_connection),
-):
-    company = _get_company(user, db)
-    surveys = (
-        db.query(SurveyORM)
-        .filter(SurveyORM.company_id == company.id)
-        .order_by(SurveyORM.created_at.desc())
-        .all()
-    )
-    return [
-        SurveySummaryResponse(
-            id=str(s.id),
-            name=s.name,
-            status=str(s.status.value),
-        )
-        for s in surveys
-    ]
-
-
 # --------------------------------------------------
 # QR Codes CRUD
 # --------------------------------------------------
-
 @router.get("/qr-codes", response_model=list[QRCodeResponse])
 def list_qr_codes(
     user: UserORM = Depends(get_current_user),
     db: Session = Depends(get_db_connection),
 ):
     company = _get_company(user, db)
+
+    # Query with eager loading for survey and location
     qrs = (
         db.query(QRCodeORM)
         .filter(QRCodeORM.company_id == company.id)
         .order_by(QRCodeORM.created_at.desc())
         .all()
     )
-    return [_to_response(qr) for qr in qrs]
+
+    # Map each QR to response
+    return [
+        _to_response(
+            qr,
+            survey_title=qr.survey.name if qr.survey else None,
+            location_name=qr.location.name if qr.location else None,
+        )
+        for qr in qrs
+    ]
 
 
 @router.post("/qr-codes", response_model=QRCodeResponse, status_code=status.HTTP_201_CREATED)
@@ -255,6 +241,6 @@ def resolve_qr(
     db.add(scan)
     db.commit()
 
-    frontend_origin = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
+    frontend_origin = os.getenv("FRONTEND_ORIGIN")
     redirect_url = f"{frontend_origin}/survey/{qr.survey_id}"
     return RedirectResponse(url=redirect_url, status_code=302)

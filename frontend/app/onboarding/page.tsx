@@ -1,12 +1,14 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { supabase } from "@/lib/supabase/client"
-import { fetchMe, setupAccount } from "@/lib/api/client"
+import { setupAccount } from "@/lib/api/client"
+import { useAuth } from "@/contexts/AuthContext"
+import { AuthGuard } from "@/components/auth/AuthGuard"
+import { OnboardingIncompleteGuard } from "@/components/auth/OnboardingIncompleteGuard"
 
 const INDUSTRY_OPTIONS = [
   "Retail",
@@ -40,8 +42,10 @@ const HOW_HEARD_OPTIONS = [
   "Other",
 ]
 
-export default function OnboardingPage() {
+function OnboardingPageContent() {
   const router = useRouter()
+  const { session } = useAuth()
+
   const [companyName, setCompanyName] = useState("")
   const [locationName, setLocationName] = useState("")
   const [locationState, setLocationState] = useState("")
@@ -53,40 +57,6 @@ export default function OnboardingPage() {
   const [howHeard, setHowHeard] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const [ready, setReady] = useState(false)
-
-  useEffect(() => {
-    let mounted = true
-
-    async function check() {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
-
-      if (!mounted) return
-
-      if (!session) {
-        router.replace("/login")
-        return
-      }
-
-      try {
-        const me = await fetchMe(session.access_token)
-        if (!mounted) return
-        if (me.onboarding_complete) {
-          router.replace("/dashboard")
-          return
-        }
-      } catch {
-        if (mounted) router.replace("/login")
-        return
-      }
-
-      setReady(true)
-    }
-
-    check()
-  }, [router])
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -94,9 +64,6 @@ export default function OnboardingPage() {
     setLoading(true)
 
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
       if (!session?.access_token) {
         router.replace("/login")
         return
@@ -117,6 +84,7 @@ export default function OnboardingPage() {
         })(),
         how_heard: howHeard || null,
       })
+
       router.push("/dashboard")
     } catch (err) {
       setError(err instanceof Error ? err.message : "Setup failed")
@@ -125,26 +93,23 @@ export default function OnboardingPage() {
     }
   }
 
-  if (!ready) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-zinc-50">
-        Loading...
-      </div>
-    )
-  }
-
   return (
     <div className="flex min-h-screen items-center justify-center bg-zinc-50 px-4">
       <Card className="w-full max-w-md p-6">
         <h1 className="text-xl font-semibold text-zinc-900">
           Welcome to VenueVoice
         </h1>
+
         <p className="mt-1 text-sm text-zinc-600">
           First, Let's create your first business location.
         </p>
-        <br></br>
+
+        <br />
+
         <p className="mt-1 text-sm text-zinc-600">
-          We would love to hear more about your business to help you get the most out of VenueVoice, but you can skip any questions you're not comfortable answering.
+          We would love to hear more about your business to help you get the
+          most out of VenueVoice, but you can skip any questions you're not
+          comfortable answering.
         </p>
 
         <form className="mt-6 space-y-4" onSubmit={onSubmit}>
@@ -183,6 +148,7 @@ export default function OnboardingPage() {
                 onChange={(e) => setLocationState(e.target.value)}
               />
             </label>
+
             <label className="block">
               <span className="text-sm font-medium text-zinc-700">Country</span>
               <input
@@ -293,5 +259,15 @@ export default function OnboardingPage() {
         </p>
       </Card>
     </div>
+  )
+}
+
+export default function OnboardingPage() {
+  return (
+    <AuthGuard>
+      <OnboardingIncompleteGuard>
+        <OnboardingPageContent />
+      </OnboardingIncompleteGuard>
+    </AuthGuard>
   )
 }

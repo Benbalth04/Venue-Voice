@@ -6,12 +6,12 @@ from ..db.postgres import get_db_connection
 from ..models.postgres_model import Company as CompanyORM
 from ..models.postgres_model import Location as LocationORM
 from ..models.postgres_model import User as UserORM
-from ..schemas.pydantic_model import MeResponse, SetupAccountRequest
+from ..schemas.pydantic_model import UserResponse, SetupAccountRequest
 
 router = APIRouter()
 
 
-@router.get("/me", response_model=MeResponse)
+@router.get("/user", response_model=UserResponse)
 def get_me(
     user: UserORM = Depends(get_current_user),
     db: Session = Depends(get_db_connection),
@@ -23,7 +23,7 @@ def get_me(
         company_name = company.name if company else None
 
     display_name = f"{user.first_name} {user.last_name}".strip() or "User"
-    return MeResponse(
+    return UserResponse(
         id=str(user.id),
         email=user.email,
         first_name=user.first_name,

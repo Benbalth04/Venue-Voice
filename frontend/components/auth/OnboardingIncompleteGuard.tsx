@@ -4,17 +4,21 @@ import { useRouter } from "next/navigation"
 import { useEffect, type ReactNode } from "react"
 import { useAuth } from "@/contexts/AuthContext"
 
-export function AuthGuard({ children }: { children: ReactNode }) {
-  const { loading, session } = useAuth()
+export function OnboardingIncompleteGuard({
+  children,
+}: {
+  children: ReactNode
+}) {
+  const { loading, user } = useAuth()
   const router = useRouter()
 
   useEffect(() => {
-    if (!loading && !session) {
-      router.replace("/login")
+    if (!loading && user?.onboarding_complete) {
+      router.replace("/dashboard")
     }
-  }, [loading, session, router])
+  }, [loading, user, router])
 
-  if (loading || !session) {
+  if (loading || !user) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-zinc-50">
         Loading...

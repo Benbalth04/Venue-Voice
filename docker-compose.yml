@@ -13,21 +13,6 @@ services:
       - ./database:/docker-entrypoint-initdb.d/
     networks:
       - backend
-      - pg_network
-
-  pgadmin:
-    image: dpage/pgadmin4
-    container_name: pgadmin_container
-    environment:
-      PGADMIN_DEFAULT_EMAIL: ${PG_ADMIN_USERNAME}
-      PGADMIN_DEFAULT_PASSWORD: ${PG_ADMIN_PASSWORD}
-    ports:
-      - "8080:80"
-    networks:
-      - pg_network
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin
-      
   backend:
     build: ./backend
     restart: always
@@ -39,13 +24,14 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
       SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET}
-      SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL} 
-      SUPBASE_JWT_URL: ${SUPBASE_JWT_URL}
-      SESSION_SECRET: ${SESSION_SECRET}
+      PUBLIC_SUPABASE_URL: ${PUBLIC_SUPABASE_URL} 
+      PUBLIC_SUPABASE_JWT_URL: ${PUBLIC_SUPABASE_JWT_URL}
+      PUBLIC_SUPABASE_JWT_AUD: ${PUBLIC_SUPABASE_JWT_AUD}
+      FRONTEND_ORIGIN: ${APP_ORIGIN}
     networks:
       - backend
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      test: ["CMD", "curl", "-f", "${BACKEND_BASE_URL}/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -55,8 +41,8 @@ services:
     build:
       context: ./frontend
       args:
-        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
-        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        NEXT_PUBLIC_SUPABASE_URL: ${PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${PUBLIC_SUPABASE_ANON_KEY}
     restart: always
     depends_on:
       - backend
@@ -64,9 +50,8 @@ services:
       - "3000:3000"
     environment:
       NODE_ENV: development
-      BACKEND_BASE_URL: http://backend:5000/api/v1
-      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      NEXT_PUBLIC_BACKEND_BASE_URL: ${BACKEND_BASE_URL}
+      NEXT_PUBLIC_APP_ORIGIN: ${APP_ORIGIN}
     command: npm run dev
     networks:
       - backend
@@ -77,9 +62,6 @@ services:
 networks:
   backend:
     driver: bridge
-  pg_network:
-    driver: bridge
 
 volumes:
   pg_data:
-  pgadmin_data:

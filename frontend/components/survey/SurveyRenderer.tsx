@@ -25,16 +25,40 @@ export type SurveyResponseValue =
 
 export type SurveyResponses = Record<string, SurveyResponseValue | undefined>
 
+/** Check if a question has been answered (has a non-empty value). */
+export function isQuestionAnswered(
+  question: Question,
+  response: SurveyResponseValue | undefined,
+): boolean {
+  if (!response) return false
+  if (response.type === "star" || response.type === "nps") return response.value !== null
+  if (response.type === "choices") return response.value.length > 0
+  if (response.type === "choice") return response.value.length > 0
+  return String(response.value).trim().length > 0
+}
+
+/** Get IDs of compulsory questions that are unanswered. */
+export function getUnansweredRequiredIds(
+  survey: Survey,
+  responses: SurveyResponses,
+): string[] {
+  return survey.questions
+    .filter((q) => !q.optional && !isQuestionAnswered(q, responses[q.id]))
+    .map((q) => q.id)
+}
+
 export function SurveyRenderer({
   survey,
   responses,
   onResponseChange,
   showProgressBar,
+  unansweredRequiredIds = [],
 }: {
   survey: Survey
   responses: SurveyResponses
   onResponseChange: (questionId: string, next: SurveyResponseValue) => void
   showProgressBar?: boolean
+  unansweredRequiredIds?: string[]
 }) {
   const displayProgressBar = showProgressBar ?? survey.settings.showProgressBar
   return (
@@ -65,6 +89,7 @@ export function SurveyRenderer({
             surveyAlign={survey.settings.contentAlign}
             response={responses[q.id]}
             onResponseChange={onResponseChange}
+            showRequiredError={!q.optional && unansweredRequiredIds.includes(q.id)}
           />
         ))}
       </div>
@@ -127,12 +152,14 @@ function QuestionRenderer({
   surveyAlign,
   response,
   onResponseChange,
+  showRequiredError,
 }: {
   question: Question
   survey: Survey
   surveyAlign: Align
   response: SurveyResponseValue | undefined
   onResponseChange: (questionId: string, next: SurveyResponseValue) => void
+  showRequiredError?: boolean
 }) {
   const align = question.contentAlign ?? surveyAlign
 
@@ -142,6 +169,9 @@ function QuestionRenderer({
         <TextBlock content={question.title} align={align} />
         {question.description ? (
           <TextBlock content={question.description} muted align={align} />
+        ) : null}
+        {showRequiredError ? (
+          <p className="text-sm text-red-600">This question is required</p>
         ) : null}
       </div>
 

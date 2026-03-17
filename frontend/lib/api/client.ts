@@ -1,10 +1,9 @@
-const BACKEND_BASE =
-  process.env.NEXT_PUBLIC_BACKEND_BASE_URL ?? "http://localhost:5000"
+const BACKEND_BASE = process.env.NEXT_PUBLIC_BACKEND_BASE_URL
 
 // ------------------------------------------------------------------
-// Public Survey Completion (no auth)
+// Interface Definitions
 // ------------------------------------------------------------------
-
+// Public survey responses
 export interface SurveyRedirectResponse {
   valid: boolean
   redirect_url?: string
@@ -14,17 +13,296 @@ export interface SurveyRedirectResponse {
   survey_version_id?: string
 }
 
+export interface SurveyForSessionResponse {
+  survey_version_id: string
+  schema: Record<string, unknown>
+  company_name: string | null
+}
+
+export interface SurveySubmitResponse {
+  success: boolean
+  redirect_url: string
+  thank_you_message: string
+  company_name: string | null
+}
+
+export interface ThankYouDataResponse {
+  thank_you_message: string
+  company_name: string | null
+}
+
+export class SurveySubmissionValidationError extends Error {
+  missingRequired: string[]
+
+  constructor(message: string, missingRequired: string[]) {
+    super(message)
+    this.name = "SurveySubmissionValidationError"
+    this.missingRequired = missingRequired
+  }
+}
+
+// Auth
+export interface UserResponse {
+  id: string
+  email: string
+  first_name: string
+  last_name: string
+  onboarding_complete: boolean
+  company_name?: string | null
+  user_display_name?: string | null
+}
+
+export interface SetupAccountPayload {
+  company_name: string
+  location_name: string
+  location_state?: string | null
+  location_country?: string | null
+  location_google_business_url?: string | null
+  primary_industry?: string | null
+  company_size?: string | null
+  location_count?: number | null
+  how_heard?: string | null
+}
+
+// Locations
+export interface LocationResponse {
+  id: string
+  name: string
+  is_active: boolean
+  state: string | null
+  country: string | null
+  google_business_url: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface LocationCreate {
+  name: string
+  state?: string | null
+  country?: string | null
+  google_business_url?: string | null
+}
+
+export interface LocationUpdate {
+  name?: string | null
+  state?: string | null
+  country?: string | null
+  google_business_url?: string | null
+  is_active?: boolean | null
+}
+
+// Question Type
+export interface QuestionTypeResponse {
+  type: string
+  category: string
+  label: string
+  is_numeric: boolean
+}
+
+// Settings Schema
+export interface QuestionSettingDefinition {
+  key: string
+  label: string
+  type: string
+  required: boolean
+  default_value: unknown
+  allowed_values: string[] | null
+  validation_rules: Record<string, unknown> | null
+}
+
+export interface QuestionTypeSettingsSchema {
+  question_type: string
+  settings: QuestionSettingDefinition[]
+}
+
+export interface SettingsSchemaResponse {
+  question_types: QuestionTypeSettingsSchema[]
+}
+
+export interface ThemeSettingDefinition {
+  key: string
+  label: string
+  type: string
+  default_value: unknown
+  allowed_values: string[] | null
+}
+
+export interface ThemeSettingsSchemaResponse {
+  settings: ThemeSettingDefinition[]
+}
+
+export interface SurveyValidationErrorItem {
+  question_id?: string
+  setting?: string
+  message: string
+}
+
+export class SurveyStructureValidationError extends Error {
+  constructor(
+    message: string,
+    public readonly schemaErrors: SurveyValidationErrorItem[] = [],
+  ) {
+    super(message)
+    this.name = "SurveyValidationError"
+  }
+}
+
+// Survey lists 
+export interface SurveySummary {
+  id: string
+  name: string
+  status: string
+}
+
+// QR Codes
+export interface QRCodeResponse {
+  id: string
+  title: string
+  survey_id: string | null
+  survey_title: string | null
+  location_id: string | null
+  location_name: string | null
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface QRCodeCreate {
+  title: string
+  survey_id: string
+  location_id?: string | null
+}
+
+export interface QRCodeUpdate {
+  title?: string | null
+  survey_id?: string | null
+  location_id?: string | null
+  is_active?: boolean | null
+}
+
+// Dashboard
+export interface DashboardTrendPoint {
+  label: string
+  value: number
+}
+
+export interface DashboardSurveySummary {
+  id: string
+  title: string
+  status: string
+  question_count: number
+}
+
+export interface DashboardQRCodeSummary {
+  id: string
+  title: string
+  survey_id: string
+  location_id: string | null
+  active: boolean
+  scan_count: number
+}
+
+export interface DashboardLocationSummary {
+  id: string
+  name: string
+}
+
+export interface DashboardResponseSummary {
+  id: string
+  survey_version_id: string
+  location_id: string | null
+  submitted_at: string
+}
+
+export interface DashboardData {
+  company_name: string
+  user_display_name: string
+  total_submissions: number
+  total_scans: number
+  active_surveys_count: number
+  active_qr_codes_count: number
+  active_locations_count: number
+  submission_trend: DashboardTrendPoint[]
+  scan_trend: DashboardTrendPoint[]
+  active_surveys: DashboardSurveySummary[]
+  active_qr_codes: DashboardQRCodeSummary[]
+  active_locations: DashboardLocationSummary[]
+}
+
+// Survey API 
+export interface SurveyListItem {
+  id: string
+  title: string
+  status: "draft" | "active" | "archived"
+  latest_version: number
+  updated_at: string
+}
+
+// Analytics
+export interface AnalyticsResponseRow {
+  response_id: string
+  session_id: string
+  survey_name: string
+  qr_code_name: string
+  location_name: string | null
+  scan_time: string
+  completed: boolean
+  time_to_complete_seconds: number | null
+  questions_answered: number
+  survey_version_id: string
+  unread: boolean
+}
+
+export interface AnalyticsResponseList {
+  rows: AnalyticsResponseRow[]
+  total_count: number
+  page: number
+  page_size: number
+}
+
+export interface AnalyticsFilterOption {
+  id: string
+  name: string
+}
+
+export interface AnalyticsFiltersResponse {
+  surveys: AnalyticsFilterOption[]
+  qr_codes: AnalyticsFilterOption[]
+  locations: AnalyticsFilterOption[]
+}
+
+export interface AnalyticsAnswerDetail {
+  question_text: string
+  answer_value: string
+}
+
+export interface AnalyticsResponseDetail {
+  response_id: string
+  survey_name: string
+  answers: AnalyticsAnswerDetail[]
+}
+
+export interface AnalyticsFilters {
+  page?: number
+  page_size?: number
+  survey_id?: string
+  qr_code_id?: string
+  location_id?: string
+  completed?: boolean
+  date_start?: string
+  date_end?: string
+  sort_column?: string
+  sort_direction?: "asc" | "desc"
+}
+
+// ------------------------------------------------------------------
+// Public Survey Completion (no auth)
+// ------------------------------------------------------------------
 export async function fetchSurveyRedirect(qrCodeId: string): Promise<SurveyRedirectResponse> {
   const res = await fetch(
     `${BACKEND_BASE}/api/v1/survey/redirect?r=${encodeURIComponent(qrCodeId)}`,
   )
   return res.json()
-}
-
-export interface SurveyForSessionResponse {
-  survey_version_id: string
-  schema: Record<string, unknown>
-  company_name: string | null
 }
 
 export async function fetchSurveyForSession(
@@ -39,13 +317,6 @@ export async function fetchSurveyForSession(
     throw new Error(err.detail ?? "Failed to load survey")
   }
   return res.json()
-}
-
-export interface SurveySubmitResponse {
-  success: boolean
-  redirect_url: string
-  thank_you_message: string
-  company_name: string | null
 }
 
 export async function submitSurvey(
@@ -64,14 +335,16 @@ export async function submitSurvey(
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
-    throw new Error(data.detail ?? "Failed to submit survey")
+    const detail = data.detail
+    if (typeof detail === "object" && detail?.missing_required) {
+      throw new SurveySubmissionValidationError(
+        detail.message ?? "You still have questions to complete",
+        detail.missing_required ?? [],
+      )
+    }
+    throw new Error(typeof detail === "string" ? detail : "Failed to submit survey")
   }
   return data
-}
-
-export interface ThankYouDataResponse {
-  thank_you_message: string
-  company_name: string | null
 }
 
 export async function fetchThankYouData(
@@ -88,18 +361,8 @@ export async function fetchThankYouData(
   return res.json()
 }
 
-export interface MeResponse {
-  id: string
-  email: string
-  first_name: string
-  last_name: string
-  onboarding_complete: boolean
-  company_name?: string | null
-  user_display_name?: string | null
-}
-
-export async function fetchMe(accessToken: string): Promise<MeResponse> {
-  const res = await fetch(`${BACKEND_BASE}/api/v1/me`, {
+export async function fetchUser(accessToken: string): Promise<UserResponse> {
+  const res = await fetch(`${BACKEND_BASE}/api/v1/user`, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
     },
@@ -108,18 +371,6 @@ export async function fetchMe(accessToken: string): Promise<MeResponse> {
     throw new Error("Failed to fetch user")
   }
   return res.json()
-}
-
-export interface SetupAccountPayload {
-  company_name: string
-  location_name: string
-  location_state?: string | null
-  location_country?: string | null
-  location_google_business_url?: string | null
-  primary_industry?: string | null
-  company_size?: string | null
-  location_count?: number | null
-  how_heard?: string | null
 }
 
 export async function setupAccount(
@@ -155,31 +406,6 @@ export async function setupAccount(
 // LOCATIONS
 // --------------------------------------------------
 
-export interface LocationResponse {
-  id: string
-  name: string
-  is_active: boolean
-  state: string | null
-  country: string | null
-  google_business_url: string | null
-  created_at: string
-  updated_at: string
-}
-
-export interface LocationCreate {
-  name: string
-  state?: string | null
-  country?: string | null
-  google_business_url?: string | null
-}
-
-export interface LocationUpdate {
-  name?: string | null
-  state?: string | null
-  country?: string | null
-  google_business_url?: string | null
-  is_active?: boolean | null
-}
 
 export async function fetchLocations(accessToken: string): Promise<LocationResponse[]> {
   const res = await fetch(`${BACKEND_BASE}/api/v1/locations`, {
@@ -236,14 +462,6 @@ export async function deleteLocation(accessToken: string, id: string): Promise<v
 // --------------------------------------------------
 // QUESTION TYPES (from question_types table)
 // --------------------------------------------------
-
-export interface QuestionTypeResponse {
-  type: string
-  category: string
-  label: string
-  is_numeric: boolean
-}
-
 export async function fetchQuestionTypes(accessToken: string): Promise<QuestionTypeResponse[]> {
   const res = await fetch(`${BACKEND_BASE}/api/v1/surveys/question-types`, {
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -263,41 +481,10 @@ export async function fetchQuestionTypesPublic(): Promise<QuestionTypeResponse[]
 // SETTINGS SCHEMA (centralised survey settings - no auth)
 // --------------------------------------------------
 
-export interface QuestionSettingDefinition {
-  key: string
-  label: string
-  type: string
-  required: boolean
-  default_value: unknown
-  allowed_values: string[] | null
-  validation_rules: Record<string, unknown> | null
-}
-
-export interface QuestionTypeSettingsSchema {
-  question_type: string
-  settings: QuestionSettingDefinition[]
-}
-
-export interface SettingsSchemaResponse {
-  question_types: QuestionTypeSettingsSchema[]
-}
-
 export async function fetchSettingsSchema(): Promise<SettingsSchemaResponse> {
   const res = await fetch(`${BACKEND_BASE}/api/v1/survey/settings-schema`)
   if (!res.ok) throw new Error("Failed to fetch settings schema")
   return res.json()
-}
-
-export interface ThemeSettingDefinition {
-  key: string
-  label: string
-  type: string
-  default_value: unknown
-  allowed_values: string[] | null
-}
-
-export interface ThemeSettingsSchemaResponse {
-  settings: ThemeSettingDefinition[]
 }
 
 export async function fetchThemeSettingsSchema(): Promise<ThemeSettingsSchemaResponse> {
@@ -305,23 +492,9 @@ export async function fetchThemeSettingsSchema(): Promise<ThemeSettingsSchemaRes
   if (!res.ok) throw new Error("Failed to fetch theme settings schema")
   return res.json()
 }
-
-export interface SurveyValidationErrorItem {
-  question_id?: string
-  setting?: string
-  message: string
-}
-
 // --------------------------------------------------
 // SURVEYS LIST (for QR code form)
 // --------------------------------------------------
-
-export interface SurveySummary {
-  id: string
-  name: string
-  status: string
-}
-
 export async function fetchSurveys(accessToken: string): Promise<SurveySummary[]> {
   const res = await fetch(`${BACKEND_BASE}/api/v1/surveys`, {
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -333,30 +506,6 @@ export async function fetchSurveys(accessToken: string): Promise<SurveySummary[]
 // --------------------------------------------------
 // QR CODES
 // --------------------------------------------------
-
-export interface QRCodeResponse {
-  id: string
-  title: string
-  survey_id: string
-  location_id: string | null
-  is_active: boolean
-  created_at: string
-  updated_at: string
-}
-
-export interface QRCodeCreate {
-  title: string
-  survey_id: string
-  location_id?: string | null
-}
-
-export interface QRCodeUpdate {
-  title?: string | null
-  survey_id?: string | null
-  location_id?: string | null
-  is_active?: boolean | null
-}
-
 export async function fetchQRCodes(accessToken: string): Promise<QRCodeResponse[]> {
   const res = await fetch(`${BACKEND_BASE}/api/v1/qr-codes`, {
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -412,55 +561,6 @@ export async function deleteQRCode(accessToken: string, id: string): Promise<voi
 // --------------------------------------------------
 // DASHBOARD
 // --------------------------------------------------
-
-export interface DashboardTrendPoint {
-  label: string
-  value: number
-}
-
-export interface DashboardSurveySummary {
-  id: string
-  title: string
-  status: string
-  question_count: number
-}
-
-export interface DashboardQRCodeSummary {
-  id: string
-  title: string
-  survey_id: string
-  location_id: string | null
-  active: boolean
-  scan_count: number
-}
-
-export interface DashboardLocationSummary {
-  id: string
-  name: string
-}
-
-export interface DashboardResponseSummary {
-  id: string
-  survey_version_id: string
-  location_id: string | null
-  submitted_at: string
-}
-
-export interface DashboardData {
-  company_name: string
-  user_display_name: string
-  total_submissions: number
-  total_scans: number
-  active_surveys_count: number
-  active_qr_codes_count: number
-  active_locations_count: number
-  submission_trend: DashboardTrendPoint[]
-  scan_trend: DashboardTrendPoint[]
-  active_surveys: DashboardSurveySummary[]
-  active_qr_codes: DashboardQRCodeSummary[]
-  active_locations: DashboardLocationSummary[]
-}
-
 export async function fetchDashboard(
   accessToken: string,
 ): Promise<DashboardData> {
@@ -496,16 +596,6 @@ export async function fetchDashboardSubmissionsByDate(
 // ------------------------------------------------------------------
 // Survey API
 // ------------------------------------------------------------------
-
-export interface SurveyListItem {
-  id: string
-  title: string
-  status: "draft" | "active" | "archived"
-  latest_version: number
-  created_at: string
-  updated_at: string
-}
-
 export interface SurveyWithSchema extends SurveyListItem {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   survey_schema_json: Record<string, any>
@@ -521,18 +611,7 @@ function normalizeSurveyListItem(raw: Record<string, unknown>): SurveyListItem {
     title: String(raw.title ?? raw.name ?? "Untitled Survey"),
     status,
     latest_version: Number(raw.latest_version ?? raw.latestVersion ?? 1),
-    created_at: String(raw.created_at ?? raw.createdAt ?? ""),
     updated_at: String(raw.updated_at ?? raw.updatedAt ?? ""),
-  }
-}
-
-export class SurveyValidationError extends Error {
-  constructor(
-    message: string,
-    public readonly schemaErrors: SurveyValidationErrorItem[] = [],
-  ) {
-    super(message)
-    this.name = "SurveyValidationError"
   }
 }
 
@@ -555,9 +634,9 @@ async function surveyRequest<T>(
     const data = await res.json().catch(() => ({}))
     const detail = data?.detail
     if (res.status === 422 && detail && Array.isArray(detail.schema_errors)) {
-      throw new SurveyValidationError(
+      throw new SurveySubmissionValidationError(
         "Survey validation failed",
-        detail.schema_errors as SurveyValidationErrorItem[],
+        detail.missing_required ?? [],
       )
     }
     const msg = typeof detail === "string" ? detail : detail?.detail ?? `Request failed (${res.status})`
@@ -626,63 +705,6 @@ export function duplicateSurvey(token: string, id: string): Promise<SurveyWithSc
 // ------------------------------------------------------------------
 // Analytics
 // ------------------------------------------------------------------
-
-export interface AnalyticsResponseRow {
-  response_id: string
-  session_id: string
-  survey_name: string
-  qr_code_name: string
-  location_name: string | null
-  scan_time: string
-  completed: boolean
-  time_to_complete_seconds: number | null
-  questions_answered: number
-  survey_version_id: string
-  unread: boolean
-}
-
-export interface AnalyticsResponseList {
-  rows: AnalyticsResponseRow[]
-  total_count: number
-  page: number
-  page_size: number
-}
-
-export interface AnalyticsFilterOption {
-  id: string
-  name: string
-}
-
-export interface AnalyticsFiltersResponse {
-  surveys: AnalyticsFilterOption[]
-  qr_codes: AnalyticsFilterOption[]
-  locations: AnalyticsFilterOption[]
-}
-
-export interface AnalyticsAnswerDetail {
-  question_text: string
-  answer_value: string
-}
-
-export interface AnalyticsResponseDetail {
-  response_id: string
-  survey_name: string
-  answers: AnalyticsAnswerDetail[]
-}
-
-export interface AnalyticsFilters {
-  page?: number
-  page_size?: number
-  survey_id?: string
-  qr_code_id?: string
-  location_id?: string
-  completed?: boolean
-  date_start?: string
-  date_end?: string
-  sort_column?: string
-  sort_direction?: "asc" | "desc"
-}
-
 function _buildAnalyticsParams(filters: AnalyticsFilters): URLSearchParams {
   const p = new URLSearchParams()
   if (filters.page != null) p.set("page", String(filters.page))

@@ -3,14 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useSearchParams } from "next/navigation"
 import { Loader2 } from "lucide-react"
-import { SurveyRenderer, type SurveyResponses, type SurveyResponseValue } from "@/components/survey/SurveyRenderer"
+import { SurveyRenderer, getUnansweredRequiredIds, type SurveyResponses, type SurveyResponseValue } from "@/components/survey/SurveyRenderer"
 import {
   fetchSurveyForSession,
   submitSurvey,
+  SurveySubmissionValidationError,
 } from "@/lib/api/client"
 
-const BACKEND_BASE =
-  process.env.NEXT_PUBLIC_BACKEND_BASE_URL ?? "http://localhost:5000"
+const BACKEND_BASE = process.env.NEXT_PUBLIC_BACKEND_BASE_URL
 import type { Survey } from "@/lib/survey/types"
 import { surveyFromApi } from "@/lib/survey/richText"
 
@@ -72,6 +72,8 @@ export default function PublicSurveyPageContent() {
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [submitAttempted, setSubmitAttempted] = useState(false)
+  const [backendMissingIds, setBackendMissingIds] = useState<string[]>([])
 
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const responsesRef = useRef(responses)
@@ -128,13 +130,25 @@ export default function PublicSurveyPageContent() {
 
   const handleResponseChange = useCallback((questionId: string, next: SurveyResponseValue) => {
     setResponses((prev) => ({ ...prev, [questionId]: next }))
+    setSubmitError(null)
+    setSubmitAttempted(false)
+    setBackendMissingIds([])
   }, [])
 
   const handleSubmit = useCallback(async () => {
-    if (!sessionId || !qrCodeId || submitting) return
+    if (!sessionId || !qrCodeId || submitting || !survey) return
+
+    setSubmitAttempted(true)
+    const missingIds = getUnansweredRequiredIds(survey, responsesRef.current)
+    if (missingIds.length > 0) {
+      setSubmitError("You still have questions to complete.")
+      setBackendMissingIds([])
+      return
+    }
 
     setSubmitting(true)
     setSubmitError(null)
+    setBackendMissingIds([])
     try {
       const answers = responsesToAnswers(responsesRef.current)
       const result = await submitSurvey(sessionId, qrCodeId, answers)
@@ -142,11 +156,18 @@ export default function PublicSurveyPageContent() {
       clearDraft(sessionId, qrCodeId)
       window.location.href = result.redirect_url
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : "Failed to submit")
+      if (err instanceof SurveySubmissionValidationError) {
+        setSubmitError(err.message)
+        setBackendMissingIds(err.missingRequired)
+      } else {
+        setSubmitError(err instanceof Error ? err.message : "Failed to submit")
+        setBackendMissingIds([])
+      }
+      setSubmitAttempted(true)
     } finally {
       setSubmitting(false)
     }
-  }, [sessionId, qrCodeId, submitting])
+  }, [sessionId, qrCodeId, submitting, survey])
 
   useEffect(() => {
     const saveAndAbandon = () => {
@@ -208,10 +229,17 @@ export default function PublicSurveyPageContent() {
             survey={survey}
             responses={responses}
             onResponseChange={handleResponseChange}
+            unansweredRequiredIds={
+              submitAttempted && submitError
+                ? backendMissingIds.length > 0
+                  ? backendMissingIds
+                  : getUnansweredRequiredIds(survey, responses)
+                : []
+            }
           />
 
           {submitError && (
-            <p className="mt-4 text-sm text-red-600">{submitError}</p>
+            <p className="mt-4 text-sm font-medium text-red-600">{submitError}</p>
           )}
 
           <div className="mt-8">

@@ -17,13 +17,13 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 _JWKS_CACHE: dict[str, Any] = {"fetched_at": 0.0, "jwks": None}
 _JWKS_TTL_SECONDS = 60 * 10
-_JKW_URL = os.getenv("SUPBASE_JWT_URL")
+_JKW_URL = os.getenv("PUBLIC_SUPABASE_JWT_URL")
 
 
 def _get_supabase_url() -> str:
-    url = os.getenv("SUPABASE_URL")
+    url = os.getenv("PUBLIC_SUPABASE_URL")
     if not url:
-        raise RuntimeError("SUPABASE_URL is not set")
+        raise RuntimeError("PUBLIC_SUPABASE_URL is not set")
     return url.rstrip("/")
 
 
@@ -66,7 +66,7 @@ def verify_supabase_jwt(token: str) -> dict[str, Any]:
         if not key:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unknown kid")
 
-        audience = os.getenv("SUPABASE_JWT_AUD", "authenticated")
+        audience = os.getenv("PUBLIC_SUPABASE_JWT_AUD")
         payload = jwt.decode(
             token,
             key,
