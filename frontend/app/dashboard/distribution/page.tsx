@@ -6,6 +6,7 @@ import { useConfirm } from "@/components/ui/ConfirmDialog"
 import { QRCodeCanvas, QRCodeSVG } from "qrcode.react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { DataTable, type DataTableColumn } from "@/components/ui/DataTable"
 import { supabase } from "@/lib/supabase/client"
 import {
   createQRCode,
@@ -76,7 +77,9 @@ function QRPanel({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
       <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-base font-semibold text-zinc-900">QR Code — {qr.title}</h2>
+          <h2 className="text-base font-semibold text-zinc-900">
+            QR Code — {qr.title}
+          </h2>
           <button
             type="button"
             onClick={onClose}
@@ -204,11 +207,9 @@ function QRModal({
             </span>
             <input
               className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
-              placeholder="e.g. cafe-table-1"
+              placeholder="e.g. Survey Title"
               value={form.title}
-              onChange={(e) =>
-                set("title", e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"))
-              }
+              onChange={(e) => set("title", e.target.value)}
             />
             {urlPreview && (
               <p className="mt-1 truncate text-xs text-zinc-400">{urlPreview}</p>
@@ -236,7 +237,7 @@ function QRModal({
               >
                 {surveys.map((s) => (
                   <option key={s.id} value={s.id}>
-                    {s.name} ({s.status})
+                    {s.name}
                   </option>
                 ))}
               </select>
@@ -316,7 +317,7 @@ export default function DistributionPage() {
     try {
       const [qrs, svs, locs] = await Promise.all([
         fetchQRCodes(token),
-        fetchSurveys(token),
+        fetchSurveys(token, { activeOnly: true }),
         fetchLocations(token),
       ])
       setQRCodes(qrs)
@@ -440,20 +441,126 @@ export default function DistributionPage() {
     }
   }
 
-  function SortHeader({ colKey, label }: { colKey: QRSortKey; label: string }) {
-    const active = sortKey === colKey
-    return (
-      <th
-        className="cursor-pointer select-none px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500 hover:text-zinc-600"
-        onClick={() => toggleSort(colKey)}
-      >
-        <span className="inline-flex items-center gap-1">
-          {label}
-          {active && (sortDir === "asc" ? " ↑" : " ↓")}
+  const columns: DataTableColumn<QRCodeResponse>[] = [
+    {
+      key: "title",
+      label: "Title",
+      sortable: true,
+      align: "center",
+      render: (qr) => (
+        <div className="flex items-center justify-center gap-3">
+          <button
+            type="button"
+            onClick={() => setQRPanel(qr)}
+            className="flex-shrink-0 rounded-lg border border-zinc-200 bg-white p-0.5 hover:border-violet-400"
+            title="View & download QR"
+          >
+            <QRCodeCanvas
+              value={qrUrl(qr.id)}
+              size={36}
+              level="M"
+              includeMargin={false}
+            />
+          </button>
+          <span className="break-words font-medium text-zinc-900">
+            {qr.title}
+          </span>
+        </div>
+      ),
+    },
+    {
+      key: "survey",
+      label: "Survey",
+      sortable: true,
+      align: "center",
+      render: (qr) => (
+        <span className="break-words">
+          {qr.survey_title || "No survey"}
         </span>
-      </th>
-    )
-  }
+      ),
+    },
+    {
+      key: "location",
+      label: "Location",
+      sortable: true,
+      align: "center",
+      render: (qr) => (
+        <span className="break-words text-zinc-600">
+          {qr.location_name || "No location"}
+        </span>
+      ),
+    },
+    {
+      key: "status",
+      label: "Status",
+      sortable: true,
+      align: "center",
+      render: (qr) => (
+        <span
+          className={[
+            "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium",
+            qr.is_active
+              ? "bg-emerald-50 text-emerald-700"
+              : "bg-zinc-100 text-zinc-500",
+          ].join(" ")}
+        >
+          <span
+            className={[
+              "inline-block h-1.5 w-1.5 rounded-full",
+              qr.is_active ? "bg-emerald-500" : "bg-zinc-400",
+            ].join(" ")}
+          />
+          {qr.is_active ? "Active" : "Inactive"}
+        </span>
+      ),
+    },
+    {
+      key: "actions",
+      label: "Actions",
+      sortable: false,
+      align: "center",
+      render: (qr) => (
+        <div className="flex items-center justify-center gap-1">
+          <button
+            type="button"
+            onClick={() => setQRPanel(qr)}
+            className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-violet-600"
+            title="View QR code"
+          >
+            <QrCode className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => openEdit(qr)}
+            className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+            title="Edit"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => handleToggleActive(qr)}
+            className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+            title={qr.is_active ? "Deactivate" : "Activate"}
+          >
+            {qr.is_active ? (
+              <ToggleRight className="h-3.5 w-3.5 text-emerald-500" />
+            ) : (
+              <ToggleLeft className="h-3.5 w-3.5" />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => handleDelete(qr)}
+            className="rounded-lg p-1.5 text-zinc-400 hover:bg-red-50 hover:text-red-600"
+            title="Deactivate"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ),
+    },
+  ]
 
   return (
     <div className="space-y-6">
@@ -492,111 +599,14 @@ export default function DistributionPage() {
           </Button>
         </Card>
       ) : (
-        <Card className="overflow-hidden p-0">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-zinc-100 bg-zinc-50">
-                <SortHeader colKey="title" label="Title" />
-                <SortHeader colKey="survey" label="Survey" />
-                <SortHeader colKey="location" label="Location" />
-                <SortHeader colKey="status" label="Status" />
-                <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedQRCodes.map((qr) => (
-                <tr
-                  key={qr.id}
-                  className="border-b border-zinc-100 last:border-0 hover:bg-zinc-50"
-                >
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      {/* Mini QR preview */}
-                      <button
-                        type="button"
-                        onClick={() => setQRPanel(qr)}
-                        className="flex-shrink-0 rounded-lg border border-zinc-200 bg-white p-0.5 hover:border-violet-400"
-                        title="View & download QR"
-                      >
-                        <QRCodeCanvas
-                          value={qrUrl(qr.title)}
-                          size={36}
-                          level="M"
-                          includeMargin={false}
-                        />
-                      </button>
-                      <div>
-                        <span className="font-medium text-zinc-900">{qr.title}</span>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-zinc-700">{qr.survey_title || "No survey"}</td>
-                  <td className="px-4 py-3 text-zinc-600">{qr.location_name || "No location"}</td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={[
-                        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium",
-                        qr.is_active
-                          ? "bg-emerald-50 text-emerald-700"
-                          : "bg-zinc-100 text-zinc-500",
-                      ].join(" ")}
-                    >
-                      <span
-                        className={[
-                          "inline-block h-1.5 w-1.5 rounded-full",
-                          qr.is_active ? "bg-emerald-500" : "bg-zinc-400",
-                        ].join(" ")}
-                      />
-                      {qr.is_active ? "Active" : "Inactive"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center justify-end gap-1">
-                      <button
-                        type="button"
-                        onClick={() => setQRPanel(qr)}
-                        className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-violet-600"
-                        title="View QR code"
-                      >
-                        <QrCode className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => openEdit(qr)}
-                        className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-                        title="Edit"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleToggleActive(qr)}
-                        className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-                        title={qr.is_active ? "Deactivate" : "Activate"}
-                      >
-                        {qr.is_active ? (
-                          <ToggleRight className="h-3.5 w-3.5 text-emerald-500" />
-                        ) : (
-                          <ToggleLeft className="h-3.5 w-3.5" />
-                        )}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(qr)}
-                        className="rounded-lg p-1.5 text-zinc-400 hover:bg-red-50 hover:text-red-600"
-                        title="Deactivate"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
+        <DataTable<QRCodeResponse>
+          data={sortedQRCodes}
+          columns={columns}
+          getRowKey={(qr) => qr.id}
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onSort={(key) => toggleSort(key as QRSortKey)}
+        />
       )}
 
       {/* QR Download Panel */}

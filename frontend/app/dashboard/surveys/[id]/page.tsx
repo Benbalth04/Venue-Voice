@@ -10,7 +10,6 @@ import {
   Eye,
   EyeOff,
   AlertCircle,
-  Globe,
   Save,
 } from "lucide-react"
 import { supabase } from "@/lib/supabase/client"
@@ -18,7 +17,6 @@ import {
   fetchQuestionTypesPublic,
   fetchSurveyLatest,
   saveSurveyVersion,
-  publishSurvey,
   SurveyStructureValidationError,
   extractErrorMessage,
   type QuestionTypeResponse,
@@ -299,29 +297,6 @@ export default function SurveyEditorPage() {
     }))
   }
 
-  async function handlePublish() {
-    const token = await getToken()
-    if (!token) return
-    const ok = await confirm({
-      title: "Publish survey",
-      message: "Publish this survey? It will become publicly accessible.",
-      confirmLabel: "Publish",
-    })
-    if (!ok) return
-    try {
-      setValidationErrors([])
-      const updated = await publishSurvey(token, surveyId)
-      setSurveyMeta(updated)
-    } catch (err) {
-      if (err instanceof SurveyStructureValidationError) {
-        setValidationErrors(err.schemaErrors)
-        setSaveError(err.message)
-      } else {
-        alert(extractErrorMessage(err, "Failed to publish"))
-      }
-    }
-  }
-
   function StatusBadge() {
     if (!surveyMeta) return null
     const map: Record<string, string> = {
@@ -417,15 +392,6 @@ export default function SurveyEditorPage() {
         <div className="flex flex-shrink-0 items-center gap-3">
           <SaveStatus />
 
-          {surveyMeta?.status === "draft" && (
-            <button
-              onClick={handlePublish}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
-            >
-              <Globe className="h-3 w-3" />
-              Publish
-            </button>
-          )}
 
           <button
             onClick={() => setShowPreview((v) => !v)}
@@ -499,7 +465,7 @@ export default function SurveyEditorPage() {
       )}
 
       {showPreview ? (
-        <div className="flex-1 overflow-y-auto bg-zinc-100 p-4 md:p-8">
+        <div className="flex-1 overflow-y-auto bg-zinc-100 p-4 md:p-6">
           <div className="mx-auto w-full max-w-2xl rounded-2xl bg-white p-6 shadow-md">
             <SurveyPreview survey={schema} />
           </div>

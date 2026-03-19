@@ -14,12 +14,14 @@ type AuthContextType = {
   loading: boolean
   session: any | null
   user: any | null
+  refreshUser: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextType>({
   loading: true,
   session: null,
   user: null,
+  refreshUser: async () => {},
 })
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -70,8 +72,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => sub.subscription.unsubscribe()
   }, [])
 
+  const refreshUser = async () => {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) {
+      setUser(null)
+      return
+    }
+    try {
+      const me = await fetchUser(session.access_token)
+      setUser(me)
+    } catch {
+      setUser(null)
+    }
+  }
+
   return (
-    <AuthContext.Provider value={{ loading, session, user }}>
+    <AuthContext.Provider value={{ loading, session, user, refreshUser }}>
       {children}
     </AuthContext.Provider>
   )

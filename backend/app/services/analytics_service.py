@@ -51,6 +51,23 @@ def _get_company_or_403(user_id: uuid.UUID, db: Session) -> CompanyORM:
     return company
 
 
+def has_unread_responses(*, user_id: uuid.UUID, db: Session) -> bool:
+    """Return True if the user has any completed survey responses they haven't read."""
+    company = _get_company_or_403(user_id, db)
+    read_ids_subq = (
+        db.query(ResponseReadORM.response_id).filter(ResponseReadORM.user_id == user_id)
+    )
+    unread = (
+        db.query(SurveyResponseORM.id)
+        .join(SurveySessionORM, SurveySessionORM.id == SurveyResponseORM.session_id)
+        .filter(SurveySessionORM.company_id == company.id)
+        .filter(SurveyResponseORM.id.notin_(read_ids_subq))
+        .limit(1)
+        .first()
+    )
+    return unread is not None
+
+
 def get_analytics_responses(
     *,
     user_id: uuid.UUID,
@@ -219,8 +236,8 @@ def get_analytics_responses(
 
     result_rows = [
         AnalyticsResponseRow(
-            response_id=str(r.response_id) if r.response_id else "",
-            session_id=str(r.session_id),
+            response_id=r.response_id,
+            session_id=r.session_id,
             survey_name=r.survey_name or "",
             qr_code_name=r.qr_code_name or "",
             location_name=r.location_name,
@@ -228,8 +245,8 @@ def get_analytics_responses(
             completed=bool(r.completed),
             time_to_complete_seconds=r.time_to_complete,
             questions_answered=int(r.questions_answered or 0),
-            survey_version_id=str(r.survey_version_id) if r.survey_version_id else "",
-            unread=bool(r.completed and r.response_id and r.response_id not in read_response_ids),
+            survey_version_id=r.survey_version_id,
+            unread=bool(r.completed and r.response_id is not None and r.response_id not in read_response_ids),
         )
         for r in rows
     ]
@@ -282,9 +299,9 @@ def get_analytics_filters(*, user_id: uuid.UUID, db: Session) -> AnalyticsFilter
     )
 
     return AnalyticsFiltersResponse(
-        surveys=[AnalyticsFilterOption(id=str(r.id), name=r.name) for r in surveys],
-        qr_codes=[AnalyticsFilterOption(id=str(r.id), name=r.title) for r in qr_codes],
-        locations=[AnalyticsFilterOption(id=str(r.id), name=r.name) for r in locations],
+        surveys=[AnalyticsFilterOption(id=r.id, name=r.name) for r in surveys],
+        qr_codes=[AnalyticsFilterOption(id=r.id, name=r.title) for r in qr_codes],
+        locations=[AnalyticsFilterOption(id=r.id, name=r.name) for r in locations],
     )
 
 
@@ -355,7 +372,7 @@ def get_response_detail(
             )
 
     return AnalyticsResponseDetail(
-        response_id=str(resp.id),
+        response_id=resp.id,
         survey_name=survey_name,
         answers=answer_details,
     )
@@ -380,7 +397,7 @@ def build_csv_bytes(rows: list[AnalyticsResponseRow]) -> bytes:
     ])
     for r in rows:
         writer.writerow([
-            r.response_id,
+            str(r.response_id) if r.response_id is not None else "",
             r.survey_name,
             r.qr_code_name,
             r.location_name or "No Location",
@@ -415,7 +432,7 @@ def build_excel_bytes(rows: list[AnalyticsResponseRow]) -> bytes:
 
     for r in rows:
         ws.append([
-            r.response_id,
+            str(r.response_id) if r.response_id is not None else "",
             r.survey_name,
             r.qr_code_name,
             r.location_name or "No Location",

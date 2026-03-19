@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.errors.exceptions import ConflictError, NotFoundError, PermissionError, ValidationError
@@ -10,6 +10,7 @@ from app.core.errors.exceptions import ConflictError, NotFoundError, PermissionE
 from app.auth.jwt import get_current_user
 from app.db.postgres import get_db_connection
 from app.models.postgres_model import Survey as SurveyORM
+from app.models.postgres_model import User as UserORM
 from ..models.postgres_model import Company as CompanyORM
 from app.models.postgres_model import Question as QuestionORM
 from app.models.postgres_model import QuestionType as QuestionTypeORM
@@ -158,25 +159,30 @@ def _get_user_company(
     return company
 
 
-def _survey_to_list_item(s: SurveyORM) -> SurveyListItem:
+def _survey_to_list_item(
+    s: SurveyORM,
+    last_edited_by: str | None = None,
+) -> SurveyListItem:
     return SurveyListItem(
-        id=str(s.id),
+        id=s.id,
         title=s.name,
         status=s.status.value if hasattr(s.status, "value") else str(s.status),
         latest_version=s.latest_version,
+        last_edited_by=last_edited_by,
         created_at=s.created_at.isoformat() if s.created_at else "",
         updated_at=s.updated_at.isoformat() if s.updated_at else "",
     )
 
 
-def _survey_to_with_schema(s: SurveyORM, sv: SurveyVersionORM) -> SurveyWithSchema:
+def _to_survey_with_schema(s: SurveyORM, sv: SurveyVersionORM, last_edited_by: str | None = None) -> SurveyWithSchema:
     return SurveyWithSchema(
-        id=str(s.id),
+        id=s.id,
         title=s.name,
         status=s.status.value if hasattr(s.status, "value") else str(s.status),
         latest_version=s.latest_version,
         created_at=s.created_at.isoformat() if s.created_at else "",
         updated_at=s.updated_at.isoformat() if s.updated_at else "",
+        last_edited_by=last_edited_by,
         survey_schema_json=sv.schema_json,
     )
 
@@ -196,6 +202,28 @@ def _get_survey_or_404(survey_id: str, user: Any, db: Session, company_id = None
     if survey.company_id != company_id:
         raise PermissionError(code="ACCESS_DENIED", message="Access denied")
     return survey
+
+
+def _get_last_edited_by(survey_id: uuid.UUID, latest_version: int, current_user_id: uuid.UUID, db: Session) -> str | None:
+    """Return display name of user who last edited the survey, or 'You' if current user."""
+    latest_sv = (
+        db.query(SurveyVersionORM)
+        .filter(
+            SurveyVersionORM.survey_id == survey_id,
+            SurveyVersionORM.version_number == latest_version,
+        )
+        .first()
+    )
+    if not latest_sv or not latest_sv.created_by:
+        return None
+    editor = db.query(UserORM).filter(UserORM.id == latest_sv.created_by).first()
+
+    if not editor:
+        return None
+    if editor.id == current_user_id:
+        return "You"
+    display = f"{editor.first_name} {editor.last_name}".strip()
+    return display if display else editor.email
 
 
 def _get_latest_version_or_404(survey_id: uuid.UUID, db: Session) -> SurveyVersionORM:
@@ -235,21 +263,28 @@ def list_question_types(
 # ------------------------------------------------------------------
 @router.get("/surveys", response_model=list[SurveyListItem])
 def list_surveys(
+    status: str | None = Query(None, description="Filter by status, e.g. 'active'"),
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db_connection),
 ):
-
+    """List surveys. Optional ?status=active to filter to active surveys only (e.g. for distribution dropdown)."""
     company = _get_user_company(current_user, db)
     company_id = company.id
 
-    surveys = (
+    q = (
         db.query(SurveyORM)
         .filter(SurveyORM.company_id == company_id)
-        .order_by(SurveyORM.updated_at.desc())
-        .all()
     )
-    
-    return [_survey_to_list_item(s) for s in surveys]
+    if status == "active":
+        q = q.filter(SurveyORM.status == SurveyStatus.active)
+    q = q.order_by(SurveyORM.updated_at.desc())
+    surveys = q.all()
+
+    result = []
+    for s in surveys:
+        last_edited_by = _get_last_edited_by(s.id, s.latest_version, current_user.id, db)
+        result.append(_survey_to_list_item(s, last_edited_by=last_edited_by))
+    return result
 
 
 # ------------------------------------------------------------------
@@ -261,7 +296,9 @@ def get_survey(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db_connection),
 ):
-    return _survey_to_list_item(_get_survey_or_404(survey_id, current_user, db))
+    survey = _get_survey_or_404(survey_id, current_user, db)
+    last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)
+    return _survey_to_list_item(survey, last_edited_by=last_edited_by)
 
 
 # ------------------------------------------------------------------
@@ -274,8 +311,15 @@ def get_survey_latest(
     db: Session = Depends(get_db_connection),
 ):
     survey = _get_survey_or_404(survey_id, current_user, db)
+    if survey.status == SurveyStatus.active:
+        raise ValidationError(
+            code="SURVEY_ACTIVE_NO_EDIT",
+            message="Cannot edit an active survey. Unpublish it first to make changes.",
+            status_code=422,
+        )
     sv = _get_latest_version_or_404(survey.id, db)
-    return _survey_to_with_schema(survey, sv)
+    last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)
+    return _to_survey_with_schema(survey, sv, last_edited_by)
 
 
 # ------------------------------------------------------------------
@@ -334,7 +378,7 @@ def create_survey(
     db.refresh(survey)
     db.refresh(sv)
 
-    return _survey_to_with_schema(survey, sv)
+    return _to_survey_with_schema(survey, sv, str(current_user.id))
 
 
 # ------------------------------------------------------------------
@@ -348,6 +392,12 @@ def save_survey_version(
     db: Session = Depends(get_db_connection),
 ):
     survey = _get_survey_or_404(survey_id, current_user, db)
+    if survey.status == SurveyStatus.active:
+        raise ValidationError(
+            code="SURVEY_ACTIVE_NO_EDIT",
+            message="Cannot edit an active survey. Unpublish it first to make changes.",
+            status_code=422,
+        )
     current_sv = _get_latest_version_or_404(survey.id, db)
 
     # Optimistic concurrency control
@@ -364,9 +414,11 @@ def save_survey_version(
     if not valid:
         raise ValidationError(code="INVALID_SURVEY_SCHEMA", message="Survey schema validation failed", details={"schema_errors": errors}, status_code=422)
 
+    last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)
+
     # Do not create a duplicate version row when there are no schema changes.
     if current_sv.schema_json == payload.survey_schema_json:
-        return _survey_to_with_schema(survey, current_sv)
+        return _to_survey_with_schema(survey, current_sv, last_edited_by)
 
     new_version_number = survey.latest_version + 1
     theme_settings = _extract_theme_settings(payload.survey_schema_json)
@@ -388,7 +440,7 @@ def save_survey_version(
     db.refresh(survey)
     db.refresh(sv)
 
-    return _survey_to_with_schema(survey, sv)
+    return _to_survey_with_schema(survey, sv, str(current_user.id))
 
 
 # ------------------------------------------------------------------
@@ -401,11 +453,8 @@ def update_survey_meta(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db_connection),
 ):
-    
+    survey = _get_survey_or_404(survey_id, current_user, db)
     company = _get_user_company(current_user, db)
-    company_id = company.id
-
-    survey = _get_survey_or_404(survey_id, current_user, db, company_id)
 
     if payload.title is not None:
         new_title = payload.title.strip()
@@ -414,7 +463,7 @@ def update_survey_meta(
         conflict = (
             db.query(SurveyORM)
             .filter(
-                SurveyORM.company_id == company_id,
+                SurveyORM.company_id == company.id,
                 SurveyORM.name == new_title,
                 SurveyORM.id != survey.id,
             )
@@ -430,7 +479,8 @@ def update_survey_meta(
     survey.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(survey)
-    return _survey_to_list_item(survey)
+    last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)
+    return _survey_to_list_item(survey, last_edited_by=last_edited_by)
 
 
 # ------------------------------------------------------------------
@@ -451,7 +501,8 @@ def publish_survey(
     survey.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(survey)
-    return _survey_to_list_item(survey)
+    last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)
+    return _survey_to_list_item(survey, last_edited_by=last_edited_by)
 
 
 # ------------------------------------------------------------------
@@ -468,7 +519,56 @@ def archive_survey(
     survey.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(survey)
-    return _survey_to_list_item(survey)
+    last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)
+    return _survey_to_list_item(survey, last_edited_by=last_edited_by)
+
+
+# ------------------------------------------------------------------
+# PATCH /surveys/{id}/unpublish  –  unpublish (active -> draft)
+# ------------------------------------------------------------------
+@router.patch("/surveys/{survey_id}/unpublish", response_model=SurveyListItem)
+def unpublish_survey(
+    survey_id: str,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    survey = _get_survey_or_404(survey_id, current_user, db)
+    if survey.status != SurveyStatus.active:
+        raise ValidationError(
+            code="SURVEY_NOT_ACTIVE",
+            message="Only active surveys can be unpublished",
+            status_code=422,
+        )
+    survey.status = SurveyStatus.draft
+    survey.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(survey)
+    last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)
+    return _survey_to_list_item(survey, last_edited_by=last_edited_by)
+
+
+# ------------------------------------------------------------------
+# PATCH /surveys/{id}/unarchive  –  unarchive (archived -> draft)
+# ------------------------------------------------------------------
+@router.patch("/surveys/{survey_id}/unarchive", response_model=SurveyListItem)
+def unarchive_survey(
+    survey_id: str,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    survey = _get_survey_or_404(survey_id, current_user, db)
+    if survey.status != SurveyStatus.archived:
+        raise ValidationError(
+            code="SURVEY_NOT_ARCHIVED",
+            message="Only archived surveys can be unarchived",
+            status_code=422,
+        )
+    survey.status = SurveyStatus.draft
+    survey.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(survey)
+    last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)
+    return _survey_to_list_item(survey, last_edited_by=last_edited_by)
 
 
 # ------------------------------------------------------------------
@@ -531,4 +631,4 @@ def duplicate_survey(
     db.refresh(new_survey)
     db.refresh(new_sv)
 
-    return _survey_to_with_schema(new_survey, new_sv)
+    return _to_survey_with_schema(new_survey, new_sv, str(current_user.id))

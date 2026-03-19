@@ -1,6 +1,7 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import {
@@ -22,6 +23,8 @@ import {
   createSurvey,
   publishSurvey,
   archiveSurvey,
+  unpublishSurvey,
+  unarchiveSurvey,
   duplicateSurvey,
   updateSurveyMeta,
   extractErrorMessage,
@@ -30,6 +33,7 @@ import {
 import { defaultSurvey } from "@/lib/survey/defaultSurvey"
 import { surveyToApi } from "@/lib/survey/richText"
 import { useConfirm } from "@/components/ui/ConfirmDialog"
+import { DataTable, type DataTableColumn } from "@/components/ui/DataTable"
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; cls: string; icon: React.ReactNode }> = {
@@ -63,37 +67,68 @@ function StatusBadge({ status }: { status: string }) {
 function ActionsMenu({
   survey,
   onPublish,
+  onUnpublish,
   onArchive,
+  onUnarchive,
   onDuplicate,
   onConfirmArchive,
+  onConfirmUnarchive,
 }: {
   survey: SurveyListItem
   onPublish: (id: string) => Promise<void>
+  onUnpublish: (id: string) => Promise<void>
   onArchive: (id: string) => Promise<void>
+  onUnarchive: (id: string) => Promise<void>
   onDuplicate: (id: string) => Promise<void>
   onConfirmArchive: (id: string) => Promise<void>
+  onConfirmUnarchive: (id: string) => Promise<void>
 }) {
   const [open, setOpen] = useState(false)
+  const [position, setPosition] = useState({ top: 0, right: 0 })
+  const buttonRef = useRef<HTMLButtonElement>(null)
   const router = useRouter()
+
+  useLayoutEffect(() => {
+    if (!open || !buttonRef.current) return
+    const rect = buttonRef.current.getBoundingClientRect()
+    setPosition({
+      top: rect.bottom + 4,
+      right: window.innerWidth - rect.right,
+    })
+  }, [open])
 
   return (
     <div className="relative">
       <button
+        ref={buttonRef}
         onClick={() => setOpen((v) => !v)}
         className="rounded p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
       >
         <MoreHorizontal className="h-4 w-4" />
       </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 z-20 mt-1 w-44 rounded-xl border border-zinc-200 bg-white py-1 shadow-lg">
+      {open &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <>
+            <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} aria-hidden />
+            <div
+              className="fixed z-20 w-44 rounded-xl border border-zinc-200 bg-white py-1 shadow-lg"
+              style={{ top: position.top, right: position.right }}
+            >
             <button
-              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50"
+              className={`flex w-full items-center gap-2 px-3 py-2 text-sm ${
+                survey.status === "active"
+                  ? "cursor-not-allowed text-zinc-400"
+                  : "text-zinc-700 hover:bg-zinc-50"
+              }`}
               onClick={() => {
                 setOpen(false)
-                router.push(`/dashboard/surveys/${survey.id}`)
+                if (survey.status !== "active") {
+                  router.push(`/dashboard/surveys/${survey.id}`)
+                }
               }}
+              disabled={survey.status === "active"}
+              title={survey.status === "active" ? "Unpublish first to edit" : "Edit survey"}
             >
               <Edit className="h-4 w-4" /> Edit
             </button>
@@ -117,7 +152,29 @@ function ActionsMenu({
                 <Globe className="h-4 w-4" /> Publish
               </button>
             )}
-            {survey.status !== "archived" && (
+            {survey.status === "active" && (
+              <button
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-amber-700 hover:bg-amber-50"
+                onClick={async () => {
+                  setOpen(false)
+                  await onUnpublish(survey.id)
+                }}
+              >
+                <Globe className="h-4 w-4" /> Unpublish
+              </button>
+            )}
+            {survey.status === "archived" && (
+              <button
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-50"
+                onClick={async () => {
+                  setOpen(false)
+                  await onConfirmUnarchive(survey.id)
+                }}
+              >
+                <Archive className="h-4 w-4" /> Unarchive
+              </button>
+            )}
+            {survey.status === "draft" && (
               <button
                 className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50"
                 onClick={async () => {
@@ -128,9 +185,10 @@ function ActionsMenu({
                 <Archive className="h-4 w-4" /> Archive
               </button>
             )}
-          </div>
-        </>
-      )}
+            </div>
+          </>,
+          document.body
+        )}
     </div>
   )
 }
@@ -209,6 +267,20 @@ export default function SurveysListPage() {
     setSurveys((prev) => prev.map((s) => (s.id === id ? { ...s, ...updated } : s)))
   }
 
+  async function handleUnpublish(id: string) {
+    const token = await getToken()
+    if (!token) return
+    const updated = await unpublishSurvey(token, id)
+    setSurveys((prev) => prev.map((s) => (s.id === id ? { ...s, ...updated } : s)))
+  }
+
+  async function handleUnarchive(id: string) {
+    const token = await getToken()
+    if (!token) return
+    const updated = await unarchiveSurvey(token, id)
+    setSurveys((prev) => prev.map((s) => (s.id === id ? { ...s, ...updated } : s)))
+  }
+
   async function handleConfirmArchive(id: string) {
     const ok = await confirm({
       title: "Archive survey",
@@ -218,6 +290,16 @@ export default function SurveysListPage() {
       variant: "danger",
     })
     if (ok) await handleArchive(id)
+  }
+
+  async function handleConfirmUnarchive(id: string) {
+    const ok = await confirm({
+      title: "Unarchive survey",
+      message: "Restore this survey to draft? You can edit and publish it again.",
+      confirmLabel: "Unarchive",
+      cancelLabel: "Cancel",
+    })
+    if (ok) await handleUnarchive(id)
   }
 
   async function handleDuplicate(id: string) {
@@ -266,7 +348,7 @@ export default function SurveysListPage() {
     })
   }
 
-  type SortKey = "title" | "status" | "latest_version" | "updated_at"
+  type SortKey = "title" | "status" | "last_edited_by" | "updated_at"
   type SortDir = "asc" | "desc"
   const [sortKey, setSortKey] = useState<SortKey>("updated_at")
   const [sortDir, setSortDir] = useState<SortDir>("desc")
@@ -280,8 +362,8 @@ export default function SurveysListPage() {
       case "status":
         cmp = a.status.localeCompare(b.status)
         break
-      case "latest_version":
-        cmp = a.latest_version - b.latest_version
+      case "last_edited_by":
+        cmp = (a.last_edited_by ?? "").localeCompare(b.last_edited_by ?? "")
         break
       case "updated_at":
         cmp = new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
@@ -296,30 +378,85 @@ export default function SurveysListPage() {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"))
     else {
       setSortKey(key)
-      setSortDir(key === "title" || key === "status" ? "asc" : "desc")
+      setSortDir(key === "title" || key === "status" || key === "last_edited_by" ? "asc" : "desc")
     }
   }
 
-  function SortHeader({
-    colKey,
-    label,
-  }: {
-    colKey: SortKey
-    label: string
-  }) {
-    const active = sortKey === colKey
-    return (
-      <th
-        className="cursor-pointer select-none px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-400 hover:text-zinc-600"
-        onClick={() => toggleSort(colKey)}
-      >
-        <span className="inline-flex items-center gap-1">
-          {label}
-          {active && (sortDir === "asc" ? " ↑" : " ↓")}
-        </span>
-      </th>
-    )
-  }
+  const columns: DataTableColumn<SurveyListItem>[] = [
+    {
+      key: "title",
+      label: "Title",
+      sortable: true,
+      align: "center",
+      render: (s) => (
+        <div className="flex items-center justify-center gap-2">
+          {s.status === "active" ? (
+            <span className="break-words font-medium text-zinc-900">{s.title}</span>
+          ) : (
+            <Link
+              href={`/dashboard/surveys/${s.id}`}
+              className="break-words font-medium text-zinc-900 hover:text-violet-700 hover:underline"
+            >
+              {s.title}
+            </Link>
+          )}
+          {s.status !== "active" && (
+            <button
+              type="button"
+              onClick={() => openTitleModal(s)}
+              className="flex-shrink-0 rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+              aria-label={`Edit title for ${s.title}`}
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "status",
+      label: "Status",
+      sortable: true,
+      align: "center",
+      render: (s) => <StatusBadge status={s.status} />,
+    },
+    {
+      key: "last_edited_by",
+      label: "Last edited by",
+      sortable: true,
+      align: "center",
+      render: (s) => (
+        <span className="break-words text-zinc-500">{s.last_edited_by ?? "—"}</span>
+      ),
+    },
+    {
+      key: "updated_at",
+      label: "Last updated",
+      sortable: true,
+      align: "center",
+      render: (s) => (
+        <span className="break-words text-zinc-500">{formatDate(s.updated_at)}</span>
+      ),
+    },
+    {
+      key: "actions",
+      label: "",
+      sortable: false,
+      align: "center",
+      render: (s) => (
+        <ActionsMenu
+          survey={s}
+          onPublish={handlePublish}
+          onUnpublish={handleUnpublish}
+          onArchive={handleArchive}
+          onUnarchive={handleUnarchive}
+          onDuplicate={handleDuplicate}
+          onConfirmArchive={handleConfirmArchive}
+          onConfirmUnarchive={handleConfirmUnarchive}
+        />
+      ),
+    },
+  ]
 
   return (
     <div className="flex flex-col gap-6">
@@ -388,57 +525,14 @@ export default function SurveysListPage() {
 
       {/* Survey list */}
       {!loading && surveys.length > 0 && (
-        <div className="rounded-xl border border-zinc-200 bg-white">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-zinc-100 text-left text-xs font-semibold uppercase tracking-wide text-zinc-400">
-                <SortHeader colKey="title" label="Title" />
-                <SortHeader colKey="status" label="Status" />
-                <SortHeader colKey="latest_version" label="Version" />
-                <SortHeader colKey="updated_at" label="Last updated" />
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-50">
-              {sortedSurveys.map((s) => (
-                <tr key={s.id} className="group hover:bg-zinc-50">
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <Link
-                        href={`/dashboard/surveys/${s.id}`}
-                        className="font-medium text-zinc-900 hover:text-violet-700 hover:underline"
-                      >
-                        {s.title}
-                      </Link>
-                      <button
-                        type="button"
-                        onClick={() => openTitleModal(s)}
-                        className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-                        aria-label={`Edit title for ${s.title}`}
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <StatusBadge status={s.status} />
-                  </td>
-                  <td className="px-4 py-3 text-zinc-500">v{s.latest_version}</td>
-                  <td className="px-4 py-3 text-zinc-500">{formatDate(s.updated_at)}</td>
-                  <td className="px-4 py-3">
-                    <ActionsMenu
-                      survey={s}
-                      onPublish={handlePublish}
-                      onArchive={handleArchive}
-                      onDuplicate={handleDuplicate}
-                      onConfirmArchive={handleConfirmArchive}
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable<SurveyListItem>
+          data={sortedSurveys}
+          columns={columns}
+          getRowKey={(s) => s.id}
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onSort={(key) => toggleSort(key as SortKey)}
+        />
       )}
 
       {/* Create modal */}

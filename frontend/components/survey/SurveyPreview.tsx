@@ -17,7 +17,7 @@ export function SurveyPreview({ survey }: { survey: Survey }) {
 
   return (
     <div
-      className="h-full w-full overflow-y-auto p-8"
+      className="h-full w-full overflow-y-auto p-6"
       style={{ backgroundColor: survey.theme.backgroundColor }}
     >
       <div className="w-full">
@@ -36,7 +36,7 @@ export function SurveyPreview({ survey }: { survey: Survey }) {
           </p>
         )}
 
-        <div className="mt-8">
+        <div className="mt-6">
           <button
             type="button"
             className="w-full rounded-xl bg-violet-600 px-4 py-3 text-sm font-semibold text-white shadow-sm outline-none hover:bg-violet-700 focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
@@ -45,11 +45,11 @@ export function SurveyPreview({ survey }: { survey: Survey }) {
           >
             Submit
           </button>
-          <div className="mt-6 flex justify-center">
+          <div className="mt-4 flex justify-center">
             <img
               src="/venue_voice_logo_3.png"
               alt="Venue Voice"
-              className="h-15 w-auto object-contain margin-bottom-0"
+              className="h-12 w-auto object-contain"
               aria-hidden
             />
           </div>

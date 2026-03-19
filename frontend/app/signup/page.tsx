@@ -16,11 +16,31 @@ export default function SignupPage() {
   const [lastName, setLastName] = useState("")
 
   const [error, setError] = useState<string | null>(null)
+  const [fieldErrors, setFieldErrors] = useState<{
+    firstName?: string
+    lastName?: string
+    email?: string
+    password?: string
+  }>({})
   const [loading, setLoading] = useState(false)
+
+  function validate(): boolean {
+    const errs: typeof fieldErrors = {}
+    if (!firstName.trim()) errs.firstName = "First name is required"
+    if (!lastName.trim()) errs.lastName = "Last name is required"
+    if (!email.trim()) errs.email = "Email is required"
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errs.email = "Please enter a valid email address"
+    if (!password) errs.password = "Password is required"
+    else if (password.length < 6) errs.password = "Password must be at least 6 characters"
+    setFieldErrors(errs)
+    return Object.keys(errs).length === 0
+  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
+    setFieldErrors({})
+    if (!validate()) return
     setLoading(true)
     try {
       const { error: signUpError } = await supabase.auth.signUp({
@@ -72,50 +92,78 @@ export default function SignupPage() {
         <form className="mt-6 space-y-4" onSubmit={onSubmit}>
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block">
-              <span className="text-sm font-medium text-zinc-700">First name</span>
+              <span className="text-sm font-medium text-zinc-700">First name <span className="text-red-500">*</span></span>
               <input
-                className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
+                className={`mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 ${
+                  fieldErrors.firstName ? "border-red-300 bg-red-50" : "border-zinc-200 bg-white"
+                }`}
                 autoComplete="given-name"
                 value={firstName}
-                onChange={(e) => setFirstName(e.target.value)}
-                required
+                onChange={(e) => {
+                  setFirstName(e.target.value)
+                  if (fieldErrors.firstName) setFieldErrors((p) => ({ ...p, firstName: undefined }))
+                }}
               />
+              {fieldErrors.firstName && (
+                <p className="mt-1 text-xs text-red-600">{fieldErrors.firstName}</p>
+              )}
             </label>
 
             <label className="block">
-              <span className="text-sm font-medium text-zinc-700">Last name</span>
+              <span className="text-sm font-medium text-zinc-700">Last name <span className="text-red-500">*</span></span>
               <input
-                className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
+                className={`mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 ${
+                  fieldErrors.lastName ? "border-red-300 bg-red-50" : "border-zinc-200 bg-white"
+                }`}
                 autoComplete="family-name"
                 value={lastName}
-                onChange={(e) => setLastName(e.target.value)}
-                required
+                onChange={(e) => {
+                  setLastName(e.target.value)
+                  if (fieldErrors.lastName) setFieldErrors((p) => ({ ...p, lastName: undefined }))
+                }}
               />
+              {fieldErrors.lastName && (
+                <p className="mt-1 text-xs text-red-600">{fieldErrors.lastName}</p>
+              )}
             </label>
           </div>
 
           <label className="block">
-            <span className="text-sm font-medium text-zinc-700">Email</span>
+            <span className="text-sm font-medium text-zinc-700">Email <span className="text-red-500">*</span></span>
             <input
-              className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
+              className={`mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 ${
+                fieldErrors.email ? "border-red-300 bg-red-50" : "border-zinc-200 bg-white"
+              }`}
               autoComplete="email"
               inputMode="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
+              onChange={(e) => {
+                setEmail(e.target.value)
+                if (fieldErrors.email) setFieldErrors((p) => ({ ...p, email: undefined }))
+              }}
             />
+            {fieldErrors.email && (
+              <p className="mt-1 text-xs text-red-600">{fieldErrors.email}</p>
+            )}
           </label>
 
           <label className="block">
-            <span className="text-sm font-medium text-zinc-700">Password</span>
+            <span className="text-sm font-medium text-zinc-700">Password <span className="text-red-500">*</span></span>
             <input
-              className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
+              className={`mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 ${
+                fieldErrors.password ? "border-red-300 bg-red-50" : "border-zinc-200 bg-white"
+              }`}
               type="password"
               autoComplete="new-password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
+              onChange={(e) => {
+                setPassword(e.target.value)
+                if (fieldErrors.password) setFieldErrors((p) => ({ ...p, password: undefined }))
+              }}
             />
+            {fieldErrors.password && (
+              <p className="mt-1 text-xs text-red-600">{fieldErrors.password}</p>
+            )}
           </label>
 
           {error ? (

@@ -70,6 +70,10 @@ export function Toolbar({
 
   return (
     <div className="flex flex-col gap-0">
+      <div className="border-b border-zinc-100 px-3 pb-3 pt-2">
+        <p className="text-sm font-semibold text-zinc-900">Question Types</p>
+        <p className="mt-0.5 text-xs text-zinc-500">Click an option to add to the survey</p>
+      </div>
       {groups.map((group) => (
         <div key={group.label}>
           <div className="px-3 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">

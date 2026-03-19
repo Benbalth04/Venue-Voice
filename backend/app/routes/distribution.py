@@ -3,7 +3,7 @@ import uuid
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import RedirectResponse
 
-from ..core.errors.exceptions import ConflictError, NotFoundError, ValidationError
+from ..core.errors.exceptions import ConflictError, NotFoundError
 from sqlalchemy.orm import Session, joinedload
 
 
@@ -52,11 +52,11 @@ def _get_qr_or_404(qr_id: str, company_id: uuid.UUID, db: Session) -> QRCodeORM:
 
 def _to_response(qr: QRCodeORM, survey_title: str | None = None, location_name: str | None = None) -> QRCodeResponse:
     return QRCodeResponse(
-        id=str(qr.id),
+        id=qr.id,
         title=qr.title,
-        survey_id=str(qr.survey_id),
+        survey_id=qr.survey_id,
         survey_title=survey_title,
-        location_id=str(qr.location_id) if qr.location_id else None,
+        location_id=qr.location_id,
         location_name=location_name,
         is_active=qr.is_active,
         created_at=qr.created_at.isoformat(),
@@ -76,10 +76,20 @@ def list_qr_codes(
     # Query with eager loading for survey and location
     qrs = (
         db.query(QRCodeORM)
+        .options(
+            joinedload(QRCodeORM.survey),
+            joinedload(QRCodeORM.location),
+        )
         .filter(QRCodeORM.company_id == company.id)
         .order_by(QRCodeORM.created_at.desc())
         .all()
     )
+
+    for qr in qrs:
+        print("QR:", qr.id)
+        print("survey_id:", qr.survey_id)
+        print("survey:", qr.survey)
+        print("location:", qr.location)
 
     # Map each QR to response
     return [
@@ -101,27 +111,18 @@ def create_qr_code(
     company = _get_company(user, db)
 
     # Validate survey belongs to company
-    try:
-        survey_uid = uuid.UUID(payload.survey_id)
-    except ValueError:
-        raise ValidationError(code="INVALID_SURVEY_ID", message="Invalid survey_id")
-
     survey = db.query(SurveyORM).filter(
-        SurveyORM.id == survey_uid,
+        SurveyORM.id == payload.survey_id,
         SurveyORM.company_id == company.id,
     ).first()
     if not survey:
         raise NotFoundError(code="SURVEY_NOT_FOUND", message="Survey not found")
 
     # Validate location belongs to company (if provided)
-    location_uid = None
-    if payload.location_id:
-        try:
-            location_uid = uuid.UUID(payload.location_id)
-        except ValueError:
-            raise ValidationError(code="INVALID_LOCATION_ID", message="Invalid location_id")
+    loc = None
+    if payload.location_id is not None:
         loc = db.query(LocationORM).filter(
-            LocationORM.id == location_uid,
+            LocationORM.id == payload.location_id,
             LocationORM.company_id == company.id,
         ).first()
         if not loc:
@@ -136,13 +137,13 @@ def create_qr_code(
         company_id=company.id,
         title=payload.title.strip(),
         is_active=True,
-        survey_id=survey_uid,
-        location_id=location_uid,
+        survey_id=payload.survey_id,
+        location_id=payload.location_id,
     )
     db.add(qr)
     db.commit()
     db.refresh(qr)
-    return _to_response(qr)
+    return _to_response(qr=qr, survey_title=survey.name if payload.survey_id else None, location_name=loc.name if payload.location_id else None)
 
 
 @router.patch("/qr-codes/{qr_id}", response_model=QRCodeResponse)
@@ -165,31 +166,26 @@ def update_qr_code(
             raise ConflictError(code="QR_TITLE_CONFLICT", message="Title is already in use")
         qr.title = title
 
+    survey = None
+    loc = None
+
     if payload.survey_id is not None:
-        try:
-            survey_uid = uuid.UUID(payload.survey_id)
-        except ValueError:
-            raise ValidationError(code="INVALID_SURVEY_ID", message="Invalid survey_id")
         survey = db.query(SurveyORM).filter(
-            SurveyORM.id == survey_uid,
+            SurveyORM.id == payload.survey_id,
             SurveyORM.company_id == company.id,
         ).first()
         if not survey:
             raise NotFoundError(code="SURVEY_NOT_FOUND", message="Survey not found")
-        qr.survey_id = survey_uid
+        qr.survey_id = payload.survey_id
 
     if payload.location_id is not None:
-        try:
-            location_uid = uuid.UUID(payload.location_id)
-        except ValueError:
-            raise ValidationError(code="INVALID_LOCATION_ID", message="Invalid location_id")
         loc = db.query(LocationORM).filter(
-            LocationORM.id == location_uid,
+            LocationORM.id == payload.location_id,
             LocationORM.company_id == company.id,
         ).first()
         if not loc:
             raise NotFoundError(code="LOCATION_NOT_FOUND", message="Location not found")
-        qr.location_id = location_uid
+        qr.location_id = payload.location_id
     elif "location_id" in payload.model_dump(exclude_unset=True) and payload.location_id is None:
         qr.location_id = None
 
@@ -198,7 +194,7 @@ def update_qr_code(
 
     db.commit()
     db.refresh(qr)
-    return _to_response(qr)
+    return _to_response(qr=qr, survey_title=survey.name if payload.survey_id else None, location_name=loc.name if payload.location_id else None)
 
 
 @router.delete("/qr-codes/{qr_id}", status_code=204)
@@ -216,7 +212,6 @@ def deactivate_qr_code(
 # --------------------------------------------------
 # Public: QR redirect  (mounted at /q, no /api/v1 prefix)
 # --------------------------------------------------
-
 @public_router.get("/{title}")
 def resolve_qr(
     title: str,

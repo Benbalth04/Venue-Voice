@@ -22,6 +22,7 @@ import {
   type AnalyticsFilters,
   type AnalyticsResponseRow,
 } from "@/lib/api/client"
+import { DataTable, type DataTableColumn } from "@/components/ui/DataTable"
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -84,6 +85,8 @@ function ReviewModal({
   const [surveyName, setSurveyName] = useState("")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [sortKey, setSortKey] = useState<string>("question")
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc")
 
   useEffect(() => {
     let cancelled = false
@@ -146,24 +149,45 @@ function ReviewModal({
           {!loading && !error && answers.length === 0 && (
             <p className="py-8 text-center text-sm text-zinc-400">No answers recorded.</p>
           )}
-          {!loading && !error && answers.length > 0 && (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-zinc-100">
-                  <th className="py-2 pr-4 text-left font-medium text-zinc-500">Question</th>
-                  <th className="py-2 text-left font-medium text-zinc-500">Answer</th>
-                </tr>
-              </thead>
-              <tbody>
-                {answers.map((a, i) => (
-                  <tr key={i} className="border-b border-zinc-50 last:border-0">
-                    <td className="py-3 pr-4 text-zinc-700 align-top">{a.question_text}</td>
-                    <td className="py-3 font-medium text-zinc-900 align-top">{a.answer_value || "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+          {!loading && !error && answers.length > 0 && (() => {
+            const sorted = [...answers].sort((a, b) => {
+              const cmp =
+                sortKey === "question"
+                  ? a.question_text.localeCompare(b.question_text)
+                  : (a.answer_value ?? "").localeCompare(b.answer_value ?? "")
+              return sortDir === "asc" ? cmp : -cmp
+            })
+            return (
+              <DataTable<AnalyticsAnswerDetail>
+                data={sorted}
+                columns={[
+                  {
+                    key: "question",
+                    label: "Question",
+                    sortable: true,
+                    align: "left",
+                    render: (a) => <span className="text-zinc-700">{a.question_text}</span>,
+                  },
+                  {
+                    key: "answer",
+                    label: "Answer",
+                    sortable: true,
+                    align: "left",
+                    render: (a) => (
+                      <span className="font-medium text-zinc-900">{a.answer_value || "—"}</span>
+                    ),
+                  },
+                ]}
+                getRowKey={(a) => `${a.question_text}-${a.answer_value ?? ""}`}
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onSort={(key) => {
+                  setSortKey(key)
+                  setSortDir((d) => (sortKey === key && d === "asc" ? "desc" : "asc"))
+                }}
+              />
+            )
+          })()}
         </div>
 
         <div className="border-t border-zinc-100 px-6 py-3 text-right">
@@ -311,35 +335,6 @@ function FiltersPanel({
         </div>
       </div>
     </div>
-  )
-}
-
-// ─── Sort Header Cell ─────────────────────────────────────────────────────────
-
-function SortableTh({
-  col,
-  label,
-  current,
-  direction,
-  onSort,
-}: {
-  col: string
-  label: string
-  current: string
-  direction: "asc" | "desc"
-  onSort: (col: string) => void
-}) {
-  const active = current === col
-  return (
-    <th
-      onClick={() => onSort(col)}
-      className="cursor-pointer select-none whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500 hover:text-zinc-800"
-    >
-      {label}
-      {active && (
-        <span className="ml-1 text-violet-500">{direction === "desc" ? "↓" : "↑"}</span>
-      )}
-    </th>
   )
 }
 
@@ -533,159 +528,152 @@ export default function AnalyticsPage() {
       )}
 
       {/* Table */}
-      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px] text-sm">
-            <thead className="border-b border-zinc-200 bg-zinc-50">
-              <tr>
-                <th className="w-3 px-2 py-3" aria-label="Unread" />
-                <SortableTh
-                  col="survey_name" label="Survey"
-                  current={filters.sort_column} direction={filters.sort_direction}
-                  onSort={handleSort}
+      <DataTable<AnalyticsResponseRow>
+        data={rows}
+        columns={[
+          {
+            key: "unread",
+            label: "",
+            sortable: false,
+            align: "center",
+            headerClassName: "w-3",
+            cellClassName: "w-3 px-2",
+            render: (row) =>
+              row.completed && row.unread ? (
+                <span
+                  className="inline-block h-2.5 w-2.5 rounded-full bg-violet-500"
+                  title="Unread"
+                  aria-hidden
                 />
-                <SortableTh
-                  col="qr_code_name" label="QR Code"
-                  current={filters.sort_column} direction={filters.sort_direction}
-                  onSort={handleSort}
-                />
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                  Location
-                </th>
-                <SortableTh
-                  col="scan_time" label="Date Scanned"
-                  current={filters.sort_column} direction={filters.sort_direction}
-                  onSort={handleSort}
-                />
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                  Completed
-                </th>
-                <SortableTh
-                  col="time_to_complete" label="Time"
-                  current={filters.sort_column} direction={filters.sort_direction}
-                  onSort={handleSort}
-                />
-                <SortableTh
-                  col="questions_answered" label="Questions"
-                  current={filters.sort_column} direction={filters.sort_direction}
-                  onSort={handleSort}
-                />
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {loading && (
-                <tr>
-                  <td colSpan={9} className="py-12 text-center">
-                    <div className="inline-flex items-center gap-2 text-zinc-400">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Loading responses…
-                    </div>
-                  </td>
-                </tr>
-              )}
-              {!loading && rows.length === 0 && !error && (
-                <tr>
-                  <td colSpan={9} className="py-12 text-center text-sm text-zinc-400">
-                    No responses found matching the selected filters.
-                  </td>
-                </tr>
-              )}
-              {!loading && rows.map((row, i) => (
-                <tr key={`${row.session_id}-${i}`} className="hover:bg-zinc-50">
-                  <td className="px-2 py-3 text-center align-middle">
-                    {row.completed && row.unread && (
-                      <span
-                        className="inline-block h-2.5 w-2.5 rounded-full bg-violet-500"
-                        title="Unread"
-                        aria-hidden
-                      />
-                    )}
-                  </td>
-                  <td className="px-4 py-3 font-medium text-zinc-800 max-w-[160px] truncate">
-                    {row.survey_name}
-                  </td>
-                  <td className="px-4 py-3 text-zinc-600 max-w-[140px] truncate">
-                    {row.qr_code_name}
-                  </td>
-                  <td className="px-4 py-3 text-zinc-500">
-                    {row.location_name ?? (
-                      <span className="italic text-zinc-400">No Location</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-zinc-600 whitespace-nowrap">
-                    {formatDate(row.scan_time)}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={[
-                        "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold",
-                        row.completed
-                          ? "bg-emerald-50 text-emerald-700"
-                          : "bg-zinc-100 text-zinc-600",
-                      ].join(" ")}
-                    >
-                      {row.completed ? "Yes" : "No"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-zinc-600 tabular-nums">
-                    {formatSeconds(row.time_to_complete_seconds)}
-                  </td>
-                  <td className="px-4 py-3 text-zinc-600 tabular-nums text-center">
-                    {row.questions_answered}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    {row.completed && row.response_id ? (
-                      <button
-                        type="button"
-                        onClick={() => setReviewId(row.response_id)}
-                        className="rounded-lg border border-zinc-200 px-3 py-1 text-xs font-semibold text-zinc-700 hover:bg-violet-50 hover:border-violet-300 hover:text-violet-700"
-                      >
-                        Review
-                      </button>
-                    ) : (
-                      <span className="text-xs text-zinc-300">—</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Pagination */}
-        {totalPages > 1 && (
-          <div className="flex items-center justify-between border-t border-zinc-200 bg-zinc-50 px-4 py-3">
-            <span className="text-xs text-zinc-500">
-              Showing {((page - 1) * PAGE_SIZE) + 1}–
-              {Math.min(page * PAGE_SIZE, totalCount)} of {totalCount.toLocaleString()}
-            </span>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page <= 1 || loading}
-                className="rounded-lg border border-zinc-200 p-1.5 text-zinc-600 hover:bg-white disabled:opacity-40"
-                aria-label="Previous page"
+              ) : null,
+          },
+          {
+            key: "survey_name",
+            label: "Survey",
+            sortable: true,
+            align: "left",
+            cellClassName: "font-medium text-zinc-800 max-w-[160px]",
+            render: (row) => <span className="break-words">{row.survey_name}</span>,
+          },
+          {
+            key: "qr_code_name",
+            label: "QR Code",
+            sortable: true,
+            align: "left",
+            cellClassName: "text-zinc-600 max-w-[140px]",
+            render: (row) => <span className="break-words">{row.qr_code_name}</span>,
+          },
+          {
+            key: "location_name",
+            label: "Location",
+            sortable: false,
+            align: "left",
+            cellClassName: "text-zinc-500",
+            render: (row) =>
+              row.location_name ?? (
+                <span className="italic text-zinc-400">No Location</span>
+              ),
+          },
+          {
+            key: "scan_time",
+            label: "Date Scanned",
+            sortable: true,
+            align: "left",
+            cellClassName: "text-zinc-600",
+            render: (row) => formatDate(row.scan_time),
+          },
+          {
+            key: "completed",
+            label: "Completed",
+            sortable: false,
+            align: "left",
+            render: (row) => (
+              <span
+                className={[
+                  "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold",
+                  row.completed ? "bg-emerald-50 text-emerald-700" : "bg-zinc-100 text-zinc-600",
+                ].join(" ")}
               >
-                <ChevronLeft className="h-4 w-4" />
-              </button>
-              <span className="px-2 text-xs text-zinc-600">
-                {page} / {totalPages}
+                {row.completed ? "Yes" : "No"}
               </span>
-              <button
-                type="button"
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page >= totalPages || loading}
-                className="rounded-lg border border-zinc-200 p-1.5 text-zinc-600 hover:bg-white disabled:opacity-40"
-                aria-label="Next page"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </button>
+            ),
+          },
+          {
+            key: "time_to_complete",
+            label: "Time",
+            sortable: true,
+            align: "left",
+            cellClassName: "text-zinc-600 tabular-nums",
+            render: (row) => formatSeconds(row.time_to_complete_seconds),
+          },
+          {
+            key: "questions_answered",
+            label: "Questions",
+            sortable: true,
+            align: "center",
+            cellClassName: "text-zinc-600 tabular-nums",
+            render: (row) => row.questions_answered,
+          },
+          {
+            key: "actions",
+            label: "",
+            sortable: false,
+            align: "right",
+            render: (row) =>
+              row.completed && row.response_id ? (
+                <button
+                  type="button"
+                  onClick={() => setReviewId(row.response_id)}
+                  className="rounded-lg border border-zinc-200 px-3 py-1 text-xs font-semibold text-zinc-700 hover:bg-violet-50 hover:border-violet-300 hover:text-violet-700"
+                >
+                  Review
+                </button>
+              ) : (
+                <span className="text-xs text-zinc-300">—</span>
+              ),
+          },
+        ]}
+        getRowKey={(row) => `${row.session_id}-${row.response_id ?? ""}`}
+        sortKey={filters.sort_column}
+        sortDir={filters.sort_direction}
+        onSort={(key) => handleSort(key)}
+        emptyMessage="No responses found matching the selected filters."
+        loading={loading}
+        minWidth="900px"
+        footer={
+          totalPages > 1 ? (
+            <div className="flex items-center justify-between border-t border-zinc-200 bg-zinc-50 px-4 py-3">
+              <span className="text-xs text-zinc-500">
+                Showing {((page - 1) * PAGE_SIZE) + 1}–
+                {Math.min(page * PAGE_SIZE, totalCount)} of {totalCount.toLocaleString()}
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={page <= 1 || loading}
+                  className="rounded-lg border border-zinc-200 p-1.5 text-zinc-600 hover:bg-white disabled:opacity-40"
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <span className="px-2 text-xs text-zinc-600">
+                  {page} / {totalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={page >= totalPages || loading}
+                  className="rounded-lg border border-zinc-200 p-1.5 text-zinc-600 hover:bg-white disabled:opacity-40"
+                  aria-label="Next page"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
             </div>
-          </div>
-        )}
-      </div>
+          ) : undefined
+        }
+      />
 
       {/* Review Modal */}
       {reviewId && (

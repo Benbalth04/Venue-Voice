@@ -1,13 +1,13 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { MapPin, Pencil, Plus, ToggleLeft, ToggleRight, Trash2, X } from "lucide-react"
+import { MapPin, Pencil, Plus, ToggleLeft, ToggleRight, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { DataTable, type DataTableColumn } from "@/components/ui/DataTable"
 import { supabase } from "@/lib/supabase/client"
 import {
   createLocation,
-  deleteLocation,
   fetchLocations,
   updateLocation,
   extractErrorMessage,
@@ -160,6 +160,9 @@ export default function LocationsPage() {
   const [formError, setFormError] = useState<string | null>(null)
   const [formLoading, setFormLoading] = useState(false)
 
+  const [sortKey, setSortKey] = useState<string>("name")
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc")
+
   async function getToken() {
     const { data: { session } } = await supabase.auth.getSession()
     return session?.access_token ?? null
@@ -207,13 +210,22 @@ export default function LocationsPage() {
       if (editTarget) {
         const updated = await updateLocation(token, editTarget.id, payload)
         setLocations((prev) => prev.map((l) => (l.id === updated.id ? updated : l)))
+        setModalOpen(false)
       } else {
         const created = await createLocation(token, payload)
         setLocations((prev) => [created, ...prev])
+        setModalOpen(false)
       }
-      setModalOpen(false)
     } catch (err) {
-      setFormError(extractErrorMessage(err, "Save failed"))
+      const msg = extractErrorMessage(err, "Something went wrong")
+      if (msg.toLowerCase().includes("not found") || msg.includes("404")) {
+        setModalOpen(false)
+        await load()
+        setError("Location no longer exists. Data has been refreshed.")
+        setTimeout(() => setError(null), 1000)
+      } else {
+        setFormError(msg)
+      }
     } finally {
       setFormLoading(false)
     }
@@ -225,21 +237,15 @@ export default function LocationsPage() {
     try {
       const updated = await updateLocation(token, loc.id, { is_active: !loc.is_active })
       setLocations((prev) => prev.map((l) => (l.id === updated.id ? updated : l)))
-    } catch {
-      // silently fail; reload to sync
-      load()
-    }
-  }
-
-  async function handleDelete(loc: LocationResponse) {
-    if (!confirm(`Deactivate "${loc.name}"? You can reactivate it later.`)) return
-    const token = await getToken()
-    if (!token) return
-    try {
-      await deleteLocation(token, loc.id)
-      setLocations((prev) => prev.map((l) => (l.id === loc.id ? { ...l, is_active: false } : l)))
     } catch (err) {
-      alert(extractErrorMessage(err, "Delete failed"))
+      const msg = extractErrorMessage(err, "Something went wrong")
+      if (msg.toLowerCase().includes("not found") || msg.includes("404")) {
+        await load()
+        setError("Location no longer exists. Data has been refreshed.")
+        setTimeout(() => setError(null), 4000)
+      } else {
+        setError(msg)
+      }
     }
   }
 
@@ -247,6 +253,100 @@ export default function LocationsPage() {
     const parts = [loc.state, loc.country].filter(Boolean)
     return parts.length > 0 ? parts.join(", ") : "—"
   }
+
+  const sortedLocations = [...locations].sort((a, b) => {
+    let cmp = 0
+    if (sortKey === "name") cmp = a.name.localeCompare(b.name)
+    else if (sortKey === "region") cmp = regionLabel(a).localeCompare(regionLabel(b))
+    else if (sortKey === "status") cmp = (a.is_active ? 1 : 0) - (b.is_active ? 1 : 0)
+    return sortDir === "asc" ? cmp : -cmp
+  })
+
+  const columns: DataTableColumn<LocationResponse>[] = [
+    {
+      key: "name",
+      label: "Name",
+      sortable: true,
+      align: "center",
+      render: (loc) => (
+        <div className="flex flex-col gap-0.5">
+          <div className="flex items-center gap-2">
+            <MapPin className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+            <span className="font-medium text-zinc-900">{loc.name}</span>
+          </div>
+          {loc.google_business_url && (
+            <a
+              href={loc.google_business_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-violet-600 hover:underline"
+            >
+              Google Business Page ↗
+            </a>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "region",
+      label: "Region",
+      sortable: true,
+      align: "center",
+      render: (loc) => <span className="text-zinc-600">{regionLabel(loc)}</span>,
+    },
+    {
+      key: "status",
+      label: "Status",
+      sortable: true,
+      align: "center",
+      render: (loc) => (
+        <span
+          className={[
+            "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium",
+            loc.is_active ? "bg-emerald-50 text-emerald-700" : "bg-zinc-100 text-zinc-500",
+          ].join(" ")}
+        >
+          <span
+            className={[
+              "inline-block h-1.5 w-1.5 rounded-full",
+              loc.is_active ? "bg-emerald-500" : "bg-zinc-400",
+            ].join(" ")}
+          />
+          {loc.is_active ? "Active" : "Inactive"}
+        </span>
+      ),
+    },
+    {
+      key: "actions",
+      label: "Actions",
+      sortable: false,
+      align: "center",
+      render: (loc) => (
+        <div className="flex items-center justify-end gap-1">
+          <button
+            type="button"
+            onClick={() => openEdit(loc)}
+            className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+            title="Edit"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => handleToggleActive(loc)}
+            className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+            title={loc.is_active ? "Deactivate" : "Activate"}
+          >
+            {loc.is_active ? (
+              <ToggleRight className="h-3.5 w-3.5 text-emerald-500" />
+            ) : (
+              <ToggleLeft className="h-3.5 w-3.5" />
+            )}
+          </button>
+        </div>
+      ),
+    },
+  ]
 
   return (
     <div className="space-y-6">
@@ -282,102 +382,17 @@ export default function LocationsPage() {
           </Button>
         </Card>
       ) : (
-        <Card className="overflow-hidden p-0">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-zinc-100 bg-zinc-50">
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                  Name
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                  Region
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                  Status
-                </th>
-                <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {locations.map((loc) => (
-                <tr
-                  key={loc.id}
-                  className="border-b border-zinc-100 last:border-0 hover:bg-zinc-50"
-                >
-                  <td className="px-4 py-3 font-medium text-zinc-900">
-                    <div className="flex items-center gap-2">
-                      <MapPin className="h-3.5 w-3.5 text-zinc-400" />
-                      {loc.name}
-                    </div>
-                    {loc.google_business_url && (
-                      <a
-                        href={loc.google_business_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="mt-0.5 block truncate text-xs text-violet-600 hover:underline"
-                      >
-                        Google Business ↗
-                      </a>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-zinc-600">{regionLabel(loc)}</td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={[
-                        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium",
-                        loc.is_active
-                          ? "bg-emerald-50 text-emerald-700"
-                          : "bg-zinc-100 text-zinc-500",
-                      ].join(" ")}
-                    >
-                      <span
-                        className={[
-                          "inline-block h-1.5 w-1.5 rounded-full",
-                          loc.is_active ? "bg-emerald-500" : "bg-zinc-400",
-                        ].join(" ")}
-                      />
-                      {loc.is_active ? "Active" : "Inactive"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center justify-end gap-1">
-                      <button
-                        type="button"
-                        onClick={() => openEdit(loc)}
-                        className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-                        title="Edit"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleToggleActive(loc)}
-                        className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-                        title={loc.is_active ? "Deactivate" : "Activate"}
-                      >
-                        {loc.is_active ? (
-                          <ToggleRight className="h-3.5 w-3.5 text-emerald-500" />
-                        ) : (
-                          <ToggleLeft className="h-3.5 w-3.5" />
-                        )}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(loc)}
-                        className="rounded-lg p-1.5 text-zinc-400 hover:bg-red-50 hover:text-red-600"
-                        title="Delete"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
+        <DataTable<LocationResponse>
+          data={sortedLocations}
+          columns={columns}
+          getRowKey={(loc) => loc.id}
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onSort={(key) => {
+            setSortKey(key)
+            setSortDir((d) => (sortKey === key && d === "asc" ? "desc" : "asc"))
+          }}
+        />
       )}
 
       {/* Modal */}

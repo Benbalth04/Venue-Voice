@@ -138,6 +138,13 @@ def get_theme_settings_schema():
             allowed_values=None,
         ),
         ThemeSettingDefinition(
+            key="text_color",
+            label="Text color",
+            type="color",
+            default_value="#1E1E1E",
+            allowed_values=None,
+        ),
+        ThemeSettingDefinition(
             key="primary_color",
             label="Primary color",
             type="color",
@@ -216,7 +223,29 @@ def survey_redirect(
     """
     Validate QR code, create scan + session, return redirect URL.
     Query param: r = qr_code_id (UUID)
+    Header: Idempotency-Key (optional) - if present and seen before, return cached response.
     """
+    idempotency_key = request.headers.get("Idempotency-Key")
+    if idempotency_key and len(idempotency_key) <= 128:
+        from sqlalchemy import text
+        row = db.execute(
+            text(
+                "SELECT session_id, redirect_url FROM survey_redirect_idempotency WHERE idempotency_key = :k"
+            ),
+            {"k": idempotency_key},
+        ).first()
+        if row:
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content={
+                    "valid": True,
+                    "redirect_url": row[1],
+                    "session_id": str(row[0]),
+                    "qr_code_id": r,
+                    "survey_version_id": "",  # Not needed for redirect
+                },
+            )
+
     try:
         qr_uid = uuid.UUID(r)
     except ValueError:
@@ -290,9 +319,22 @@ def survey_redirect(
     db.flush()
 
     scan.session_id = session.id
-    db.commit()
 
     redirect_url = f"{FRONTEND_ORIGIN}/survey?session={session.id}&qr={qr.id}"
+    if idempotency_key and len(idempotency_key) <= 128:
+        from sqlalchemy import text
+        db.execute(
+            text(
+                """
+                INSERT INTO survey_redirect_idempotency (idempotency_key, scan_id, session_id, redirect_url)
+                VALUES (:k, :scan_id, :session_id, :url)
+                ON CONFLICT (idempotency_key) DO NOTHING
+                """
+            ),
+            {"k": idempotency_key, "scan_id": scan.id, "session_id": session.id, "url": redirect_url},
+        )
+    db.commit()
+
     return JSONResponse(
         status_code=status.HTTP_200_OK,
         content={
@@ -356,14 +398,14 @@ def get_survey_for_session(
 
 
 class SurveySubmitBody(BaseModel):
-    session_id: str
-    qr_code_id: str
+    session_id: uuid.UUID
+    qr_code_id: uuid.UUID
     answers: dict[str, Any] = {}
 
 
 class AbandonBody(BaseModel):
-    session_id: str
-    qr_code_id: str
+    session_id: uuid.UUID
+    qr_code_id: uuid.UUID
 
 
 def _is_answer_empty(val: Any) -> bool:
@@ -391,18 +433,9 @@ def submit_survey(
     """
     Accept submission. Body: { session_id, qr_code_id, answers }
     """
-    session_id = body.session_id
-    qr_code_id = body.qr_code_id
+    session_uid = body.session_id
+    qr_uid = body.qr_code_id
     answers = body.answers or {}
-
-    if not session_id or not qr_code_id:
-        raise ValidationError(code="MISSING_SESSION_OR_QR_ID", message="session_id and qr_code_id required")
-
-    try:
-        session_uid = uuid.UUID(str(session_id))
-        qr_uid = uuid.UUID(str(qr_code_id))
-    except ValueError:
-        raise ValidationError(code="INVALID_SESSION_OR_QR_ID", message="Invalid session or QR code ID")
 
     sess = (
         db.query(SurveySessionORM)
@@ -550,17 +583,8 @@ def abandon_survey(
     db: Session = Depends(get_db_connection),
 ):
     """Mark session as abandoned. Body: { session_id, qr_code_id }."""
-    session_id = body.session_id
-    qr_code_id = body.qr_code_id
-
-    if not session_id or not qr_code_id:
-        return {"ok": False}
-
-    try:
-        session_uid = uuid.UUID(session_id)
-        qr_uid = uuid.UUID(qr_code_id)
-    except ValueError:
-        return {"ok": False}
+    session_uid = body.session_id
+    qr_uid = body.qr_code_id
 
     sess = (
         db.query(SurveySessionORM)

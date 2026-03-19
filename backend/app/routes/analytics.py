@@ -62,6 +62,22 @@ def _shared_filter_params(
 
 
 # ------------------------------------------------------------------
+# GET /analytics/has-unread
+# ------------------------------------------------------------------
+@router.get("/analytics/has-unread")
+def has_unread_reviews(
+    current_user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    """Lightweight endpoint: returns true if user has any unread survey responses."""
+    from ..services.analytics_service import has_unread_responses
+    try:
+        return {"has_unread": has_unread_responses(user_id=current_user.id, db=db)}
+    except Exception:
+        return {"has_unread": False}
+
+
+# ------------------------------------------------------------------
 # GET /analytics/filters
 # ------------------------------------------------------------------
 @router.get("/analytics/filters", response_model=AnalyticsFiltersResponse)

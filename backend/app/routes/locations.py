@@ -1,8 +1,13 @@
 import uuid
+import urllib.request
+import urllib.error
+from urllib.parse import urlparse
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
-from ..core.errors.exceptions import NotFoundError
+from ..core.errors.exceptions import ConflictError, NotFoundError, ValidationError
 
 from ..auth.jwt import get_current_user
 from ..db.postgres import get_db_connection
@@ -34,9 +39,42 @@ def _get_location_or_404(location_id: str, company_id: uuid.UUID, db: Session) -
     return loc
 
 
+def _validate_google_business_url(url: str | None) -> None:
+    """Validate that a business URL is reachable. Raises ValidationError if not."""
+    if not url or not url.strip():
+        return
+    parsed = urlparse(url.strip())
+    if parsed.scheme not in ("http", "https"):
+        raise ValidationError(
+            code="INVALID_URL",
+            message="URL must use http or https",
+            status_code=422,
+        )
+    full_url = url.strip()
+    try:
+        req = urllib.request.Request(full_url, method="HEAD")
+        req.add_header("User-Agent", "VenueVoice/1.0")
+        with urllib.request.urlopen(req, timeout=5) as _:
+            pass
+    except urllib.error.HTTPError as e:
+        if e.code in (301, 302, 303, 307, 308):
+            return  # Redirect is OK
+        raise ValidationError(
+            code="URL_NOT_REACHABLE",
+            message=f"URL returned status {e.code}. Please check the link.",
+            status_code=422,
+        )
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        raise ValidationError(
+            code="URL_NOT_REACHABLE",
+            message="URL could not be reached. Please check the link is valid.",
+            status_code=422,
+        )
+
+
 def _to_response(loc: LocationORM) -> LocationResponse:
     return LocationResponse(
-        id=str(loc.id),
+        id=loc.id,
         name=loc.name,
         is_active=loc.is_active,
         state=loc.state,
@@ -69,17 +107,37 @@ def create_location(
     db: Session = Depends(get_db_connection),
 ):
     company = _get_company(user, db)
+
+    name = payload.name.strip()
+    if not name:
+        raise ValidationError(code="INVALID_NAME", message="Location name cannot be empty", status_code=422)
+
+    existing = (
+        db.query(LocationORM)
+        .filter(LocationORM.company_id == company.id, LocationORM.name == name)
+        .first()
+    )
+    if existing:
+        raise ConflictError(code="LOCATION_NAME_CONFLICT", message="A location with this name already exists")
+
+    if payload.google_business_url:
+        _validate_google_business_url(payload.google_business_url)
+
     loc = LocationORM(
         company_id=company.id,
-        name=payload.name,
+        name=name,
         is_active=True,
         state=payload.state,
         country=payload.country,
         google_business_url=payload.google_business_url,
     )
     db.add(loc)
-    db.commit()
-    db.refresh(loc)
+    try:
+        db.commit()
+        db.refresh(loc)
+    except IntegrityError:
+        db.rollback()
+        raise ConflictError(code="LOCATION_NAME_CONFLICT", message="A location with this name already exists")
     return _to_response(loc)
 
 
@@ -103,12 +161,33 @@ def update_location(
     company = _get_company(user, db)
     loc = _get_location_or_404(location_id, company.id, db)
 
+    if payload.name is not None:
+        name = payload.name.strip()
+        if not name:
+            raise ValidationError(code="INVALID_NAME", message="Location name cannot be empty", status_code=422)
+        existing = (
+            db.query(LocationORM)
+            .filter(LocationORM.company_id == company.id, LocationORM.name == name, LocationORM.id != loc.id)
+            .first()
+        )
+        if existing:
+            raise ConflictError(code="LOCATION_NAME_CONFLICT", message="A location with this name already exists")
+        loc.name = name
+
+    if payload.google_business_url is not None and payload.google_business_url:
+        _validate_google_business_url(payload.google_business_url)
+
     update_data = payload.model_dump(exclude_unset=True)
     for field, value in update_data.items():
-        setattr(loc, field, value)
+        if field != "name":
+            setattr(loc, field, value)
 
-    db.commit()
-    db.refresh(loc)
+    try:
+        db.commit()
+        db.refresh(loc)
+    except IntegrityError:
+        db.rollback()
+        raise ConflictError(code="LOCATION_NAME_CONFLICT", message="A location with this name already exists")
     return _to_response(loc)
 
 

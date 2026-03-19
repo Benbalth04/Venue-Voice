@@ -1,14 +1,17 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { useParams, useRouter } from "next/navigation"
+import { useEffect, useRef, useState } from "react"
+import { useParams } from "next/navigation"
 import { Loader2 } from "lucide-react"
 import { fetchSurveyRedirect } from "@/lib/api/client"
 
 export default function SurveyRouterPage() {
   const params = useParams()
-  const router = useRouter()
   const qrCodeId = params.qrCodeId as string
+  const idempotencyKeyRef = useRef<string | null>(null)
+  if (!idempotencyKeyRef.current && typeof crypto !== "undefined" && crypto.randomUUID) {
+    idempotencyKeyRef.current = crypto.randomUUID()
+  }
 
   const [error, setError] = useState<string | null>(null)
 
@@ -22,7 +25,7 @@ export default function SurveyRouterPage() {
 
     async function redirect() {
       try {
-        const result = await fetchSurveyRedirect(qrCodeId)
+        const result = await fetchSurveyRedirect(qrCodeId, idempotencyKeyRef.current ?? undefined)
         if (cancelled) return
 
         if (result.valid && result.redirect_url) {

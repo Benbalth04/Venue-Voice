@@ -70,12 +70,17 @@ export function SurveyRenderer({
       }}
     >
       <div className="flex flex-col gap-2">
-        <TextBlock content={survey.title} align={survey.settings.contentAlign} />
+        <TextBlock
+          content={survey.title}
+          align={survey.settings.contentAlign}
+          textColor={survey.theme.textColor}
+        />
         {survey.subtitle ? (
           <TextBlock
             content={survey.subtitle}
             muted
             align={survey.settings.contentAlign}
+            textColor={survey.theme.textColor}
           />
         ) : null}
       </div>
@@ -163,12 +168,18 @@ function QuestionRenderer({
 }) {
   const align = question.contentAlign ?? surveyAlign
 
+  const textColor = survey.theme.textColor ?? "#1E1E1E"
   return (
     <div className="flex flex-col gap-3" style={{ textAlign: align }}>
       <div className="flex flex-col gap-1">
-        <TextBlock content={question.title} align={align} />
+        <div className="flex items-baseline gap-1">
+          <TextBlock content={question.title} align={align} textColor={textColor} />
+          {!question.optional && (
+            <span className="text-red-500" aria-label="required">*</span>
+          )}
+        </div>
         {question.description ? (
-          <TextBlock content={question.description} muted align={align} />
+          <TextBlock content={question.description} muted align={align} textColor={textColor} />
         ) : null}
         {showRequiredError ? (
           <p className="text-sm text-red-600">This question is required</p>
@@ -385,19 +396,23 @@ function TextBlock({
   content,
   muted,
   align,
+  textColor = "#1E1E1E",
 }: {
   content: TextContent
   muted?: boolean
   align: Align
+  textColor?: string
 }) {
   const style = getTextStyle(content.style)
   return (
     <div
-      className={[
-        style.className,
-        muted ? "text-zinc-600" : "text-zinc-950",
-      ].join(" ")}
-      style={{ ...style.style, textAlign: align }}
+      className={style.className}
+      style={{
+        ...style.style,
+        textAlign: align,
+        color: textColor,
+        opacity: muted ? 0.7 : 1,
+      }}
     >
       {content.text}
     </div>

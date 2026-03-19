@@ -42,16 +42,16 @@ export function Sidebar() {
 
   return (
     <aside className="hidden sticky top-0 h-screen w-60 flex-col border-r border-zinc-200 bg-white px-4 py-6 lg:flex">
-      <Link href="/dashboard" className="mb-6 px-2 block">
+      <Link href="/dashboard" className="mb-6 flex flex-shrink-0 items-center justify-center px-2">
         <Image
           src="/venue_voice_logo_1.png"
           alt="Venue Voice"
-          width={600}
-          height={600}
-          className="h-8 w-auto"
+          width={800}
+          height={800}
+          className="h-24 w-full object-contain m-0"
         />
       </Link>
-        <nav className="flex-1 space-y-1">
+      <nav className="flex-1 space-y-1">
           {items.map((item) => {
           const Icon = item.icon
           const active = pathname === item.href

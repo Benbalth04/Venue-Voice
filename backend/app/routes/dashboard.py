@@ -10,7 +10,7 @@ from ..models.postgres_model import (
     Company as CompanyORM,
     Location as LocationORM,
     QRCode as QRCodeORM,
-    Response as ResponseORM,
+    SurveyResponse as SurveyResponseORM,
     ScanEvent as ScanEventORM,
     Survey as SurveyORM,
     SurveyStatus,
@@ -68,7 +68,7 @@ def get_dashboard(
 
     # Total submissions (responses for company's surveys)
     total_submissions = (
-        db.query(func.count(ResponseORM.id)).filter(ResponseORM.survey_version_id.in_(sv_ids)).scalar()
+        db.query(func.count(SurveyResponseORM.id)).filter(SurveyResponseORM.survey_version_id.in_(sv_ids)).scalar()
         if sv_ids
         else 0
     ) or 0
@@ -106,7 +106,7 @@ def get_dashboard(
 
     active_surveys = [
         DashboardSurveySummary(
-            id=str(s.id),
+            id=s.id,
             title=s.name,
             status=str(s.status.value),
             question_count=_question_count(s.id),
@@ -132,10 +132,10 @@ def get_dashboard(
 
     active_qr_codes = [
         DashboardQRCodeSummary(
-            id=str(q.id),
+            id=q.id,
             title=q.title,
-            survey_id=str(q.survey_id),
-            location_id=str(q.location_id) if q.location_id else None,
+            survey_id=q.survey_id,
+            location_id=q.location_id,
             is_active=q.is_active,
             scan_count=_scan_count(q.id),
         )
@@ -146,18 +146,18 @@ def get_dashboard(
     locations_orm = db.query(LocationORM).filter(LocationORM.company_id == company.id).all()
     active_locations_count = len(locations_orm)
     active_locations = [
-        DashboardLocationSummary(id=str(l.id), name=l.name) for l in locations_orm
+        DashboardLocationSummary(id=l.id, name=l.name) for l in locations_orm
     ]
 
     # Submission trend (by date)
     submission_trend_rows = (
         db.query(
-            func.date(ResponseORM.submitted_at).label("day"),
-            func.count(ResponseORM.id).label("cnt"),
+            func.date(SurveyResponseORM.completion_datetime).label("day"),
+            func.count(SurveyResponseORM.id).label("cnt"),
         )
-        .filter(ResponseORM.survey_version_id.in_(sv_ids))
-        .group_by(func.date(ResponseORM.submitted_at))
-        .order_by(func.date(ResponseORM.submitted_at))
+        .filter(SurveyResponseORM.survey_version_id.in_(sv_ids))
+        .group_by(func.date(SurveyResponseORM.completion_datetime))
+        .order_by(func.date(SurveyResponseORM.completion_datetime))
         .all()
         if sv_ids
         else []
@@ -220,22 +220,22 @@ def get_dashboard_submissions_by_date(
     end = start.replace(hour=23, minute=59, second=59, microsecond=999999)
 
     responses = (
-        db.query(ResponseORM)
+        db.query(SurveyResponseORM)
         .filter(
-            ResponseORM.survey_version_id.in_(sv_ids),
-            ResponseORM.submitted_at >= start,
-            ResponseORM.submitted_at <= end,
+            SurveyResponseORM.survey_version_id.in_(sv_ids),
+            SurveyResponseORM.completion_datetime >= start,
+            SurveyResponseORM.completion_datetime <= end,
         )
-        .order_by(ResponseORM.submitted_at)
+        .order_by(SurveyResponseORM.completion_datetime)
         .all()
     )
 
     return [
         DashboardResponseSummary(
-            id=str(r.id),
-            survey_version_id=str(r.survey_version_id),
-            location_id=str(r.location_id) if r.location_id else None,
-            submitted_at=r.submitted_at.isoformat(),
+            id=r.id,
+            survey_version_id=r.survey_version_id,
+            location_id=r.location_snapshot_id,
+            completion_datetime=r.completion_datetime.isoformat(),
         )
         for r in responses
     ]

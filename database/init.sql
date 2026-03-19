@@ -43,7 +43,8 @@ CREATE TABLE locations (
     country TEXT,
     google_business_url TEXT,
     created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    updated_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(company_id, name)
 );
 
 CREATE INDEX idx_locations_company_id
@@ -133,24 +134,6 @@ CREATE INDEX idx_questions_survey_version
 ON questions(survey_version_id);
 
 --------------------------------------------------
--- RESPONSES
---------------------------------------------------
-
-CREATE TABLE responses (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    survey_version_id UUID NOT NULL REFERENCES survey_versions(id) ON DELETE CASCADE,
-    location_id UUID REFERENCES locations(id) ON DELETE SET NULL,
-    submitted_at TIMESTAMP DEFAULT NOW(),
-    metadata JSONB
-);
-
-CREATE INDEX idx_responses_location
-ON responses(location_id);
-
-CREATE INDEX idx_responses_time
-ON responses(submitted_at);
-
---------------------------------------------------
 -- QR CODES
 --------------------------------------------------
 
@@ -228,6 +211,17 @@ CREATE INDEX idx_survey_sessions_scan_id ON survey_sessions(scan_id);
 CREATE INDEX idx_survey_sessions_survey_version_id ON survey_sessions(survey_version_id);
 CREATE INDEX idx_survey_sessions_qr_code_id ON survey_sessions(qr_code_id);
 CREATE INDEX idx_survey_sessions_company_id ON survey_sessions(company_id);
+
+--------------------------------------------------
+-- SURVEY REDIRECT IDEMPOTENCY (prevent duplicate sessions per scan)
+--------------------------------------------------
+CREATE TABLE IF NOT EXISTS survey_redirect_idempotency (
+    idempotency_key TEXT PRIMARY KEY,
+    scan_id UUID NOT NULL REFERENCES scan_events(id) ON DELETE CASCADE,
+    session_id UUID NOT NULL REFERENCES survey_sessions(id) ON DELETE CASCADE,
+    redirect_url TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
 
 --------------------------------------------------
 -- SURVEY RESPONSES
@@ -409,82 +403,82 @@ INSERT INTO companies (id, owner_user_id, name, primary_industry, company_size, 
 INSERT INTO locations (id, company_id, name, is_active, state, country, google_business_url, created_at, updated_at) VALUES
 ('87ff1d9a-d62a-425f-a378-06bab8438eb7', '02238978-8b23-408a-a5e4-a0399578229a', 'Test Venue', true, NULL, NULL, NULL, '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126');
 
-INSERT INTO surveys (id, company_id, name, status, latest_version, created_at, updated_at) VALUES
-('10b79ca0-5f1e-4c4a-ae37-32240dbf0953', '02238978-8b23-408a-a5e4-a0399578229a', 'Default Survey', 'active', 1, '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126');
+-- INSERT INTO surveys (id, company_id, name, status, latest_version, created_at, updated_at) VALUES
+-- ('10b79ca0-5f1e-4c4a-ae37-32240dbf0953', '02238978-8b23-408a-a5e4-a0399578229a', 'Default Survey', 'active', 1, '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126');
 
-INSERT INTO qr_codes (id, company_id, title, is_active, survey_id, location_id, created_at, updated_at) VALUES
-('74d37475-9b04-4a4d-b76f-8d5b876b8570', '02238978-8b23-408a-a5e4-a0399578229a', 'Default QR Code', true, '10b79ca0-5f1e-4c4a-ae37-32240dbf0953', '87ff1d9a-d62a-425f-a378-06bab8438eb7', '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126');
+-- INSERT INTO qr_codes (id, company_id, title, is_active, survey_id, location_id, created_at, updated_at) VALUES
+-- ('74d37475-9b04-4a4d-b76f-8d5b876b8570', '02238978-8b23-408a-a5e4-a0399578229a', 'Default QR Code', true, '10b79ca0-5f1e-4c4a-ae37-32240dbf0953', '87ff1d9a-d62a-425f-a378-06bab8438eb7', '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126');
 
-INSERT INTO survey_versions (id, survey_id, version_number, schema_json, created_by, created_at, theme_settings) VALUES
-(
-'447fb92c-1fb8-4fae-9019-f0e0a705fd30',
-'10b79ca0-5f1e-4c4a-ae37-32240dbf0953',
-1,
-$$
-{
-  "theme": {
-    "textColor": "#1E1E1E",
-    "fontFamily": "Inter",
-    "primaryColor": "#7C3AED",
-    "backgroundColor": "#FFFFFF"
-  },
-  "title": {
-    "text": "Customer Feedback",
-    "style": {
-      "size": "h1"
-    }
-  },
-  "version": 1,
-  "settings": {
-    "contentAlign": "left",
-    "showProgressBar": true,
-    "progressBarColor": "#7C3AED"
-  },
-  "subtitle": {
-    "text": "Tell us about your experience",
-    "style": {
-      "size": "body"
-    }
-  },
-  "questions": [
-    {
-      "id": "3bd8b605-0d83-4f86-ac10-3e9f3eabb2f7",
-      "type": "star",
-      "title": {
-        "text": "How was your experience?",
-        "style": {
-          "size": "h2"
-        }
-      },
-      "version": 1,
-      "optional": false,
-      "settings": {
-        "starCount": 5,
-        "selected_colour": "#7C3AED"
-      },
-      "description": {
-        "text": "Please rate your overall experience",
-        "style": {
-          "size": "body"
-        }
-      }
-    }
-  ]
-}
-$$::jsonb,
-'8567b7dc-6049-415e-97d8-740a6483c1b6',
-'2026-03-15 05:56:49.03126',
-$$
-{
-  "font": "Inter",
-  "primary_color": "#7C3AED",
-  "background_color": "#FFFFFF",
-  "content_alignment": "left",
-  "show_progress_bar": true,
-  "progress_bar_color": "#7C3AED"
-}
-$$::jsonb
-);
+-- INSERT INTO survey_versions (id, survey_id, version_number, schema_json, created_by, created_at, theme_settings) VALUES
+-- (
+-- '447fb92c-1fb8-4fae-9019-f0e0a705fd30',
+-- '10b79ca0-5f1e-4c4a-ae37-32240dbf0953',
+-- 1,
+-- $$
+-- {
+--   "theme": {
+--     "textColor": "#1E1E1E",
+--     "fontFamily": "Inter",
+--     "primaryColor": "#7C3AED",
+--     "backgroundColor": "#FFFFFF"
+--   },
+--   "title": {
+--     "text": "Customer Feedback",
+--     "style": {
+--       "size": "h1"
+--     }
+--   },
+--   "version": 1,
+--   "settings": {
+--     "contentAlign": "left",
+--     "showProgressBar": true,
+--     "progressBarColor": "#7C3AED"
+--   },
+--   "subtitle": {
+--     "text": "Tell us about your experience",
+--     "style": {
+--       "size": "body"
+--     }
+--   },
+--   "questions": [
+--     {
+--       "id": "3bd8b605-0d83-4f86-ac10-3e9f3eabb2f7",
+--       "type": "star",
+--       "title": {
+--         "text": "How was your experience?",
+--         "style": {
+--           "size": "h2"
+--         }
+--       },
+--       "version": 1,
+--       "optional": false,
+--       "settings": {
+--         "starCount": 5,
+--         "selected_colour": "#7C3AED"
+--       },
+--       "description": {
+--         "text": "Please rate your overall experience",
+--         "style": {
+--           "size": "body"
+--         }
+--       }
+--     }
+--   ]
+-- }
+-- $$::jsonb,
+-- '8567b7dc-6049-415e-97d8-740a6483c1b6',
+-- '2026-03-15 05:56:49.03126',
+-- $$
+-- {
+--   "font": "Inter",
+--   "primary_color": "#7C3AED",
+--   "background_color": "#FFFFFF",
+--   "content_alignment": "left",
+--   "show_progress_bar": true,
+--   "progress_bar_color": "#7C3AED"
+-- }
+-- $$::jsonb
+-- );
 
-INSERT INTO questions (id, survey_version_id, question_key, question_text, question_type, config, position, is_numeric) VALUES
-('deddb36a-a0d1-40de-a461-d521a89d1ce8', '447fb92c-1fb8-4fae-9019-f0e0a705fd30', '3bd8b605-0d83-4f86-ac10-3e9f3eabb2f7', 'How was your experience?', 'star', $${"starCount": 5, "selected_colour": "#7C3AED"}$$::jsonb, 1, true);
+-- INSERT INTO questions (id, survey_version_id, question_key, question_text, question_type, config, position, is_numeric) VALUES
+-- ('deddb36a-a0d1-40de-a461-d521a89d1ce8', '447fb92c-1fb8-4fae-9019-f0e0a705fd30', '3bd8b605-0d83-4f86-ac10-3e9f3eabb2f7', 'How was your experience?', 'star', $${"starCount": 5, "selected_colour": "#7C3AED"}$$::jsonb, 1, true);

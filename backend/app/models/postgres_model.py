@@ -279,38 +279,6 @@ class Question(Base):
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     is_numeric: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
-
-# --------------------------------------------------
-# RESPONSES
-# --------------------------------------------------
-
-class Response(Base):
-    __tablename__ = "responses"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        server_default=func.uuid_generate_v4()
-    )
-    survey_version_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("survey_versions.id"),
-        nullable=False,
-        index=True
-    )
-    location_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("locations.id"),
-        nullable=True,
-        index=True
-    )
-    submitted_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        server_default=func.now()
-    )
-    response_metadata: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
-
-
 # --------------------------------------------------
 # ANSWERS (legacy responses - one row per question)
 # --------------------------------------------------

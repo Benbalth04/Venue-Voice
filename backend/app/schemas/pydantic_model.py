@@ -1,9 +1,11 @@
+import uuid
 from pydantic import BaseModel
 from typing import Any, Literal
 from pydantic import EmailStr
 
+
 class User(BaseModel):
-    id: str
+    id: uuid.UUID
     email: str
     first_name: str
     last_name: str
@@ -11,7 +13,7 @@ class User(BaseModel):
 
 
 class UserResponse(BaseModel):
-    id: str
+    id: uuid.UUID
     email: str
     first_name: str
     last_name: str
@@ -32,18 +34,18 @@ class SetupAccountRequest(BaseModel):
     how_heard: str | None = None
 
 class Company(BaseModel):
-    id: str
+    id: uuid.UUID
     name: str
-    owner_user_id: str
+    owner_user_id: uuid.UUID
     primary_industry: str | None = None
     company_size: str | None = None
     location_count: int | None = None
     how_heard: str | None = None
 
 class Location(BaseModel):
-    id: str
+    id: uuid.UUID
     name: str
-    company_id: str
+    company_id: uuid.UUID
 
 
 # --------------------------------------------------
@@ -66,7 +68,7 @@ class LocationUpdate(BaseModel):
 
 
 class LocationResponse(BaseModel):
-    id: str
+    id: uuid.UUID
     name: str
     is_active: bool
     state: str | None
@@ -82,23 +84,23 @@ class LocationResponse(BaseModel):
 
 class QRCodeCreate(BaseModel):
     title: str
-    survey_id: str
-    location_id: str | None = None
+    survey_id: uuid.UUID
+    location_id: uuid.UUID | None = None
 
 
 class QRCodeUpdate(BaseModel):
     title: str | None = None
-    survey_id: str | None = None
-    location_id: str | None = None
+    survey_id: uuid.UUID | None = None
+    location_id: uuid.UUID | None = None
     is_active: bool | None = None
 
 
 class QRCodeResponse(BaseModel):
-    id: str
+    id: uuid.UUID
     title: str
-    survey_id: str
+    survey_id: uuid.UUID
     survey_title: str | None
-    location_id: str | None
+    location_id: uuid.UUID | None
     location_name: str | None
     is_active: bool
     created_at: str
@@ -106,19 +108,19 @@ class QRCodeResponse(BaseModel):
 
 
 class SurveySummaryResponse(BaseModel):
-    id: str
+    id: uuid.UUID
     name: str
     status: str
 
 class Survey(BaseModel):
-    id: str
-    company_id: str
-    location_id: str | None 
+    id: uuid.UUID
+    company_id: uuid.UUID
+    location_id: uuid.UUID | None
     name: str
     description: str | None
     status: Literal["draft", "active", "archived"]
-    active_version_id: str | None
-    created_by: str
+    active_version_id: uuid.UUID | None
+    created_by: uuid.UUID
 
 
 class SignupRequest(BaseModel):
@@ -151,31 +153,31 @@ class DashboardTrendPoint(BaseModel):
 
 
 class DashboardSurveySummary(BaseModel):
-    id: str
+    id: uuid.UUID
     title: str
     status: str
     question_count: int
 
 
 class DashboardQRCodeSummary(BaseModel):
-    id: str
+    id: uuid.UUID
     title: str
-    survey_id: str
-    location_id: str | None
+    survey_id: uuid.UUID
+    location_id: uuid.UUID | None
     is_active: bool
     scan_count: int
 
 
 class DashboardLocationSummary(BaseModel):
-    id: str
+    id: uuid.UUID
     name: str
 
 
 class DashboardResponseSummary(BaseModel):
-    id: str
-    survey_version_id: str
-    location_id: str | None
-    submitted_at: str
+    id: uuid.UUID
+    survey_version_id: uuid.UUID
+    location_id: uuid.UUID | None
+    completion_datetime: str
 
 
 # --------------------------------------------------
@@ -198,13 +200,13 @@ class SurveyUpdateMeta(BaseModel):
 
 
 class SurveyListItem(BaseModel):
-    id: str
+    id: uuid.UUID
     title: str
     status: str
     latest_version: int
     created_at: str
     updated_at: str
-
+    last_edited_by: str | None
 
 class SurveyWithSchema(SurveyListItem):
     survey_schema_json: dict[str, Any]
@@ -222,8 +224,8 @@ class QuestionTypeResponse(BaseModel):
 # --------------------------------------------------
 
 class AnalyticsResponseRow(BaseModel):
-    response_id: str
-    session_id: str
+    response_id: uuid.UUID | None = None
+    session_id: uuid.UUID
     survey_name: str
     qr_code_name: str
     location_name: str | None
@@ -231,7 +233,7 @@ class AnalyticsResponseRow(BaseModel):
     completed: bool
     time_to_complete_seconds: int | None
     questions_answered: int
-    survey_version_id: str
+    survey_version_id: uuid.UUID | None = None
     unread: bool = True      # True if user has not viewed this response's answers
 
 
@@ -243,7 +245,7 @@ class AnalyticsResponseList(BaseModel):
 
 
 class AnalyticsFilterOption(BaseModel):
-    id: str
+    id: uuid.UUID
     name: str
 
 
@@ -259,7 +261,7 @@ class AnalyticsAnswerDetail(BaseModel):
 
 
 class AnalyticsResponseDetail(BaseModel):
-    response_id: str
+    response_id: uuid.UUID
     survey_name: str
     answers: list[AnalyticsAnswerDetail]
 

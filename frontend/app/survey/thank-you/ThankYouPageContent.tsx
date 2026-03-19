@@ -66,11 +66,15 @@ export default function ThankYouPageContent() {
         style={{ borderTopWidth: "4px", borderTopColor: "#7C3AED" }}
       >
         <CheckCircle2 className="mx-auto h-16 w-16 text-emerald-500" />
-        <h1 className="mt-4 text-xl font-semibold text-zinc-900">
-          {companyName ?? "Thank you"}
-        </h1>
+        <h1 className="mt-4 text-xl font-semibold text-zinc-900">Thank you</h1>
         <p className="mt-2 text-zinc-600">{message}</p>
       </div>
+      <img
+        src="/venue_voice_logo_3.png"
+        alt="Venue Voice"
+        className="mt-8 h-12 w-auto object-contain"
+        aria-hidden
+      />
     </div>
   )
 }

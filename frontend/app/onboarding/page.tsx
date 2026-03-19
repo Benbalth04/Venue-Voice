@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { setupAccount, extractErrorMessage } from "@/lib/api/client"
+import { setupAccount, fetchUser, extractErrorMessage } from "@/lib/api/client"
 import { useAuth } from "@/contexts/AuthContext"
 import { AuthGuard } from "@/components/auth/AuthGuard"
 import { OnboardingIncompleteGuard } from "@/components/auth/OnboardingIncompleteGuard"
@@ -44,7 +44,7 @@ const HOW_HEARD_OPTIONS = [
 
 function OnboardingPageContent() {
   const router = useRouter()
-  const { session } = useAuth()
+  const { session, refreshUser } = useAuth()
 
   const [companyName, setCompanyName] = useState("")
   const [locationName, setLocationName] = useState("")
@@ -56,11 +56,22 @@ function OnboardingPageContent() {
   const [locationCount, setLocationCount] = useState<string>("")
   const [howHeard, setHowHeard] = useState("")
   const [error, setError] = useState<string | null>(null)
+  const [fieldErrors, setFieldErrors] = useState<{ companyName?: string; locationName?: string }>({})
   const [loading, setLoading] = useState(false)
+
+  function validate(): boolean {
+    const errs: { companyName?: string; locationName?: string } = {}
+    if (!companyName.trim()) errs.companyName = "Company name is required"
+    if (!locationName.trim()) errs.locationName = "First location name is required"
+    setFieldErrors(errs)
+    return Object.keys(errs).length === 0
+  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
+    setFieldErrors({})
+    if (!validate()) return
     setLoading(true)
 
     try {
@@ -85,6 +96,7 @@ function OnboardingPageContent() {
         how_heard: howHeard || null,
       })
 
+      await refreshUser()
       router.push("/dashboard")
     } catch (err) {
       setError(extractErrorMessage(err, "Setup failed"))
@@ -97,11 +109,11 @@ function OnboardingPageContent() {
     <div className="flex min-h-screen items-center justify-center bg-zinc-50 px-4">
       <Card className="w-full max-w-md p-6">
         <h1 className="text-xl font-semibold text-zinc-900">
-          Welcome to VenueVoice
+          Welcome to VenueVoice!
         </h1>
 
         <p className="mt-1 text-sm text-zinc-600">
-          First, Let's create your first business location.
+          First, let's create your first business location.
         </p>
 
         <br />
@@ -115,27 +127,41 @@ function OnboardingPageContent() {
         <form className="mt-6 space-y-4" onSubmit={onSubmit}>
           <label className="block">
             <span className="text-sm font-medium text-zinc-700">
-              Company Name
+              Company Name <span className="text-red-500">*</span>
             </span>
             <input
-              className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
+              className={`mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 ${
+                fieldErrors.companyName ? "border-red-300 bg-red-50" : "border-zinc-200 bg-white"
+              }`}
               value={companyName}
-              onChange={(e) => setCompanyName(e.target.value)}
-              required
+              onChange={(e) => {
+                setCompanyName(e.target.value)
+                if (fieldErrors.companyName) setFieldErrors((p) => ({ ...p, companyName: undefined }))
+              }}
             />
+            {fieldErrors.companyName && (
+              <p className="mt-1 text-xs text-red-600">{fieldErrors.companyName}</p>
+            )}
           </label>
 
           <label className="block">
             <span className="text-sm font-medium text-zinc-700">
-              First Location Name
+              First Location Name <span className="text-red-500">*</span>
             </span>
             <input
-              className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
+              className={`mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 ${
+                fieldErrors.locationName ? "border-red-300 bg-red-50" : "border-zinc-200 bg-white"
+              }`}
               placeholder="e.g. Main Venue, City Branch"
               value={locationName}
-              onChange={(e) => setLocationName(e.target.value)}
-              required
+              onChange={(e) => {
+                setLocationName(e.target.value)
+                if (fieldErrors.locationName) setFieldErrors((p) => ({ ...p, locationName: undefined }))
+              }}
             />
+            {fieldErrors.locationName && (
+              <p className="mt-1 text-xs text-red-600">{fieldErrors.locationName}</p>
+            )}
           </label>
 
           <div className="grid grid-cols-2 gap-3">

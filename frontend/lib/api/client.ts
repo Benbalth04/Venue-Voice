@@ -280,6 +280,7 @@ export interface SurveyListItem {
   title: string
   status: "draft" | "active" | "archived"
   latest_version: number
+  last_edited_by: string | null
   updated_at: string
 }
 
@@ -371,11 +372,18 @@ function authGetHeaders(accessToken: string): Record<string, string> {
  * throw here so the caller can inspect `result.valid` and react accordingly.
  * Network failures will still throw a NormalizedError.
  */
-export async function fetchSurveyRedirect(qrCodeId: string): Promise<SurveyRedirectResponse> {
+export async function fetchSurveyRedirect(
+  qrCodeId: string,
+  idempotencyKey?: string,
+): Promise<SurveyRedirectResponse> {
+  const headers: Record<string, string> = {}
+  if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey
+
   let res: Response
   try {
     res = await fetch(
       `${BACKEND_BASE}/api/v1/survey/redirect?r=${encodeURIComponent(qrCodeId)}`,
+      { headers },
     )
   } catch (err) {
     throw normalizeUnknownError(err)
@@ -553,10 +561,22 @@ export async function fetchThemeSettingsSchema(): Promise<ThemeSettingsSchemaRes
 // ------------------------------------------------------------------
 // Surveys list (for QR code form)
 // ------------------------------------------------------------------
-export async function fetchSurveys(accessToken: string): Promise<SurveySummary[]> {
-  return apiFetch<SurveySummary[]>(`${BACKEND_BASE}/api/v1/surveys`, {
-    headers: authGetHeaders(accessToken),
-  })
+export async function fetchSurveys(
+  accessToken: string,
+  options?: { activeOnly?: boolean },
+): Promise<SurveySummary[]> {
+  const url = options?.activeOnly
+    ? `${BACKEND_BASE}/api/v1/surveys?status=active`
+    : `${BACKEND_BASE}/api/v1/surveys`
+  const raw = await apiFetch<Array<{ id: string; title?: string; name?: string; status: string }>>(
+    url,
+    { headers: authGetHeaders(accessToken) },
+  )
+  return raw.map(({ id, title, name, status }) => ({
+    id,
+    name: name ?? title ?? "Untitled",
+    status,
+  }))
 }
 
 // ------------------------------------------------------------------
@@ -630,6 +650,7 @@ function normalizeSurveyListItem(raw: Record<string, unknown>): SurveyListItem {
     title: String(raw.title ?? raw.name ?? "Untitled Survey"),
     status,
     latest_version: Number(raw.latest_version ?? raw.latestVersion ?? 1),
+    last_edited_by: raw.last_edited_by != null ? String(raw.last_edited_by) : null,
     updated_at: String(raw.updated_at ?? raw.updatedAt ?? ""),
   }
 }
@@ -732,6 +753,14 @@ export function archiveSurvey(token: string, id: string): Promise<SurveyListItem
   return surveyRequest<SurveyListItem>(token, `/surveys/${id}/archive`, "PATCH")
 }
 
+export function unpublishSurvey(token: string, id: string): Promise<SurveyListItem> {
+  return surveyRequest<SurveyListItem>(token, `/surveys/${id}/unpublish`, "PATCH")
+}
+
+export function unarchiveSurvey(token: string, id: string): Promise<SurveyListItem> {
+  return surveyRequest<SurveyListItem>(token, `/surveys/${id}/unarchive`, "PATCH")
+}
+
 export function duplicateSurvey(token: string, id: string): Promise<SurveyWithSchema> {
   return surveyRequest<SurveyWithSchema>(token, `/surveys/${id}/duplicate`, "POST")
 }
@@ -761,6 +790,10 @@ async function _analyticsRequest<T>(
 ): Promise<T> {
   const url = `${BACKEND_BASE}/api/v1${path}${params && params.toString() ? `?${params}` : ""}`
   return apiFetch<T>(url, { headers: authGetHeaders(token) })
+}
+
+export function fetchHasUnreadReviews(token: string): Promise<{ has_unread: boolean }> {
+  return _analyticsRequest<{ has_unread: boolean }>(token, "/analytics/has-unread")
 }
 
 export function fetchAnalyticsFilters(token: string): Promise<AnalyticsFiltersResponse> {

@@ -24,7 +24,7 @@ def get_me(
 
     display_name = f"{user.first_name} {user.last_name}".strip() or "User"
     return UserResponse(
-        id=str(user.id),
+        id=user.id,
         email=user.email,
         first_name=user.first_name,
         last_name=user.last_name,
@@ -54,7 +54,7 @@ def setup_account(
 
     company = CompanyORM(
         owner_user_id=user.id,
-        name=payload.company_name,
+        name=(payload.company_name).strip(),
         primary_industry=payload.primary_industry,
         company_size=payload.company_size,
         location_count=payload.location_count,

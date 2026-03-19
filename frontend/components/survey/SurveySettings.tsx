@@ -7,6 +7,7 @@ import { useSettingsSchema } from "@/contexts/SettingsSchemaContext"
 
 const THEME_KEY_MAP: Record<string, { source: "theme" | "settings"; key: string }> = {
   font: { source: "theme", key: "fontFamily" },
+  text_color: { source: "theme", key: "textColor" },
   content_alignment: { source: "settings", key: "contentAlign" },
   primary_color: { source: "theme", key: "primaryColor" },
   background_color: { source: "theme", key: "backgroundColor" },
