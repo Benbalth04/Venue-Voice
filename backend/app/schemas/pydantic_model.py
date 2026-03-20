@@ -1,7 +1,9 @@
 import uuid
-from pydantic import BaseModel
+from datetime import datetime
+from enum import Enum as PyEnum
+
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from typing import Any, Literal
-from pydantic import EmailStr
 
 
 class User(BaseModel):
@@ -334,3 +336,44 @@ class DashboardData(BaseModel):
     active_surveys: list[DashboardSurveySummary]
     active_qr_codes: list[DashboardQRCodeSummary]
     active_locations: list[DashboardLocationSummary]
+
+
+# --------------------------------------------------
+# AI ANALYSIS
+# --------------------------------------------------
+
+
+class AISentiment(str, PyEnum):
+    positive = "positive"
+    neutral = "neutral"
+    negative = "negative"
+
+
+class AIAnalysisBase(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    company_id: uuid.UUID | None = None
+    location_id: uuid.UUID | None = None
+    survey_response_id: uuid.UUID
+    question_id: uuid.UUID | None = None
+    prompt: str
+    raw_response: str | None = None
+    analysis: dict[str, Any]
+    sentiment: AISentiment | None = None
+    sentiment_score: float | None = Field(default=None, ge=-1.0, le=1.0)
+    model: str | None = None
+    analysis_version: int = 1
+    status: Literal["pending", "completed", "failed"]
+    processing_time_ms: int | None = None
+    error: str | None = None
+
+
+class AIAnalysisCreate(AIAnalysisBase):
+    """Payload shape for creating an analysis row (internal / future API use)."""
+
+    pass
+
+
+class AIAnalysisResponse(AIAnalysisBase):
+    id: uuid.UUID
+    created_at: datetime

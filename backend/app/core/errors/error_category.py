@@ -8,4 +8,5 @@ class ErrorCategory(str, Enum):
     CONFLICT = "conflict"
     RATE_LIMIT = "rate_limit"
     EXTERNAL = "external"
+    EXTERNAL_API = "external_api"
     UNKNOWN = "unknown"

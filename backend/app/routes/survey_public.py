@@ -3,6 +3,7 @@ Public survey completion flow - no auth required.
 QR code URL: /r/{qrCodeId}
 """
 import hashlib
+import logging
 import os
 import uuid
 from datetime import datetime, timezone
@@ -35,6 +36,8 @@ from ..models.postgres_model import (
 )
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN")
 
@@ -561,7 +564,24 @@ def submit_survey(
 
     sess.end_time = end_time
     sess.abandoned = False
+    response_id = resp.id
     db.commit()
+
+    try:
+        from ..services.ai_analysis_service import run_ai_analysis_for_response
+
+        saved = (
+            db.query(SurveyResponseORM)
+            .filter(SurveyResponseORM.id == response_id)
+            .first()
+        )
+        if saved:
+            run_ai_analysis_for_response(db, saved)
+    except Exception:
+        logger.exception(
+            "AI sentiment analysis failed after survey submit (response_id=%s)",
+            response_id,
+        )
 
     company = db.query(CompanyORM).filter(CompanyORM.id == sess.company_id).first()
     thank_you_message = (company.thank_you_message or "Thank you for your feedback!") if company else "Thank you for your feedback!"

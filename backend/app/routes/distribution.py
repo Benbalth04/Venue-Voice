@@ -84,13 +84,7 @@ def list_qr_codes(
         .order_by(QRCodeORM.created_at.desc())
         .all()
     )
-
-    for qr in qrs:
-        print("QR:", qr.id)
-        print("survey_id:", qr.survey_id)
-        print("survey:", qr.survey)
-        print("location:", qr.location)
-
+    
     # Map each QR to response
     return [
         _to_response(

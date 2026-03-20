@@ -55,3 +55,26 @@ class ConflictError(AppError):
             status_code=409,
             details=details,
         )
+
+
+class ExternalAPIError(AppError):
+    """Third-party API failure (e.g. OpenAI timeout or invalid payload)."""
+
+    def __init__(
+        self,
+        service_name: str,
+        error_message: str,
+        code: str = "EXTERNAL_API_ERROR",
+        status_code: int = 502,
+        details: dict | None = None,
+    ):
+        merged = {"service_name": service_name, "error_message": error_message}
+        if details:
+            merged.update(details)
+        super().__init__(
+            category=ErrorCategory.EXTERNAL_API,
+            code=code,
+            message=error_message,
+            status_code=status_code,
+            details=merged,
+        )

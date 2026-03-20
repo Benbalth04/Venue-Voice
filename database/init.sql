@@ -95,7 +95,8 @@ CREATE TABLE question_types (
     type TEXT PRIMARY KEY,
     category TEXT NOT NULL,
     label TEXT NOT NULL,
-    is_numeric BOOLEAN NOT NULL DEFAULT FALSE
+    is_numeric BOOLEAN NOT NULL DEFAULT FALSE, 
+    analyse_with_ai BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 --------------------------------------------------
@@ -226,7 +227,6 @@ CREATE TABLE IF NOT EXISTS survey_redirect_idempotency (
 --------------------------------------------------
 -- SURVEY RESPONSES
 --------------------------------------------------
-
 CREATE TABLE survey_responses (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     survey_version_id UUID NOT NULL REFERENCES survey_versions(id) ON DELETE CASCADE,
@@ -248,7 +248,6 @@ CREATE INDEX idx_survey_responses_qr_code_id ON survey_responses(qr_code_id);
 --------------------------------------------------
 -- SURVEY RESPONSE ANSWERS (normalized answers for public survey flow)
 --------------------------------------------------
-
 CREATE TABLE survey_response_answers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     survey_response_id UUID NOT NULL REFERENCES survey_responses(id) ON DELETE CASCADE,
@@ -271,7 +270,6 @@ ON survey_response_answers(question_id);
 --------------------------------------------------
 -- RESPONSE READS (track which responses each user has viewed)
 --------------------------------------------------
-
 CREATE TABLE response_reads (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -286,7 +284,6 @@ ON response_reads(user_id, response_id);
 --------------------------------------------------
 -- ALERT RULES
 --------------------------------------------------
-
 CREATE TABLE alert_rules (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     survey_id UUID NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
@@ -298,35 +295,59 @@ CREATE TABLE alert_rules (
 );
 
 --------------------------------------------------
--- AI SUMMARIES
+-- AI ANALYSIS
 --------------------------------------------------
-
-CREATE TABLE ai_summaries (
+CREATE TABLE ai_analysis (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+
     company_id UUID REFERENCES companies(id),
     location_id UUID REFERENCES locations(id),
-    period_start DATE,
-    period_end DATE,
-    summary TEXT,
-    created_at TIMESTAMP DEFAULT NOW()
+
+    survey_response_id UUID NOT NULL REFERENCES survey_responses(id) ON DELETE CASCADE,
+    question_id UUID REFERENCES questions(id) ON DELETE SET NULL,
+
+    -- raw input/output
+    prompt TEXT NOT NULL,
+    raw_response TEXT,
+
+    -- structured output (empty object until completed)
+    analysis JSONB NOT NULL DEFAULT '{}'::jsonb,
+
+    -- key fields (denormalised for speed); NULL when pending or failed
+    sentiment TEXT CHECK (sentiment IS NULL OR sentiment IN ('positive', 'neutral', 'negative')),
+    sentiment_score FLOAT,
+
+    -- versioning
+    model TEXT,
+    model_version TEXT,
+    analysis_version INTEGER NOT NULL DEFAULT 1,
+
+    -- processing metadata
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'failed')),
+    processing_time_ms INTEGER,
+    error TEXT,
+
+    created_at TIMESTAMP DEFAULT NOW(),
+
+    UNIQUE (survey_response_id, question_id)
 );
 
-CREATE INDEX idx_ai_summaries_location
-ON ai_summaries(location_id);
+CREATE INDEX idx_ai_analysis_survey_response_id ON ai_analysis(survey_response_id);
+CREATE INDEX idx_ai_analysis_company_id ON ai_analysis(company_id);
 
 --------------------------------------------------
 -- Seed Data
 --------------------------------------------------
-INSERT INTO question_types (type, category, label, is_numeric) VALUES
-('star', 'rating', 'Star Rating', TRUE),
-('nps', 'rating', 'Net Promoter Score', TRUE),
-('text', 'text', 'Short Text', FALSE),
-('long_text', 'text', 'Long Text', FALSE),
-('multiple_choice', 'choice', 'Multiple Choice', FALSE),
-('checkbox', 'choice', 'Checkboxes', FALSE),
-('yes_no', 'choice', 'Yes / No', FALSE),
-('email', 'customer_details', 'Email', FALSE),
-('phone', 'customer_details', 'Phone', FALSE);
+INSERT INTO question_types (type, category, label, is_numeric, analyse_with_ai) VALUES
+('star', 'rating', 'Star Rating', TRUE, FALSE),
+('nps', 'rating', 'Net Promoter Score', TRUE, FALSE),
+('text', 'text', 'Short Text', FALSE, TRUE),
+('long_text', 'text', 'Long Text', FALSE, TRUE),
+('multiple_choice', 'choice', 'Multiple Choice', FALSE, FALSE),
+('checkbox', 'choice', 'Checkboxes', FALSE, FALSE),
+('yes_no', 'choice', 'Yes / No', FALSE, FALSE),
+('email', 'customer_details', 'Email', FALSE, FALSE),
+('phone', 'customer_details', 'Phone', FALSE, FALSE);
 
 INSERT INTO question_type_settings (question_type, setting_key, setting_label, setting_type, required, default_value, allowed_values, validation_rules) VALUES
 ('star', 'optional', 'Optional question', 'boolean', FALSE, 'false', NULL, NULL),
@@ -403,82 +424,73 @@ INSERT INTO companies (id, owner_user_id, name, primary_industry, company_size, 
 INSERT INTO locations (id, company_id, name, is_active, state, country, google_business_url, created_at, updated_at) VALUES
 ('87ff1d9a-d62a-425f-a378-06bab8438eb7', '02238978-8b23-408a-a5e4-a0399578229a', 'Test Venue', true, NULL, NULL, NULL, '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126');
 
--- INSERT INTO surveys (id, company_id, name, status, latest_version, created_at, updated_at) VALUES
--- ('10b79ca0-5f1e-4c4a-ae37-32240dbf0953', '02238978-8b23-408a-a5e4-a0399578229a', 'Default Survey', 'active', 1, '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126');
+INSERT INTO surveys (id, company_id, name, status, latest_version, created_at, updated_at) VALUES
+('edb799f1-4d75-4e0e-992f-179d6b97e7f7', '02238978-8b23-408a-a5e4-a0399578229a', 'Survey 1', 'active', 1, '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126');
 
--- INSERT INTO qr_codes (id, company_id, title, is_active, survey_id, location_id, created_at, updated_at) VALUES
--- ('74d37475-9b04-4a4d-b76f-8d5b876b8570', '02238978-8b23-408a-a5e4-a0399578229a', 'Default QR Code', true, '10b79ca0-5f1e-4c4a-ae37-32240dbf0953', '87ff1d9a-d62a-425f-a378-06bab8438eb7', '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126');
+INSERT INTO qr_codes (id, company_id, title, is_active, survey_id, location_id, created_at, updated_at) VALUES
+('0837b563-de15-46de-9bfa-b6d5d3269511', '02238978-8b23-408a-a5e4-a0399578229a', 'Default QR Code', true, 'edb799f1-4d75-4e0e-992f-179d6b97e7f7', '87ff1d9a-d62a-425f-a378-06bab8438eb7', '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126');
 
--- INSERT INTO survey_versions (id, survey_id, version_number, schema_json, created_by, created_at, theme_settings) VALUES
--- (
--- '447fb92c-1fb8-4fae-9019-f0e0a705fd30',
--- '10b79ca0-5f1e-4c4a-ae37-32240dbf0953',
--- 1,
--- $$
--- {
---   "theme": {
---     "textColor": "#1E1E1E",
---     "fontFamily": "Inter",
---     "primaryColor": "#7C3AED",
---     "backgroundColor": "#FFFFFF"
---   },
---   "title": {
---     "text": "Customer Feedback",
---     "style": {
---       "size": "h1"
---     }
---   },
---   "version": 1,
---   "settings": {
---     "contentAlign": "left",
---     "showProgressBar": true,
---     "progressBarColor": "#7C3AED"
---   },
---   "subtitle": {
---     "text": "Tell us about your experience",
---     "style": {
---       "size": "body"
---     }
---   },
---   "questions": [
---     {
---       "id": "3bd8b605-0d83-4f86-ac10-3e9f3eabb2f7",
---       "type": "star",
---       "title": {
---         "text": "How was your experience?",
---         "style": {
---           "size": "h2"
---         }
---       },
---       "version": 1,
---       "optional": false,
---       "settings": {
---         "starCount": 5,
---         "selected_colour": "#7C3AED"
---       },
---       "description": {
---         "text": "Please rate your overall experience",
---         "style": {
---           "size": "body"
---         }
---       }
---     }
---   ]
--- }
--- $$::jsonb,
--- '8567b7dc-6049-415e-97d8-740a6483c1b6',
--- '2026-03-15 05:56:49.03126',
--- $$
--- {
---   "font": "Inter",
---   "primary_color": "#7C3AED",
---   "background_color": "#FFFFFF",
---   "content_alignment": "left",
---   "show_progress_bar": true,
---   "progress_bar_color": "#7C3AED"
--- }
--- $$::jsonb
--- );
+INSERT INTO survey_versions (id, survey_id, version_number, schema_json, created_by, created_at, theme_settings) VALUES
+(
+'1ce6fe24-05bc-48c1-a055-a15a91491706',
+'edb799f1-4d75-4e0e-992f-179d6b97e7f7',
+1,
+$$
+{
+  "theme": {
+    "textColor": "#1E1E1E",
+    "fontFamily": "Inter",
+    "primaryColor": "#7C3AED",
+    "backgroundColor": "#FFFFFF"
+  },
+  "title": {
+    "text": "Customer Feedback",
+    "style": {
+      "size": "h1"
+    }
+  },
+  "version": 1,
+  "settings": {
+    "contentAlign": "left",
+    "showProgressBar": true,
+    "progressBarColor": "#7C3AED"
+  },
+  "subtitle": {
+    "text": "Tell us about your experience",
+    "style": {
+      "size": "body"
+}
+  },
+  "questions": []
+}
+$$::jsonb,
+'8567b7dc-6049-415e-97d8-740a6483c1b6',
+'2026-03-15 05:56:49.03126',
+$$
+{
+  "font": "Inter",
+  "primary_color": "#7C3AED",
+  "background_color": "#FFFFFF",
+  "content_alignment": "left",
+  "show_progress_bar": true,
+  "progress_bar_color": "#7C3AED"
+}
+$$::jsonb
+);
 
--- INSERT INTO questions (id, survey_version_id, question_key, question_text, question_type, config, position, is_numeric) VALUES
--- ('deddb36a-a0d1-40de-a461-d521a89d1ce8', '447fb92c-1fb8-4fae-9019-f0e0a705fd30', '3bd8b605-0d83-4f86-ac10-3e9f3eabb2f7', 'How was your experience?', 'star', $${"starCount": 5, "selected_colour": "#7C3AED"}$$::jsonb, 1, true);
+INSERT INTO questions (id, survey_version_id, question_key, question_text, question_type, config, position, is_numeric) VALUES
+(
+    '40a0545f-9d6b-41ef-bd1c-305ea28a62df',
+    '1ce6fe24-05bc-48c1-a055-a15a91491706', 
+    '1829ab7e-9cb3-40e6-a2c9-6f36a21629af', 
+    'Did you enjoy your time at the restaurant today?', 'text', 
+    $${
+        "optional": false,
+        "text_size": "medium",
+        "placeholder": "Type your answer...",
+        "title_alignment": "inherit",
+        "action_alignment": "left"
+    }$$::jsonb,
+    1, 
+    true
+);

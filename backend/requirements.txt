@@ -7,3 +7,4 @@ SQLAlchemy
 python-jose[cryptography]
 itsdangerous
 openpyxl
+openai

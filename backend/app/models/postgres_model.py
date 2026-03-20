@@ -10,8 +10,11 @@ from sqlalchemy import (
     Boolean,
     Integer,
     Numeric,
+    Float,
     CheckConstraint,
+    UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -222,6 +225,7 @@ class QuestionType(Base):
     category: Mapped[str] = mapped_column(String, nullable=False)
     label: Mapped[str] = mapped_column(String, nullable=False)
     is_numeric: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    analyse_with_ai: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
 # --------------------------------------------------
@@ -509,6 +513,77 @@ class SurveyResponseAnswer(Base):
             "OR (text_value IS NULL AND numeric_value IS NOT NULL)",
             name="survey_response_answers_value_check",
         ),
+    )
+
+
+# --------------------------------------------------
+# AI ANALYSIS (sentiment per survey answer)
+# --------------------------------------------------
+class AIAnalysis(Base):
+    __tablename__ = "ai_analysis"
+    __table_args__ = (
+        UniqueConstraint(
+            "survey_response_id",
+            "question_id",
+            name="uq_ai_analysis_response_question",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.uuid_generate_v4(),
+    )
+    company_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("companies.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    location_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("locations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    survey_response_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("survey_responses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    question_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("questions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    analysis: Mapped[dict] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+    )
+    sentiment: Mapped[str | None] = mapped_column(String, nullable=True)
+    sentiment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    model: Mapped[str | None] = mapped_column(String, nullable=True)
+    model_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    analysis_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default="1",
+    )
+    status: Mapped[str] = mapped_column(
+        String,
+        nullable=False,
+        default="pending",
+        server_default="pending",
+    )
+    processing_time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
     )
 
 

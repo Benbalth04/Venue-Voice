@@ -3,6 +3,7 @@ from .error_category import ErrorCategory
 from .exceptions import (
     AuthError,
     ConflictError,
+    ExternalAPIError,
     NotFoundError,
     PermissionError,
     ValidationError,
@@ -17,6 +18,7 @@ __all__ = [
     "NotFoundError",
     "PermissionError",
     "ValidationError",
+    "ExternalAPIError",
     "app_error_handler",
     "generic_exception_handler",
 ]
