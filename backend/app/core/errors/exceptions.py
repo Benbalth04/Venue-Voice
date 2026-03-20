@@ -78,3 +78,20 @@ class ExternalAPIError(AppError):
             status_code=status_code,
             details=merged,
         )
+
+
+class LogicEvaluationError(AppError):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        details: dict | None = None,
+        status_code: int = 500,
+    ):
+        super().__init__(
+            category=ErrorCategory.UNKNOWN,
+            code=code,
+            message=message,
+            status_code=status_code,
+            details=details,
+        )

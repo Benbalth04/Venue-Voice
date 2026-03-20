@@ -1,7 +1,6 @@
 import {
   normalizeApiError,
   normalizeUnknownError,
-  type NormalizedError,
 } from "./errors"
 
 export type { NormalizedError } from "./errors"
@@ -287,6 +286,76 @@ export interface SurveyListItem {
 export interface SurveyWithSchema extends SurveyListItem {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   survey_schema_json: Record<string, any>
+}
+
+export type LogicActionType = "google_redirect" | "email_alert" | "none"
+export type LogicConnector = "AND" | "OR"
+export type LogicOperator =
+  | "group"
+  | "<"
+  | "<="
+  | ">="
+  | ">"
+  | "blank"
+  | "not_blank"
+  | "sentiment_positive"
+  | "sentiment_negative"
+
+export interface LogicQuestionOption {
+  id: string
+  question_key: string
+  question_text: string
+  question_type: string
+  is_numeric: boolean
+  position: number
+}
+
+export interface LogicConditionPayload {
+  id?: string | null
+  question_id: string | null
+  operator: LogicOperator
+  threshold_value: number | null
+  logical_connector: LogicConnector
+  children: LogicConditionPayload[]
+}
+
+export interface LogicConditionResponse {
+  id: string
+  question_id: string | null
+  operator: LogicOperator
+  threshold_value: number | null
+  logical_connector: LogicConnector
+  parent_condition_id: string | null
+  position: number
+  question_text: string | null
+  question_type: string | null
+  children: LogicConditionResponse[]
+}
+
+export interface LogicRulePayload {
+  name: string
+  description: string | null
+  enabled: boolean
+  action_type: LogicActionType
+  conditions: LogicConditionPayload[]
+}
+
+export interface LogicRuleResponse {
+  id: string
+  survey_id: string
+  name: string
+  description: string | null
+  enabled: boolean
+  action_type: LogicActionType
+  conditions: LogicConditionResponse[]
+  created_at: string
+  updated_at: string
+}
+
+export interface LogicRuleBundleResponse {
+  survey_id: string
+  questions: LogicQuestionOption[]
+  rules: LogicRuleResponse[]
 }
 
 // Analytics
@@ -700,6 +769,48 @@ async function surveyRequest<T>(
   return data as T
 }
 
+export function fetchSurveyLogicRules(
+  token: string,
+  surveyId: string,
+): Promise<LogicRuleBundleResponse> {
+  return surveyRequest<LogicRuleBundleResponse>(token, `/surveys/${surveyId}/logic-rules`)
+}
+
+export function createSurveyLogicRule(
+  token: string,
+  surveyId: string,
+  payload: LogicRulePayload,
+): Promise<LogicRuleResponse> {
+  return surveyRequest<LogicRuleResponse>(
+    token,
+    `/surveys/${surveyId}/logic-rules`,
+    "POST",
+    payload,
+  )
+}
+
+export function updateSurveyLogicRule(
+  token: string,
+  surveyId: string,
+  ruleId: string,
+  payload: LogicRulePayload,
+): Promise<LogicRuleResponse> {
+  return surveyRequest<LogicRuleResponse>(
+    token,
+    `/surveys/${surveyId}/logic-rules/${ruleId}`,
+    "PUT",
+    payload,
+  )
+}
+
+export async function deleteSurveyLogicRule(
+  token: string,
+  surveyId: string,
+  ruleId: string,
+): Promise<void> {
+  await surveyRequest<unknown>(token, `/surveys/${surveyId}/logic-rules/${ruleId}`, "DELETE")
+}
+
 export function fetchSurveysList(token: string): Promise<SurveyListItem[]> {
   return surveyRequest<Record<string, unknown>[]>(token, "/surveys").then((rows) =>
     rows.map((row) => normalizeSurveyListItem(row)),
@@ -794,6 +905,10 @@ async function _analyticsRequest<T>(
 
 export function fetchHasUnreadReviews(token: string): Promise<{ has_unread: boolean }> {
   return _analyticsRequest<{ has_unread: boolean }>(token, "/analytics/has-unread")
+}
+
+export function fetchUnreadResponseCount(token: string): Promise<{ count: number }> {
+  return _analyticsRequest<{ count: number }>(token, "/analytics/unread-count")
 }
 
 export function fetchAnalyticsFilters(token: string): Promise<AnalyticsFiltersResponse> {

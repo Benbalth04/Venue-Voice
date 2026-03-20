@@ -1,77 +1,195 @@
 "use client"
 
-import Link from "next/link"
+import type { ComponentType } from "react"
 import Image from "next/image"
-import { usePathname } from "next/navigation"
-import { useRouter } from "next/navigation"
-import { supabase } from "@/lib/supabase/client"
+import Link from "next/link"
+import { usePathname, useRouter } from "next/navigation"
 import {
   BarChart3,
-  Bell,
   LayoutDashboard,
   Link2,
   LogOut,
   MapPin,
   MessageSquare,
+  Users,
+  Zap,
 } from "lucide-react"
+import { supabase } from "@/lib/supabase/client"
+import { useUnreadResponses } from "@/components/layout/UnreadResponsesContext"
 
-const items = [
-  { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
-  { href: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
+type NavChild = {
+  href: string
+  label: string
+  exact?: boolean
+  showUnreadCount?: boolean
+}
+
+type NavItem = {
+  href?: string
+  label: string
+  icon?: ComponentType<{ className?: string }>
+  disabled?: boolean
+  exact?: boolean
+  children?: NavChild[]
+}
+
+const items: NavItem[] = [
+  { href: "/dashboard", label: "Overview", icon: LayoutDashboard, exact: true },
+  {
+    href: "/dashboard/analytics/view_responses",
+    label: "Analytics",
+    icon: BarChart3,
+    children: [
+      {
+        href: "/dashboard/analytics/view_responses",
+        label: "View Responses",
+        exact: true,
+        showUnreadCount: true,
+      },
+      {
+        href: "/dashboard/analytics/survey_dashboard",
+        label: "Survey Dashboards",
+        exact: true,
+      },
+    ],
+  },
   { href: "/dashboard/surveys", label: "Surveys", icon: MessageSquare },
-  { href: "/dashboard/distribution", label: "Distribution", icon: Link2 },
   { href: "/dashboard/locations", label: "Locations", icon: MapPin },
-  { href: "/dashboard/alerts", label: "Alerts", icon: Bell },
+  {
+    href: "/dashboard/distribution/assign_surveys",
+    label: "Distribution",
+    icon: Link2,
+    children: [
+      {
+        href: "/dashboard/distribution/assign_surveys",
+        label: "Assign Surveys",
+        exact: true,
+      },
+      {
+        href: "/dashboard/distribution/qr_codes",
+        label: "QR Codes",
+        exact: true,
+      },
+    ],
+  },
+  {
+    href: "/dashboard/automations/flows",
+    label: "Automations",
+    icon: Zap,
+    children: [
+      { href: "/dashboard/automations/flows", label: "Flows", exact: true },
+      { href: "/dashboard/automations/rules", label: "Rules", exact: true },
+      {
+        href: "/dashboard/automations/notification_groups",
+        label: "Notification Groups",
+        exact: true,
+      },
+    ],
+  },
+  { label: "User Management", icon: Users, disabled: true },
 ]
+
+function isRouteActive(pathname: string, href: string, exact = false) {
+  if (exact) return pathname === href
+  return pathname === href || pathname.startsWith(`${href}/`)
+}
 
 export function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
+  const { unreadCount } = useUnreadResponses()
 
   async function onLogout() {
-    // Call signOut but don't block navigation on failure
     supabase.auth.signOut().catch((err) => {
       console.error("Supabase signOut failed:", err)
     })
 
-    // Immediately redirect
     router.push("/login")
-    // Refresh to ensure server components fetch new session
     router.refresh()
   }
 
   return (
-    <aside className="hidden sticky top-0 h-screen w-60 flex-col border-r border-zinc-200 bg-white px-4 py-6 lg:flex">
+    <aside className="sticky top-0 hidden h-screen w-64 flex-col border-r border-zinc-200 bg-white px-4 py-6 lg:flex">
       <Link href="/dashboard" className="mb-6 flex flex-shrink-0 items-center justify-center px-2">
         <Image
           src="/venue_voice_logo_1.png"
           alt="Venue Voice"
           width={800}
           height={800}
-          className="h-24 w-full object-contain m-0"
+          className="m-0 h-24 w-full object-contain"
         />
       </Link>
-      <nav className="flex-1 space-y-1">
-          {items.map((item) => {
+
+      <nav className="flex-1 space-y-1 overflow-y-auto">
+        {items.map((item) => {
           const Icon = item.icon
-          const active = pathname === item.href
+          const parentActive =
+            item.href != null ? isRouteActive(pathname, item.href, item.exact) : false
+          const hasActiveChild = item.children?.some((child) =>
+            isRouteActive(pathname, child.href, child.exact),
+          )
+          const active = parentActive || Boolean(hasActiveChild)
+
           return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={[
-                "flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition-colors",
-                active
-                  ? "bg-violet-50 text-violet-700"
-                  : "text-zinc-700 hover:bg-zinc-50",
-              ].join(" ")}
-            >
-              <Icon className="h-4 w-4" />
-              <span>{item.label}</span>
-            </Link>
+            <div key={item.label} className="space-y-1">
+              {item.disabled ? (
+                <div className="flex flex-col rounded-xl px-3 py-2 text-sm font-medium text-zinc-400">
+                  {/* Level 0 */}
+                  <div className="flex items-center gap-2">
+                    {Icon ? <Icon className="h-4 w-4" /> : null}
+                    <span>{item.label}</span>
+                  </div>
+
+                  {/* Level 1 aligned with label */}
+                  <span className="ml-6 mt-1 text-xs font-medium text-zinc-400">
+                    Coming soon
+                  </span>
+                </div>
+              ) : item.href ? (
+                <Link
+                  href={item.href}
+                  className={[
+                    "flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition-colors",
+                    active ? "bg-violet-50 text-violet-700" : "text-zinc-700 hover:bg-zinc-50",
+                  ].join(" ")}
+                >
+                  {Icon ? <Icon className="h-4 w-4" /> : null}
+                  <span>{item.label}</span>
+                </Link>
+              ) : null}
+
+              {item.children ? (
+                <div className="space-y-1 pl-9">
+                  {item.children.map((child) => {
+                    const childActive = isRouteActive(pathname, child.href, child.exact)
+                    return (
+                      <Link
+                        key={child.href}
+                        href={child.href}
+                        className={[
+                          "flex items-center justify-between gap-2 rounded-xl px-3 py-2 text-sm font-medium transition-colors",
+                          childActive
+                            ? "bg-violet-50 text-violet-700"
+                            : "text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900",
+                        ].join(" ")}
+                      >
+                        <span className="truncate">{child.label}</span>
+                        {child.showUnreadCount && unreadCount > 0 ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                            <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden />
+                            {`${unreadCount} new`}
+                          </span>
+                        ) : null}
+                      </Link>
+                    )
+                  })}
+                </div>
+              ) : null}
+            </div>
           )
         })}
       </nav>
+
       <button
         type="button"
         className="mt-4 inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-zinc-500 hover:bg-zinc-50"
@@ -84,4 +202,3 @@ export function Sidebar() {
     </aside>
   )
 }
-

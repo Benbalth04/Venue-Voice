@@ -22,7 +22,8 @@ import {
   type AnalyticsFilters,
   type AnalyticsResponseRow,
 } from "@/lib/api/client"
-import { DataTable, type DataTableColumn } from "@/components/ui/DataTable"
+import { DataTable } from "@/components/ui/DataTable"
+import { useUnreadResponses } from "@/components/layout/UnreadResponsesContext"
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -107,7 +108,7 @@ function ReviewModal({
     }
     load()
     return () => { cancelled = true }
-  }, [responseId])
+  }, [onMarkRead, responseId])
 
   return (
     <div
@@ -341,6 +342,7 @@ function FiltersPanel({
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function AnalyticsPage() {
+  const { markResponseRead } = useUnreadResponses()
   const [rows, setRows] = useState<AnalyticsResponseRow[]>([])
   const [totalCount, setTotalCount] = useState(0)
   const [page, setPage] = useState(1)
@@ -681,6 +683,7 @@ export default function AnalyticsPage() {
           responseId={reviewId}
           onClose={() => setReviewId(null)}
           onMarkRead={(id) => {
+            markResponseRead(id)
             setRows((prev) =>
               prev.map((r) =>
                 r.response_id === id ? { ...r, unread: false } : r,

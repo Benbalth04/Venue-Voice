@@ -62,6 +62,23 @@ def _shared_filter_params(
 
 
 # ------------------------------------------------------------------
+# GET /analytics/unread-count
+# ------------------------------------------------------------------
+@router.get("/analytics/unread-count")
+def unread_response_count(
+    current_user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    """Return unread completed survey response count for the current user."""
+    from ..services.analytics_service import get_unread_response_count
+
+    try:
+        return {"count": get_unread_response_count(user_id=current_user.id, db=db)}
+    except Exception:
+        return {"count": 0}
+
+
+# ------------------------------------------------------------------
 # GET /analytics/has-unread
 # ------------------------------------------------------------------
 @router.get("/analytics/has-unread")

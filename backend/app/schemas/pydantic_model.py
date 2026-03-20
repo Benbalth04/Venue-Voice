@@ -377,3 +377,110 @@ class AIAnalysisCreate(AIAnalysisBase):
 class AIAnalysisResponse(AIAnalysisBase):
     id: uuid.UUID
     created_at: datetime
+
+
+# --------------------------------------------------
+# LOGIC RULES / CONDITIONS / EVENTS
+# --------------------------------------------------
+class LogicActionType(str, PyEnum):
+    google_redirect = "google_redirect"
+    email_alert = "email_alert"
+    none = "none"
+
+
+class LogicConnector(str, PyEnum):
+    AND = "AND"
+    OR = "OR"
+
+
+class LogicOperator(str, PyEnum):
+    group = "group"
+    lt = "<"
+    lte = "<="
+    gte = ">="
+    gt = ">"
+    blank = "blank"
+    not_blank = "not_blank"
+    sentiment_positive = "sentiment_positive"
+    sentiment_negative = "sentiment_negative"
+
+
+class LogicQuestionOption(BaseModel):
+    id: uuid.UUID
+    question_key: str
+    question_text: str
+    question_type: str
+    is_numeric: bool
+    position: int
+
+
+class LogicConditionBase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    question_id: uuid.UUID | None = None
+    operator: LogicOperator
+    threshold_value: float | None = None
+    logical_connector: LogicConnector = LogicConnector.AND
+
+
+class LogicConditionUpsert(LogicConditionBase):
+    id: uuid.UUID | None = None
+    children: list["LogicConditionUpsert"] = Field(default_factory=list)
+
+
+class LogicConditionResponse(LogicConditionBase):
+    id: uuid.UUID
+    parent_condition_id: uuid.UUID | None = None
+    position: int
+    question_text: str | None = None
+    question_type: str | None = None
+    children: list["LogicConditionResponse"] = Field(default_factory=list)
+
+
+class LogicRuleCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=240)
+    enabled: bool = True
+    action_type: LogicActionType = LogicActionType.none
+    conditions: list[LogicConditionUpsert] = Field(default_factory=list)
+
+
+class LogicRuleUpdate(LogicRuleCreate):
+    pass
+
+
+class LogicRuleResponse(BaseModel):
+    id: uuid.UUID
+    survey_id: uuid.UUID
+    name: str
+    description: str | None = None
+    enabled: bool
+    action_type: LogicActionType
+    conditions: list[LogicConditionResponse] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class LogicRuleListResponse(BaseModel):
+    survey_id: uuid.UUID
+    questions: list[LogicQuestionOption] = Field(default_factory=list)
+    rules: list[LogicRuleResponse] = Field(default_factory=list)
+
+
+class LogicEventBase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    survey_response_id: uuid.UUID
+    rule_id: uuid.UUID
+    action_type: LogicActionType
+
+
+class LogicEventResponse(LogicEventBase):
+    id: uuid.UUID
+    created_at: datetime
+
+
+LogicConditionUpsert.model_rebuild()
+LogicConditionResponse.model_rebuild()

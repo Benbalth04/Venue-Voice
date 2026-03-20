@@ -567,21 +567,29 @@ def submit_survey(
     response_id = resp.id
     db.commit()
 
-    try:
-        from ..services.ai_analysis_service import run_ai_analysis_for_response
+    from ..services.ai_analysis_service import run_ai_analysis_for_response
+    from ..services.logic_service import evaluate_logic
 
-        saved = (
-            db.query(SurveyResponseORM)
-            .filter(SurveyResponseORM.id == response_id)
-            .first()
-        )
-        if saved:
+    saved = (
+        db.query(SurveyResponseORM)
+        .filter(SurveyResponseORM.id == response_id)
+        .first()
+    )
+    if saved:
+        try:
             run_ai_analysis_for_response(db, saved)
-    except Exception:
-        logger.exception(
-            "AI sentiment analysis failed after survey submit (response_id=%s)",
-            response_id,
-        )
+        except Exception:
+            logger.exception(
+                "AI sentiment analysis failed after survey submit (response_id=%s)",
+                response_id,
+            )
+        try:
+            evaluate_logic(db, response_id)
+        except Exception:
+            logger.exception(
+                "Logic evaluation failed after survey submit (response_id=%s)",
+                response_id,
+            )
 
     company = db.query(CompanyORM).filter(CompanyORM.id == sess.company_id).first()
     thank_you_message = (company.thank_you_message or "Thank you for your feedback!") if company else "Thank you for your feedback!"

@@ -51,21 +51,26 @@ def _get_company_or_403(user_id: uuid.UUID, db: Session) -> CompanyORM:
     return company
 
 
-def has_unread_responses(*, user_id: uuid.UUID, db: Session) -> bool:
-    """Return True if the user has any completed survey responses they haven't read."""
+def get_unread_response_count(*, user_id: uuid.UUID, db: Session) -> int:
+    """Return unread completed survey responses for the current user."""
     company = _get_company_or_403(user_id, db)
     read_ids_subq = (
         db.query(ResponseReadORM.response_id).filter(ResponseReadORM.user_id == user_id)
     )
-    unread = (
-        db.query(SurveyResponseORM.id)
+    unread_count = (
+        db.query(func.count(SurveyResponseORM.id))
         .join(SurveySessionORM, SurveySessionORM.id == SurveyResponseORM.session_id)
         .filter(SurveySessionORM.company_id == company.id)
+        .filter(SurveyResponseORM.completed.is_(True))
         .filter(SurveyResponseORM.id.notin_(read_ids_subq))
-        .limit(1)
-        .first()
+        .scalar()
     )
-    return unread is not None
+    return int(unread_count or 0)
+
+
+def has_unread_responses(*, user_id: uuid.UUID, db: Session) -> bool:
+    """Return True if the user has any unread survey responses they haven't read."""
+    return get_unread_response_count(user_id=user_id, db=db) > 0
 
 
 def get_analytics_responses(

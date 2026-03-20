@@ -281,18 +281,47 @@ CREATE TABLE response_reads (
 CREATE INDEX idx_response_reads_user_response
 ON response_reads(user_id, response_id);
 
+-- LOGIC RULES / CONDITIONS / EVENTS
 --------------------------------------------------
--- ALERT RULES
---------------------------------------------------
-CREATE TABLE alert_rules (
+CREATE TABLE logic_rules (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     survey_id UUID NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description VARCHAR(240),
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    action_type TEXT NOT NULL DEFAULT 'none',
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_logic_rules_survey_id ON logic_rules(survey_id);
+
+CREATE TABLE logic_conditions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    rule_id UUID NOT NULL REFERENCES logic_rules(id) ON DELETE CASCADE,
     question_id UUID REFERENCES questions(id) ON DELETE SET NULL,
     operator TEXT NOT NULL,
-    threshold_value TEXT,
-    notification_email TEXT,
-    created_at TIMESTAMP DEFAULT NOW()
+    threshold_value FLOAT,
+    logical_connector TEXT NOT NULL DEFAULT 'AND' CHECK (logical_connector IN ('AND', 'OR')),
+    parent_condition_id UUID REFERENCES logic_conditions(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE INDEX idx_logic_conditions_rule_id ON logic_conditions(rule_id);
+CREATE INDEX idx_logic_conditions_question_id ON logic_conditions(question_id);
+CREATE INDEX idx_logic_conditions_parent_id ON logic_conditions(parent_condition_id);
+
+CREATE TABLE logic_events (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    survey_response_id UUID NOT NULL REFERENCES survey_responses(id) ON DELETE CASCADE,
+    rule_id UUID NOT NULL REFERENCES logic_rules(id) ON DELETE CASCADE,
+    action_type TEXT NOT NULL DEFAULT 'none',
+    created_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE (survey_response_id, rule_id)
+);
+
+CREATE INDEX idx_logic_events_response_id ON logic_events(survey_response_id);
+CREATE INDEX idx_logic_events_rule_id ON logic_events(rule_id);
 
 --------------------------------------------------
 -- AI ANALYSIS
@@ -425,15 +454,15 @@ INSERT INTO locations (id, company_id, name, is_active, state, country, google_b
 ('87ff1d9a-d62a-425f-a378-06bab8438eb7', '02238978-8b23-408a-a5e4-a0399578229a', 'Test Venue', true, NULL, NULL, NULL, '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126');
 
 INSERT INTO surveys (id, company_id, name, status, latest_version, created_at, updated_at) VALUES
-('edb799f1-4d75-4e0e-992f-179d6b97e7f7', '02238978-8b23-408a-a5e4-a0399578229a', 'Survey 1', 'active', 1, '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126');
+('a3be873f-0271-48e4-84a1-ba8b26f15d14', '02238978-8b23-408a-a5e4-a0399578229a', 'Survey 1', 'active', 1, '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126');
 
 INSERT INTO qr_codes (id, company_id, title, is_active, survey_id, location_id, created_at, updated_at) VALUES
-('0837b563-de15-46de-9bfa-b6d5d3269511', '02238978-8b23-408a-a5e4-a0399578229a', 'Default QR Code', true, 'edb799f1-4d75-4e0e-992f-179d6b97e7f7', '87ff1d9a-d62a-425f-a378-06bab8438eb7', '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126');
+('c172ef94-9f1d-4308-aa11-715d668a8686', '02238978-8b23-408a-a5e4-a0399578229a', 'Default QR Code', true, 'a3be873f-0271-48e4-84a1-ba8b26f15d14', '87ff1d9a-d62a-425f-a378-06bab8438eb7', '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126');
 
 INSERT INTO survey_versions (id, survey_id, version_number, schema_json, created_by, created_at, theme_settings) VALUES
 (
-'1ce6fe24-05bc-48c1-a055-a15a91491706',
-'edb799f1-4d75-4e0e-992f-179d6b97e7f7',
+'9d781c15-9b16-4920-bfee-9577fd19320b',
+'a3be873f-0271-48e4-84a1-ba8b26f15d14',
 1,
 $$
 {
@@ -449,7 +478,7 @@ $$
       "size": "h1"
     }
   },
-  "version": 1,
+  "version": 57,
   "settings": {
     "contentAlign": "left",
     "showProgressBar": true,
@@ -459,13 +488,40 @@ $$
     "text": "Tell us about your experience",
     "style": {
       "size": "body"
-}
+    }
   },
-  "questions": []
+  "questions": [
+    {
+      "id": "53fc5573-5d03-4ca1-8c15-0f70bc0b177f",
+      "type": "star",
+      "title": {
+        "text": "How would you rate our service?",
+        "style": {
+          "size": "h2"
+        }
+      },
+      "version": 56,
+      "optional": false,
+      "settings": {
+        "optional": false,
+        "starCount": 5,
+        "text_size": "medium",
+        "selected_colour": "#7C3AED",
+        "title_alignment": "inherit",
+        "action_alignment": "left"
+      },
+      "description": {
+        "text": "",
+        "style": {
+          "size": "body"
+        }
+      }
+    }
+  ]
 }
 $$::jsonb,
 '8567b7dc-6049-415e-97d8-740a6483c1b6',
-'2026-03-15 05:56:49.03126',
+'2026-03-20 04:50:57.021003',
 $$
 {
   "font": "Inter",
@@ -480,17 +536,21 @@ $$::jsonb
 
 INSERT INTO questions (id, survey_version_id, question_key, question_text, question_type, config, position, is_numeric) VALUES
 (
-    '40a0545f-9d6b-41ef-bd1c-305ea28a62df',
-    '1ce6fe24-05bc-48c1-a055-a15a91491706', 
-    '1829ab7e-9cb3-40e6-a2c9-6f36a21629af', 
-    'Did you enjoy your time at the restaurant today?', 'text', 
-    $${
-        "optional": false,
-        "text_size": "medium",
-        "placeholder": "Type your answer...",
-        "title_alignment": "inherit",
-        "action_alignment": "left"
-    }$$::jsonb,
-    1, 
+    '80b07b18-1d33-424d-a73d-37eeb06139f8',
+    'a3be873f-0271-48e4-84a1-ba8b26f15d14', 
+    '53fc5573-5d03-4ca1-8c15-0f70bc0b177f', 
+    'How would you rate our service?',
+    'star', 
+    $$
+    {
+    "optional": false,
+    "starCount": 5,
+    "text_size": "medium",
+    "selected_colour": "#7C3AED",
+    "title_alignment": "inherit",
+    "action_alignment": "left"
+    }
+    $$::jsonb,
+    0, 
     true
 );

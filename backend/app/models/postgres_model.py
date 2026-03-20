@@ -588,6 +588,101 @@ class AIAnalysis(Base):
 
 
 # --------------------------------------------------
+# LOGIC RULES / CONDITIONS / EVENTS
+# --------------------------------------------------
+class LogicRule(Base):
+    __tablename__ = "logic_rules"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.uuid_generate_v4(),
+    )
+    survey_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("surveys.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    action_type: Mapped[str] = mapped_column(String, nullable=False, default="none", server_default="none")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class LogicCondition(Base):
+    __tablename__ = "logic_conditions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.uuid_generate_v4(),
+    )
+    rule_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("logic_rules.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    question_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("questions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    operator: Mapped[str] = mapped_column(String, nullable=False)
+    threshold_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    logical_connector: Mapped[str] = mapped_column(String, nullable=False, default="AND", server_default="AND")
+    parent_condition_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("logic_conditions.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+
+
+class LogicEvent(Base):
+    __tablename__ = "logic_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "survey_response_id",
+            "rule_id",
+            name="uq_logic_events_response_rule",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.uuid_generate_v4(),
+    )
+    survey_response_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("survey_responses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    rule_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("logic_rules.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    action_type: Mapped[str] = mapped_column(String, nullable=False, default="none", server_default="none")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+    )
+
+
+# --------------------------------------------------
 # RESPONSE READS (user has viewed response answers)
 # --------------------------------------------------
 class ResponseRead(Base):
