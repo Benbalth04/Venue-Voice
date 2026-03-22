@@ -9,6 +9,7 @@ import { UnreadResponsesProvider } from "@/components/layout/UnreadResponsesCont
 export function DashboardLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname()
   const isSurveyEditorRoute = /^\/dashboard\/surveys\/[^/]+$/.test(pathname)
+  const isFlowEditorRoute = /^\/dashboard\/automations\/flows\/[^/]+$/.test(pathname)
 
   return (
     <UnreadResponsesProvider>
@@ -18,7 +19,7 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
           <Topbar />
           <main
             className={
-              isSurveyEditorRoute
+              isSurveyEditorRoute || isFlowEditorRoute
                 ? "flex min-h-0 flex-1 flex-col overflow-hidden"
                 : "mx-auto flex-1 w-[80%] max-w-6xl py-8"
             }

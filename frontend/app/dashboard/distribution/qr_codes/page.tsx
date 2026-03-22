@@ -7,19 +7,18 @@ import { QRCodeCanvas, QRCodeSVG } from "qrcode.react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { DataTable, type DataTableColumn } from "@/components/ui/DataTable"
+import { SingleSelectDropdown } from "@/components/ui/DropdownSelect"
 import { supabase } from "@/lib/supabase/client"
 import {
   createQRCode,
   deleteQRCode,
-  fetchLocations,
-  fetchQRCodes,
-  fetchSurveys,
-  updateQRCode,
   extractErrorMessage,
-  type LocationResponse,
+  fetchLocationSurveys,
+  fetchQRCodes,
+  updateQRCode,
+  type LocationSurveyResponse,
   type QRCodeCreate,
   type QRCodeResponse,
-  type SurveySummary,
 } from "@/lib/api/client"
 
 const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN
@@ -143,22 +142,36 @@ function QRPanel({
 
 interface QRFormData {
   title: string
-  survey_id: string
-  location_id: string
+  location_survey_id: string
+}
+
+function statusBadge(status: string | null) {
+  const map: Record<string, { label: string; cls: string }> = {
+    active: { label: "Active", cls: "bg-emerald-50 text-emerald-700" },
+    inactive_assignment: { label: "Inactive", cls: "bg-zinc-100 text-zinc-600" },
+    inactive_survey: { label: "Inactive (Survey)", cls: "bg-amber-50 text-amber-700" },
+    inactive_location: { label: "Inactive (Location)", cls: "bg-orange-50 text-orange-700" },
+    expired: { label: "Expired", cls: "bg-red-50 text-red-700" },
+    not_started: { label: "Not started", cls: "bg-sky-50 text-sky-700" },
+  }
+  const resolved = map[status ?? "inactive_assignment"] ?? map.inactive_assignment
+  return (
+    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${resolved.cls}`}>
+      {resolved.label}
+    </span>
+  )
 }
 
 function QRModal({
   initial,
-  surveys,
-  locations,
+  locationSurveys,
   onSave,
   onClose,
   loading,
   error,
 }: {
   initial?: QRCodeResponse | null
-  surveys: SurveySummary[]
-  locations: LocationResponse[]
+  locationSurveys: LocationSurveyResponse[]
   onSave: (data: QRFormData) => void
   onClose: () => void
   loading: boolean
@@ -168,13 +181,11 @@ function QRModal({
     initial
       ? {
           title: initial.title,
-          survey_id: initial.survey_id ?? "",   // convert null to ""
-          location_id: initial.location_id ?? "",
+          location_survey_id: initial.location_survey_id,
         }
       : {
           title: "",
-          survey_id: surveys[0]?.id ?? "",      // keep as fallback
-          location_id: "",
+          location_survey_id: locationSurveys[0]?.id ?? "",
         }
   )
 
@@ -223,43 +234,24 @@ function QRModal({
 
           <label className="block">
             <span className="text-sm font-medium text-zinc-700">
-              Survey <span className="text-red-500">*</span>
+              Survey & location assignment <span className="text-red-500">*</span>
             </span>
-            {surveys.length === 0 ? (
+            {locationSurveys.length === 0 ? (
               <p className="mt-1 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-500">
-                No surveys available. Create a survey first.
+                No active survey assignments are available yet.
               </p>
             ) : (
-              <select
-                className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
-                value={form.survey_id}
-                onChange={(e) => set("survey_id", e.target.value)}
-              >
-                {surveys.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
+              <div className="mt-1">
+                <SingleSelectDropdown
+                  options={locationSurveys.map((locationSurvey) => ({
+                    value: locationSurvey.id,
+                    label: `${locationSurvey.survey_name} - ${locationSurvey.location_name}`,
+                  }))}
+                  value={form.location_survey_id}
+                  onChange={(next) => set("location_survey_id", next)}
+                />
+              </div>
             )}
-          </label>
-
-          <label className="block">
-            <span className="text-sm font-medium text-zinc-700">Location (optional)</span>
-            <select
-              className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
-              value={form.location_id}
-              onChange={(e) => set("location_id", e.target.value)}
-            >
-              <option value="">— No location —</option>
-              {locations
-                .filter((l) => l.is_active)
-                .map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.name}
-                  </option>
-                ))}
-            </select>
           </label>
 
           {error && (
@@ -275,7 +267,7 @@ function QRModal({
             <Button
               className="flex-1"
               onClick={() => onSave(form)}
-              disabled={loading || !form.title.trim() || !form.survey_id}
+              disabled={loading || !form.title.trim() || !form.location_survey_id}
             >
               {loading ? "Saving…" : "Save"}
             </Button>
@@ -294,8 +286,7 @@ type SortDir = "asc" | "desc"
 export default function DistributionPage() {
   const { confirm, ConfirmDialogRender } = useConfirm()
   const [qrCodes, setQRCodes] = useState<QRCodeResponse[]>([])
-  const [surveys, setSurveys] = useState<SurveySummary[]>([])
-  const [locations, setLocations] = useState<LocationResponse[]>([])
+  const [locationSurveys, setLocationSurveys] = useState<LocationSurveyResponse[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -315,14 +306,12 @@ export default function DistributionPage() {
     const token = await getToken()
     if (!token) return
     try {
-      const [qrs, svs, locs] = await Promise.all([
+      const [qrs, assignments] = await Promise.all([
         fetchQRCodes(token),
-        fetchSurveys(token, { activeOnly: true }),
-        fetchLocations(token),
+        fetchLocationSurveys(token),
       ])
       setQRCodes(qrs)
-      setSurveys(svs)
-      setLocations(locs)
+      setLocationSurveys(assignments)
     } catch (err) {
       setError(extractErrorMessage(err, "Failed to load"))
     } finally {
@@ -352,8 +341,7 @@ export default function DistributionPage() {
     try {
       const payload: QRCodeCreate = {
         title: form.title.trim(),
-        survey_id: form.survey_id,
-        location_id: form.location_id || null,
+        location_survey_id: form.location_survey_id,
       }
       if (editTarget) {
         const updated = await updateQRCode(token, editTarget.id, payload)
@@ -399,16 +387,6 @@ export default function DistributionPage() {
     }
   }
 
-  function surveyName(name: string | null) {
-    if (!name) return "—"
-    return surveys.find((s) => s.id === name)?.name ?? name.slice(0, 8) + "…"
-  }
-
-  function locationName(id: string | null) {
-    if (!id) return "—"
-    return locations.find((l) => l.id === id)?.name ?? id.slice(0, 8) + "…"
-  }
-
   const [sortKey, setSortKey] = useState<QRSortKey>("title")
   const [sortDir, setSortDir] = useState<SortDir>("asc")
 
@@ -419,13 +397,13 @@ export default function DistributionPage() {
         cmp = a.title.localeCompare(b.title)
         break
       case "survey":
-        cmp = surveyName(a.survey_title).localeCompare(surveyName(b.survey_title))
+        cmp = (a.survey_title ?? "").localeCompare(b.survey_title ?? "")
         break
       case "location":
-        cmp = locationName(a.location_name).localeCompare(locationName(b.location_name))
+        cmp = (a.location_name ?? "").localeCompare(b.location_name ?? "")
         break
       case "status":
-        cmp = (a.is_active ? 1 : 0) - (b.is_active ? 1 : 0)
+        cmp = (a.assignment_status ?? "").localeCompare(b.assignment_status ?? "")
         break
       default:
         return 0
@@ -470,23 +448,23 @@ export default function DistributionPage() {
     },
     {
       key: "survey",
-      label: "Survey",
+      label: "Assigned Survey",
       sortable: true,
       align: "center",
       render: (qr) => (
-        <span className="break-words">
-          {qr.survey_title || "No survey"}
+        <span className="break-words text-zinc-700">
+          {qr.survey_title ?? "—"}
         </span>
       ),
     },
     {
       key: "location",
-      label: "Location",
+      label: "Assigned Location",
       sortable: true,
       align: "center",
       render: (qr) => (
         <span className="break-words text-zinc-600">
-          {qr.location_name || "No location"}
+          {qr.location_name || "—"}
         </span>
       ),
     },
@@ -495,24 +473,7 @@ export default function DistributionPage() {
       label: "Status",
       sortable: true,
       align: "center",
-      render: (qr) => (
-        <span
-          className={[
-            "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium",
-            qr.is_active
-              ? "bg-emerald-50 text-emerald-700"
-              : "bg-zinc-100 text-zinc-500",
-          ].join(" ")}
-        >
-          <span
-            className={[
-              "inline-block h-1.5 w-1.5 rounded-full",
-              qr.is_active ? "bg-emerald-500" : "bg-zinc-400",
-            ].join(" ")}
-          />
-          {qr.is_active ? "Active" : "Inactive"}
-        </span>
-      ),
+      render: (qr) => statusBadge(qr.assignment_status),
     },
     {
       key: "actions",
@@ -569,10 +530,10 @@ export default function DistributionPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-950">
-            Distribution
+            QR Codes
           </h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Create and manage QR codes that link to your surveys.
+            Create and manage QR codes that point to assigned surveys.
           </p>
         </div>
         <Button onClick={openCreate}>
@@ -616,8 +577,7 @@ export default function DistributionPage() {
       {modalOpen && (
         <QRModal
           initial={editTarget}
-          surveys={surveys}
-          locations={locations}
+          locationSurveys={locationSurveys}
           onSave={handleSave}
           onClose={() => setModalOpen(false)}
           loading={formLoading}

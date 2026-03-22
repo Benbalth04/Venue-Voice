@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card"
 
 export interface DataTableColumn<T> {
   key: string
-  label: string
+  label: ReactNode
   sortable?: boolean
   align?: "left" | "center" | "right"
   render: (row: T) => ReactNode

@@ -45,7 +45,14 @@ _VALID_SORT_COLUMNS = {
 
 
 def _get_company_or_403(user_id: uuid.UUID, db: Session) -> CompanyORM:
-    company = db.query(CompanyORM).filter(CompanyORM.owner_user_id == user_id).first()
+    company = (
+        db.query(CompanyORM)
+        .filter(
+            CompanyORM.owner_user_id == user_id,
+            CompanyORM.deleted_at.is_(None),
+        )
+        .first()
+    )
     if not company:
         raise PermissionError(code="NO_COMPANY_FOR_USER", message="No company associated with this user")
     return company
@@ -55,13 +62,19 @@ def get_unread_response_count(*, user_id: uuid.UUID, db: Session) -> int:
     """Return unread completed survey responses for the current user."""
     company = _get_company_or_403(user_id, db)
     read_ids_subq = (
-        db.query(ResponseReadORM.response_id).filter(ResponseReadORM.user_id == user_id)
+        db.query(ResponseReadORM.response_id).filter(
+            ResponseReadORM.user_id == user_id,
+            ResponseReadORM.deleted_at.is_(None),
+        )
     )
     unread_count = (
         db.query(func.count(SurveyResponseORM.id))
         .join(SurveySessionORM, SurveySessionORM.id == SurveyResponseORM.session_id)
-        .filter(SurveySessionORM.company_id == company.id)
-        .filter(SurveyResponseORM.completed.is_(True))
+        .filter(
+            SurveySessionORM.company_id == company.id,
+            SurveySessionORM.deleted_at.is_(None),
+            SurveyResponseORM.deleted_at.is_(None),
+        )
         .filter(SurveyResponseORM.id.notin_(read_ids_subq))
         .scalar()
     )
@@ -115,6 +128,13 @@ def get_analytics_responses(
             SurveyResponseAnswerORM,
             SurveyResponseAnswerORM.survey_response_id == SurveyResponseORM.id,
         )
+        .filter(
+            SurveyResponseORM.deleted_at.is_(None),
+            or_(
+                SurveyResponseAnswerORM.id.is_(None),
+                SurveyResponseAnswerORM.deleted_at.is_(None),
+            ),
+        )
         .group_by(SurveyResponseORM.session_id)
         .subquery()
     )
@@ -144,6 +164,14 @@ def get_analytics_responses(
             func.coalesce(answer_count_sq.c.answer_count, 0).label("questions_answered"),
         )
         .filter(SurveySessionORM.company_id == company.id)
+        .filter(
+            SurveySessionORM.deleted_at.is_(None),
+            QRCodeORM.deleted_at.is_(None),
+            SurveyVersionORM.deleted_at.is_(None),
+            SurveyORM.deleted_at.is_(None),
+            or_(LocationSnapshotORM.id.is_(None), LocationSnapshotORM.deleted_at.is_(None)),
+            or_(SurveyResponseORM.id.is_(None), SurveyResponseORM.deleted_at.is_(None)),
+        )
         .join(QRCodeORM, QRCodeORM.id == SurveySessionORM.qr_code_id)
         .join(SurveyVersionORM, SurveyVersionORM.id == SurveySessionORM.survey_version_id)
         .join(SurveyORM, SurveyORM.id == SurveyVersionORM.survey_id)
@@ -234,6 +262,7 @@ def get_analytics_responses(
             .filter(
                 ResponseReadORM.user_id == user_id,
                 ResponseReadORM.response_id.in_(response_ids),
+                ResponseReadORM.deleted_at.is_(None),
             )
             .all()
         )
@@ -271,6 +300,7 @@ def mark_response_read(*, user_id: uuid.UUID, response_id: uuid.UUID, db: Sessio
         .filter(
             ResponseReadORM.user_id == user_id,
             ResponseReadORM.response_id == response_id,
+            ResponseReadORM.deleted_at.is_(None),
         )
         .first()
     )
@@ -284,21 +314,30 @@ def get_analytics_filters(*, user_id: uuid.UUID, db: Session) -> AnalyticsFilter
 
     surveys = (
         db.query(SurveyORM.id, SurveyORM.name)
-        .filter(SurveyORM.company_id == company.id)
+        .filter(
+            SurveyORM.company_id == company.id,
+            SurveyORM.deleted_at.is_(None),
+        )
         .order_by(SurveyORM.name)
         .all()
     )
 
     qr_codes = (
         db.query(QRCodeORM.id, QRCodeORM.title)
-        .filter(QRCodeORM.company_id == company.id)
+        .filter(
+            QRCodeORM.company_id == company.id,
+            QRCodeORM.deleted_at.is_(None),
+        )
         .order_by(QRCodeORM.title)
         .all()
     )
 
     locations = (
         db.query(LocationORM.id, LocationORM.name)
-        .filter(LocationORM.company_id == company.id)
+        .filter(
+            LocationORM.company_id == company.id,
+            LocationORM.deleted_at.is_(None),
+        )
         .order_by(LocationORM.name)
         .all()
     )
@@ -322,6 +361,8 @@ def get_response_detail(
         .filter(
             SurveyResponseORM.id == response_id,
             SurveySessionORM.company_id == company.id,
+            SurveyResponseORM.deleted_at.is_(None),
+            SurveySessionORM.deleted_at.is_(None),
         )
         .first()
     )
@@ -331,16 +372,33 @@ def get_response_detail(
     # Mark as read when user views the answers
     mark_response_read(user_id=user_id, response_id=response_id, db=db)
 
-    sv = db.query(SurveyVersionORM).filter(SurveyVersionORM.id == resp.survey_version_id).first()
+    sv = (
+        db.query(SurveyVersionORM)
+        .filter(
+            SurveyVersionORM.id == resp.survey_version_id,
+            SurveyVersionORM.deleted_at.is_(None),
+        )
+        .first()
+    )
     survey_name = ""
     if sv:
-        s = db.query(SurveyORM).filter(SurveyORM.id == sv.survey_id).first()
+        s = (
+            db.query(SurveyORM)
+            .filter(
+                SurveyORM.id == sv.survey_id,
+                SurveyORM.deleted_at.is_(None),
+            )
+            .first()
+        )
         survey_name = s.name if s else ""
 
     # Build question lookup from normalized questions table
     questions = (
         db.query(QuestionORM)
-        .filter(QuestionORM.survey_version_id == resp.survey_version_id)
+        .filter(
+            QuestionORM.survey_version_id == resp.survey_version_id,
+            QuestionORM.deleted_at.is_(None),
+        )
         .order_by(QuestionORM.position)
         .all()
     )
@@ -350,7 +408,10 @@ def get_response_detail(
     # Fetch normalized answers
     norm_answers = (
         db.query(SurveyResponseAnswerORM)
-        .filter(SurveyResponseAnswerORM.survey_response_id == response_id)
+        .filter(
+            SurveyResponseAnswerORM.survey_response_id == response_id,
+            SurveyResponseAnswerORM.deleted_at.is_(None),
+        )
         .all()
     )
 

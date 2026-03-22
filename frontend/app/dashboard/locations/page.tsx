@@ -1,18 +1,23 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { MapPin, Pencil, Plus, ToggleLeft, ToggleRight, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { DropdownSelect } from "@/components/ui/DropdownSelect"
 import { DataTable, type DataTableColumn } from "@/components/ui/DataTable"
+import { useConfirm } from "@/components/ui/ConfirmDialog"
 import { supabase } from "@/lib/supabase/client"
 import {
   createLocation,
   fetchLocations,
+  fetchNotificationGroups,
+  syncLocationNotificationGroups,
   updateLocation,
   extractErrorMessage,
   type LocationCreate,
   type LocationResponse,
+  type NotificationGroupResponse,
 } from "@/lib/api/client"
 
 // ─── Modal ────────────────────────────────────────────────────────────────────
@@ -22,6 +27,7 @@ interface LocationFormData {
   state: string
   country: string
   google_business_url: string
+  notification_group_ids: string[]
 }
 
 const emptyForm = (): LocationFormData => ({
@@ -29,6 +35,7 @@ const emptyForm = (): LocationFormData => ({
   state: "",
   country: "",
   google_business_url: "",
+  notification_group_ids: [],
 })
 
 function LocationModal({
@@ -37,12 +44,16 @@ function LocationModal({
   onClose,
   loading,
   error,
+  notificationGroups,
+  selectedNotificationGroupIds,
 }: {
   initial?: LocationResponse | null
   onSave: (data: LocationFormData) => void
   onClose: () => void
   loading: boolean
   error: string | null
+  notificationGroups: NotificationGroupResponse[]
+  selectedNotificationGroupIds: string[]
 }) {
   const [form, setForm] = useState<LocationFormData>(
     initial
@@ -51,6 +62,7 @@ function LocationModal({
           state: initial.state ?? "",
           country: initial.country ?? "",
           google_business_url: initial.google_business_url ?? "",
+          notification_group_ids: selectedNotificationGroupIds,
         }
       : emptyForm(),
   )
@@ -119,6 +131,21 @@ function LocationModal({
             />
           </label>
 
+          {initial ? (
+            <label className="block">
+              <span className="text-sm font-medium text-zinc-700">Notification Groups</span>
+              <div className="mt-1">
+                <DropdownSelect
+                  multiple
+                  options={notificationGroups.map((group) => ({ value: group.id, label: group.name }))}
+                  value={form.notification_group_ids}
+                  onChange={(next) => setForm((current) => ({ ...current, notification_group_ids: next as string[] }))}
+                  placeholder="Assign notification groups"
+                />
+              </div>
+            </label>
+          ) : null}
+
           {error && (
             <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
               {error}
@@ -151,7 +178,9 @@ function LocationModal({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function LocationsPage() {
+  const { confirm, ConfirmDialogRender } = useConfirm()
   const [locations, setLocations] = useState<LocationResponse[]>([])
+  const [notificationGroups, setNotificationGroups] = useState<NotificationGroupResponse[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -168,20 +197,24 @@ export default function LocationsPage() {
     return session?.access_token ?? null
   }
 
-  async function load() {
+  const load = useCallback(async () => {
     const token = await getToken()
     if (!token) return
     try {
-      const data = await fetchLocations(token)
-      setLocations(data)
+      const [locationRows, notificationGroupRows] = await Promise.all([
+        fetchLocations(token),
+        fetchNotificationGroups(token),
+      ])
+      setLocations(locationRows)
+      setNotificationGroups(notificationGroupRows)
     } catch (err) {
       setError(extractErrorMessage(err, "Failed to load locations"))
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [load])
 
   function openCreate() {
     setEditTarget(null)
@@ -209,11 +242,15 @@ export default function LocationsPage() {
       }
       if (editTarget) {
         const updated = await updateLocation(token, editTarget.id, payload)
+        await syncLocationNotificationGroups(token, editTarget.id, form.notification_group_ids)
         setLocations((prev) => prev.map((l) => (l.id === updated.id ? updated : l)))
+        setNotificationGroups(await fetchNotificationGroups(token))
         setModalOpen(false)
       } else {
         const created = await createLocation(token, payload)
+        await syncLocationNotificationGroups(token, created.id, form.notification_group_ids)
         setLocations((prev) => [created, ...prev])
+        setNotificationGroups(await fetchNotificationGroups(token))
         setModalOpen(false)
       }
     } catch (err) {
@@ -232,6 +269,16 @@ export default function LocationsPage() {
   }
 
   async function handleToggleActive(loc: LocationResponse) {
+    if (loc.is_active) {
+      const ok = await confirm({
+        title: "Deactivate location",
+        message: "This will deactivate all associated survey assignments. Continue?",
+        confirmLabel: "Deactivate",
+        cancelLabel: "Cancel",
+        variant: "danger",
+      })
+      if (!ok) return
+    }
     const token = await getToken()
     if (!token) return
     try {
@@ -252,6 +299,13 @@ export default function LocationsPage() {
   function regionLabel(loc: LocationResponse) {
     const parts = [loc.state, loc.country].filter(Boolean)
     return parts.length > 0 ? parts.join(", ") : "—"
+  }
+
+  function notificationGroupNames(locationId: string) {
+    return notificationGroups
+      .filter((group) => group.location_ids.includes(locationId))
+      .map((group) => group.name)
+      .sort((a, b) => a.localeCompare(b))
   }
 
   const sortedLocations = [...locations].sort((a, b) => {
@@ -293,6 +347,18 @@ export default function LocationsPage() {
       sortable: true,
       align: "center",
       render: (loc) => <span className="text-zinc-600">{regionLabel(loc)}</span>,
+    },
+    {
+      key: "notification_groups",
+      label: "Notification Groups",
+      sortable: false,
+      align: "center",
+      render: (loc) => {
+        const names = notificationGroupNames(loc.id)
+        if (names.length === 0) return <span className="text-zinc-400">—</span>
+        if (names.length > 3) return <span className="text-zinc-600">{`Assigned to ${names.length} groups`}</span>
+        return <span className="text-zinc-600">{names.join(", ")}</span>
+      },
     },
     {
       key: "status",
@@ -350,6 +416,7 @@ export default function LocationsPage() {
 
   return (
     <div className="space-y-6">
+      {ConfirmDialogRender}
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -403,6 +470,8 @@ export default function LocationsPage() {
           onClose={() => setModalOpen(false)}
           loading={formLoading}
           error={formError}
+          notificationGroups={notificationGroups}
+          selectedNotificationGroupIds={editTarget ? notificationGroups.filter((group) => group.location_ids.includes(editTarget.id)).map((group) => group.id) : []}
         />
       )}
     </div>

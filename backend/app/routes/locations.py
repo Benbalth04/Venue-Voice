@@ -11,14 +11,26 @@ from ..core.errors.exceptions import ConflictError, NotFoundError, ValidationErr
 
 from ..auth.jwt import get_current_user
 from ..db.postgres import get_db_connection
-from ..models.postgres_model import Company as CompanyORM, Location as LocationORM, User as UserORM
+from ..models.postgres_model import (
+    Company as CompanyORM,
+    Location as LocationORM,
+    LocationSurvey as LocationSurveyORM,
+    User as UserORM,
+)
 from ..schemas.pydantic_model import LocationCreate, LocationResponse, LocationUpdate
 
 router = APIRouter()
 
 
 def _get_company(user: UserORM, db: Session) -> CompanyORM:
-    company = db.query(CompanyORM).filter(CompanyORM.owner_user_id == user.id).first()
+    company = (
+        db.query(CompanyORM)
+        .filter(
+            CompanyORM.owner_user_id == user.id,
+            CompanyORM.deleted_at.is_(None),
+        )
+        .first()
+    )
     if not company:
         raise NotFoundError(code="COMPANY_NOT_FOUND", message="Company not found")
     return company
@@ -33,6 +45,7 @@ def _get_location_or_404(location_id: str, company_id: uuid.UUID, db: Session) -
     loc = db.query(LocationORM).filter(
         LocationORM.id == uid,
         LocationORM.company_id == company_id,
+        LocationORM.deleted_at.is_(None),
     ).first()
     if not loc:
         raise NotFoundError(code="LOCATION_NOT_FOUND", message="Location not found")
@@ -93,7 +106,10 @@ def list_locations(
     company = _get_company(user, db)
     locations = (
         db.query(LocationORM)
-        .filter(LocationORM.company_id == company.id)
+        .filter(
+            LocationORM.company_id == company.id,
+            LocationORM.deleted_at.is_(None),
+        )
         .order_by(LocationORM.created_at.desc())
         .all()
     )
@@ -114,7 +130,11 @@ def create_location(
 
     existing = (
         db.query(LocationORM)
-        .filter(LocationORM.company_id == company.id, LocationORM.name == name)
+        .filter(
+            LocationORM.company_id == company.id,
+            LocationORM.name == name,
+            LocationORM.deleted_at.is_(None),
+        )
         .first()
     )
     if existing:
@@ -167,7 +187,12 @@ def update_location(
             raise ValidationError(code="INVALID_NAME", message="Location name cannot be empty", status_code=422)
         existing = (
             db.query(LocationORM)
-            .filter(LocationORM.company_id == company.id, LocationORM.name == name, LocationORM.id != loc.id)
+            .filter(
+                LocationORM.company_id == company.id,
+                LocationORM.name == name,
+                LocationORM.id != loc.id,
+                LocationORM.deleted_at.is_(None),
+            )
             .first()
         )
         if existing:
@@ -181,6 +206,16 @@ def update_location(
     for field, value in update_data.items():
         if field != "name":
             setattr(loc, field, value)
+
+    if payload.is_active is False:
+        (
+            db.query(LocationSurveyORM)
+            .filter(
+                LocationSurveyORM.location_id == loc.id,
+                LocationSurveyORM.deleted_at.is_(None),
+            )
+            .update({"is_active": False}, synchronize_session=False)
+        )
 
     try:
         db.commit()
@@ -200,4 +235,12 @@ def deactivate_location(
     company = _get_company(user, db)
     loc = _get_location_or_404(location_id, company.id, db)
     loc.is_active = False
+    (
+        db.query(LocationSurveyORM)
+        .filter(
+            LocationSurveyORM.location_id == loc.id,
+            LocationSurveyORM.deleted_at.is_(None),
+        )
+        .update({"is_active": False}, synchronize_session=False)
+    )
     db.commit()

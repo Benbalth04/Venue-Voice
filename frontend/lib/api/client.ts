@@ -198,14 +198,55 @@ export interface SurveySummary {
   status: string
 }
 
+export interface LocationSurveyResponse {
+  id: string
+  location_id: string
+  location_name: string
+  location_google_business_url: string | null
+  location_is_active: boolean
+  survey_id: string
+  survey_name: string
+  survey_is_published: boolean
+  is_active: boolean
+  start_date: string
+  end_date: string | null
+  status:
+    | "active"
+    | "inactive_assignment"
+    | "inactive_survey"
+    | "inactive_location"
+    | "expired"
+    | "not_started"
+  created_at: string
+  updated_at: string
+}
+
+export interface LocationSurveyBulkAssignCreate {
+  survey_id: string
+  location_ids: string[]
+  start_date: string
+  end_date?: string | null
+}
+
+export interface LocationSurveyUpdate {
+  is_active?: boolean | null
+  start_date?: string | null
+  end_date?: string | null
+}
+
 // QR Codes
 export interface QRCodeResponse {
   id: string
   title: string
-  survey_id: string | null
+  location_survey_id: string
+  survey_id: string
   survey_title: string | null
-  location_id: string | null
+  location_status: string | null
+  location_id: string
   location_name: string | null
+  start_date: string | null
+  end_date: string | null
+  assignment_status: string | null
   is_active: boolean
   created_at: string
   updated_at: string
@@ -213,14 +254,12 @@ export interface QRCodeResponse {
 
 export interface QRCodeCreate {
   title: string
-  survey_id: string
-  location_id?: string | null
+  location_survey_id: string
 }
 
 export interface QRCodeUpdate {
   title?: string | null
-  survey_id?: string | null
-  location_id?: string | null
+  location_survey_id?: string | null
   is_active?: boolean | null
 }
 
@@ -288,15 +327,15 @@ export interface SurveyWithSchema extends SurveyListItem {
   survey_schema_json: Record<string, any>
 }
 
-export type LogicActionType = "google_redirect" | "email_alert" | "none"
+export type LogicActionType = "none"
 export type LogicConnector = "AND" | "OR"
 export type LogicOperator =
   | "group"
   | "<"
   | "<="
+  | "="
   | ">="
   | ">"
-  | "blank"
   | "not_blank"
   | "sentiment_positive"
   | "sentiment_negative"
@@ -356,6 +395,299 @@ export interface LogicRuleBundleResponse {
   survey_id: string
   questions: LogicQuestionOption[]
   rules: LogicRuleResponse[]
+}
+
+export type RuleConditionType = "rating" | "sentiment" | "not_empty"
+export type RuleOperatorApi = "lt" | "lte" | "eq" | "gte" | "gt" | "is"
+export type FlowNodeType = "rule" | "branch" | "action"
+export type FlowBranchType = "TRUE" | "FALSE"
+export type FlowActionType = "redirect" | "email"
+export type FlowBranchMatchType = "all" | "any"
+export type FlowRedirectTargetType = "google_business_url" | "custom_url"
+export type FlowEmailTargetType =
+  | "custom_email"
+  | "notification_group"
+  | "location_notification_groups"
+
+interface RuleGroupApi {
+  id?: string | null
+  operator: LogicConnector
+}
+
+interface RuleConditionApi {
+  id?: string | null
+  condition_type: RuleConditionType
+  question_id: string | null
+  operator: RuleOperatorApi | null
+  value: string | null
+  group_id: string | null
+  created_at?: string
+}
+
+interface RuleApiResponse {
+  id: string
+  company_id: string
+  survey_id: string
+  name: string
+  description: string | null
+  operator: LogicConnector
+  groups: Array<{ id: string; operator: LogicConnector; created_at: string }>
+  conditions: RuleConditionApi[]
+  created_at: string
+  updated_at: string
+}
+
+interface RuleApiBundleResponse {
+  survey_id: string
+  questions: LogicQuestionOption[]
+  rules: RuleApiResponse[]
+}
+
+interface RuleApiPayload {
+  name: string
+  description: string | null
+  operator: LogicConnector
+  groups: RuleGroupApi[]
+  conditions: RuleConditionApi[]
+}
+
+export interface NotificationGroupMemberResponse {
+  id: string
+  name: string
+  email: string
+  created_at: string
+}
+
+export interface NotificationGroupResponse {
+  id: string
+  company_id: string
+  name: string
+  created_at: string
+  members: NotificationGroupMemberResponse[]
+  location_ids: string[]
+}
+
+export interface FlowNodePayload {
+  id?: string | null
+  parent_id: string | null
+  node_type: FlowNodeType
+  rule_id?: string | null
+  branch_type?: FlowBranchType | null
+  action_type?: FlowActionType | null
+  config?: Record<string, unknown> | null
+  position: number
+}
+
+export interface FlowPayload {
+  name: string
+  description: string | null
+  is_active: boolean
+  location_survey_ids: string[]
+  nodes: FlowNodePayload[]
+}
+
+export interface FlowNodeResponse {
+  id: string
+  parent_id: string | null
+  node_type: FlowNodeType
+  rule_id: string | null
+  branch_type: FlowBranchType | null
+  action_type: FlowActionType | null
+  config: Record<string, unknown> | null
+  position: number
+  created_at: string
+}
+
+export interface FlowResponse {
+  id: string
+  company_id: string
+  survey_id: string
+  survey_name: string
+  name: string
+  description: string | null
+  is_active: boolean
+  location_survey_ids: string[]
+  nodes: FlowNodeResponse[]
+  created_at: string
+  updated_at: string
+}
+
+export interface FlowTestResponse {
+  execution_trace: Record<string, unknown>
+  action: {
+    type: FlowActionType
+    url?: string | null
+    notification_group_id?: string | null
+    recipient_email?: string | null
+  } | null
+}
+
+export interface FlowRunResponse {
+  id: string
+  company_id: string
+  flow_id: string
+  flow_name: string
+  survey_id: string
+  survey_name: string
+  response_id: string | null
+  success: boolean
+  location_survey_id: string | null
+  location_name: string | null
+  qr_code_id: string | null
+  qr_code_title: string | null
+  action_executed: string | null
+  runtime_ms: number | null
+  execution_trace: Record<string, unknown>
+  created_at: string
+}
+
+function ruleApiConditionToLegacy(
+  condition: RuleConditionApi,
+  connector: LogicConnector,
+): LogicConditionResponse {
+  let operator: LogicOperator = "not_blank"
+  let threshold_value: number | null = null
+
+  if (condition.condition_type === "rating") {
+    operator =
+      condition.operator === "gt"
+        ? ">"
+        : condition.operator === "gte"
+          ? ">="
+          : condition.operator === "lt"
+            ? "<"
+            : condition.operator === "lte"
+              ? "<="
+              : "="
+    threshold_value = condition.value != null ? Number(condition.value) : null
+  } else if (condition.condition_type === "sentiment") {
+    operator = String(condition.value).toLowerCase() === "positive" ? "sentiment_positive" : "sentiment_negative"
+  }
+
+  return {
+    id: String(condition.id ?? ""),
+    question_id: condition.question_id,
+    operator,
+    threshold_value,
+    logical_connector: connector,
+    parent_condition_id: condition.group_id,
+    position: 0,
+    question_text: null,
+    question_type: null,
+    children: [],
+  }
+}
+
+function ruleApiToLegacy(rule: RuleApiResponse): LogicRuleResponse {
+  const grouped = new Map<string, LogicConditionResponse[]>()
+  const topLevel: LogicConditionResponse[] = []
+
+  for (const condition of rule.conditions) {
+    if (condition.group_id) {
+      const group = rule.groups.find((item) => item.id === condition.group_id)
+      const list = grouped.get(condition.group_id) ?? []
+      list.push(ruleApiConditionToLegacy(condition, list.length === 0 ? "AND" : group?.operator ?? "AND"))
+      grouped.set(condition.group_id, list)
+      continue
+    }
+    topLevel.push(ruleApiConditionToLegacy(condition, topLevel.length === 0 ? "AND" : rule.operator))
+  }
+
+  for (const group of rule.groups) {
+    topLevel.push({
+      id: group.id,
+      question_id: null,
+      operator: "group",
+      threshold_value: null,
+      logical_connector: topLevel.length === 0 ? "AND" : rule.operator,
+      parent_condition_id: null,
+      position: 0,
+      question_text: null,
+      question_type: null,
+      children: grouped.get(group.id) ?? [],
+    })
+  }
+
+  return {
+    id: rule.id,
+    survey_id: rule.survey_id,
+    name: rule.name,
+    description: rule.description,
+    enabled: true,
+    action_type: "none",
+    conditions: topLevel,
+    created_at: rule.created_at,
+    updated_at: rule.updated_at,
+  }
+}
+
+function logicPayloadToRuleApi(payload: LogicRulePayload): RuleApiPayload {
+  const groups: RuleGroupApi[] = []
+  const conditions: RuleConditionApi[] = []
+
+  for (const item of payload.conditions) {
+    if (item.operator === "group") {
+      const groupId = item.id ?? crypto.randomUUID()
+      groups.push({
+        id: groupId,
+        operator: item.children[1]?.logical_connector ?? "AND",
+      })
+      for (const child of item.children) {
+        conditions.push(logicLeafToRuleApi(child, groupId))
+      }
+      continue
+    }
+    conditions.push(logicLeafToRuleApi(item, null))
+  }
+
+  return {
+    name: payload.name,
+    description: payload.description,
+    operator: payload.conditions[1]?.logical_connector ?? "AND",
+    groups,
+    conditions,
+  }
+}
+
+function logicLeafToRuleApi(condition: LogicConditionPayload, group_id: string | null): RuleConditionApi {
+  if (condition.operator === "not_blank") {
+    return {
+      id: condition.id ?? null,
+      condition_type: "not_empty",
+      question_id: condition.question_id,
+      operator: null,
+      value: null,
+      group_id,
+    }
+  }
+  if (condition.operator === "sentiment_positive" || condition.operator === "sentiment_negative") {
+    return {
+      id: condition.id ?? null,
+      condition_type: "sentiment",
+      question_id: condition.question_id,
+      operator: "is",
+      value: condition.operator === "sentiment_positive" ? "positive" : "negative",
+      group_id,
+    }
+  }
+  const mappedOperator =
+    condition.operator === ">"
+      ? "gt"
+      : condition.operator === ">="
+        ? "gte"
+        : condition.operator === "<"
+          ? "lt"
+          : condition.operator === "<="
+            ? "lte"
+            : "eq"
+  return {
+    id: condition.id ?? null,
+    condition_type: "rating",
+    question_id: condition.question_id,
+    operator: mappedOperator,
+    value: condition.threshold_value != null ? String(condition.threshold_value) : null,
+    group_id,
+  }
 }
 
 // Analytics
@@ -447,29 +779,10 @@ export async function fetchSurveyRedirect(
 ): Promise<SurveyRedirectResponse> {
   const headers: Record<string, string> = {}
   if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey
-
-  let res: Response
-  try {
-    res = await fetch(
-      `${BACKEND_BASE}/api/v1/survey/redirect?r=${encodeURIComponent(qrCodeId)}`,
-      { headers },
-    )
-  } catch (err) {
-    throw normalizeUnknownError(err)
-  }
-
-  let data: unknown = null
-  try {
-    data = await res.json()
-  } catch {
-    // empty body – handled below
-  }
-
-  if (!res.ok) {
-    throw normalizeApiError(data, res.status)
-  }
-
-  return data as SurveyRedirectResponse
+  return apiFetch<SurveyRedirectResponse>(
+    `${BACKEND_BASE}/api/v1/survey/redirect?r=${encodeURIComponent(qrCodeId)}`,
+    { headers },
+  )
 }
 
 export async function fetchSurveyForSession(
@@ -602,6 +915,21 @@ export async function deleteLocation(accessToken: string, id: string): Promise<v
   })
 }
 
+export async function syncLocationNotificationGroups(
+  accessToken: string,
+  locationId: string,
+  groupIds: string[],
+): Promise<NotificationGroupResponse[]> {
+  return apiFetch<NotificationGroupResponse[]>(
+    `${BACKEND_BASE}/api/v1/locations/${locationId}/notification-groups`,
+    {
+      method: "PUT",
+      headers: authHeaders(accessToken),
+      body: JSON.stringify({ group_ids: groupIds }),
+    },
+  )
+}
+
 // ------------------------------------------------------------------
 // Question Types
 // ------------------------------------------------------------------
@@ -646,6 +974,58 @@ export async function fetchSurveys(
     name: name ?? title ?? "Untitled",
     status,
   }))
+}
+
+// ------------------------------------------------------------------
+// Location Surveys
+// ------------------------------------------------------------------
+export async function fetchLocationSurveys(
+  accessToken: string,
+  filters?: { survey_id?: string; location_id?: string },
+): Promise<LocationSurveyResponse[]> {
+  const params = new URLSearchParams()
+  if (filters?.survey_id) params.set("survey_id", filters.survey_id)
+  if (filters?.location_id) params.set("location_id", filters.location_id)
+  const suffix = params.toString() ? `?${params.toString()}` : ""
+  return apiFetch<LocationSurveyResponse[]>(`${BACKEND_BASE}/api/v1/location-surveys${suffix}`, {
+    headers: authGetHeaders(accessToken),
+  })
+}
+
+export async function bulkAssignLocationSurveys(
+  accessToken: string,
+  payload: LocationSurveyBulkAssignCreate,
+): Promise<LocationSurveyResponse[]> {
+  return apiFetch<LocationSurveyResponse[]>(
+    `${BACKEND_BASE}/api/v1/location-surveys/bulk-assign`,
+    {
+      method: "POST",
+      headers: authHeaders(accessToken),
+      body: JSON.stringify(payload),
+    },
+  )
+}
+
+export async function updateLocationSurvey(
+  accessToken: string,
+  id: string,
+  payload: LocationSurveyUpdate,
+): Promise<LocationSurveyResponse> {
+  return apiFetch<LocationSurveyResponse>(`${BACKEND_BASE}/api/v1/location-surveys/${id}`, {
+    method: "PATCH",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function deleteLocationSurvey(
+  accessToken: string,
+  id: string,
+): Promise<void> {
+  await apiFetch<unknown>(`${BACKEND_BASE}/api/v1/location-surveys/${id}`, {
+    method: "DELETE",
+    headers: authGetHeaders(accessToken),
+  })
 }
 
 // ------------------------------------------------------------------
@@ -773,7 +1153,11 @@ export function fetchSurveyLogicRules(
   token: string,
   surveyId: string,
 ): Promise<LogicRuleBundleResponse> {
-  return surveyRequest<LogicRuleBundleResponse>(token, `/surveys/${surveyId}/logic-rules`)
+  return surveyRequest<RuleApiBundleResponse>(token, `/surveys/${surveyId}/rules`).then((bundle) => ({
+    survey_id: bundle.survey_id,
+    questions: bundle.questions,
+    rules: bundle.rules.map(ruleApiToLegacy),
+  }))
 }
 
 export function createSurveyLogicRule(
@@ -781,12 +1165,12 @@ export function createSurveyLogicRule(
   surveyId: string,
   payload: LogicRulePayload,
 ): Promise<LogicRuleResponse> {
-  return surveyRequest<LogicRuleResponse>(
+  return surveyRequest<RuleApiResponse>(
     token,
-    `/surveys/${surveyId}/logic-rules`,
+    `/surveys/${surveyId}/rules`,
     "POST",
-    payload,
-  )
+    logicPayloadToRuleApi(payload),
+  ).then(ruleApiToLegacy)
 }
 
 export function updateSurveyLogicRule(
@@ -795,12 +1179,12 @@ export function updateSurveyLogicRule(
   ruleId: string,
   payload: LogicRulePayload,
 ): Promise<LogicRuleResponse> {
-  return surveyRequest<LogicRuleResponse>(
+  return surveyRequest<RuleApiResponse>(
     token,
-    `/surveys/${surveyId}/logic-rules/${ruleId}`,
+    `/surveys/${surveyId}/rules/${ruleId}`,
     "PUT",
-    payload,
-  )
+    logicPayloadToRuleApi(payload),
+  ).then(ruleApiToLegacy)
 }
 
 export async function deleteSurveyLogicRule(
@@ -808,7 +1192,138 @@ export async function deleteSurveyLogicRule(
   surveyId: string,
   ruleId: string,
 ): Promise<void> {
-  await surveyRequest<unknown>(token, `/surveys/${surveyId}/logic-rules/${ruleId}`, "DELETE")
+  await surveyRequest<unknown>(token, `/surveys/${surveyId}/rules/${ruleId}`, "DELETE")
+}
+
+export function fetchSurveyFlows(
+  token: string,
+  surveyId: string,
+): Promise<FlowResponse[]> {
+  return surveyRequest<FlowResponse[]>(token, `/surveys/${surveyId}/flows`)
+}
+
+export function fetchFlows(token: string): Promise<FlowResponse[]> {
+  return surveyRequest<FlowResponse[]>(token, "/flows")
+}
+
+export function fetchFlow(token: string, flowId: string): Promise<FlowResponse> {
+  return surveyRequest<FlowResponse>(token, `/flows/${flowId}`)
+}
+
+export function createSurveyFlow(
+  token: string,
+  surveyId: string,
+  payload: FlowPayload,
+): Promise<FlowResponse> {
+  return surveyRequest<FlowResponse>(
+    token,
+    `/surveys/${surveyId}/flows`,
+    "POST",
+    payload,
+  )
+}
+
+export function updateSurveyFlow(
+  token: string,
+  surveyId: string,
+  flowId: string,
+  payload: FlowPayload,
+): Promise<FlowResponse> {
+  return surveyRequest<FlowResponse>(
+    token,
+    `/surveys/${surveyId}/flows/${flowId}`,
+    "PUT",
+    payload,
+  )
+}
+
+export async function deleteSurveyFlow(
+  token: string,
+  surveyId: string,
+  flowId: string,
+): Promise<void> {
+  await surveyRequest<unknown>(token, `/surveys/${surveyId}/flows/${flowId}`, "DELETE")
+}
+
+export function testFlow(
+  token: string,
+  flowId: string,
+  payload: { mock_response: Record<string, unknown>; location_survey_id: string; qr_code_id?: string | null },
+): Promise<FlowTestResponse> {
+  return surveyRequest<FlowTestResponse>(
+    token,
+    `/flows/${flowId}/test`,
+    "POST",
+    payload,
+  )
+}
+
+export function fetchNotificationGroups(
+  token: string,
+): Promise<NotificationGroupResponse[]> {
+  return surveyRequest<NotificationGroupResponse[]>(token, "/notification-groups")
+}
+
+export function createNotificationGroup(
+  token: string,
+  payload: { name: string },
+): Promise<NotificationGroupResponse> {
+  return surveyRequest<NotificationGroupResponse>(
+    token,
+    "/notification-groups",
+    "POST",
+    payload,
+  )
+}
+
+export function updateNotificationGroup(
+  token: string,
+  groupId: string,
+  payload: { name: string; members: Array<{ name: string; email: string }> },
+): Promise<NotificationGroupResponse> {
+  return surveyRequest<NotificationGroupResponse>(
+    token,
+    `/notification-groups/${groupId}`,
+    "PUT",
+    payload,
+  )
+}
+
+export function addNotificationGroupMember(
+  token: string,
+  groupId: string,
+  payload: { name: string; email: string },
+): Promise<NotificationGroupResponse> {
+  return surveyRequest<NotificationGroupResponse>(
+    token,
+    `/notification-groups/${groupId}/members`,
+    "POST",
+    payload,
+  )
+}
+
+export function assignNotificationGroupToLocation(
+  token: string,
+  locationId: string,
+  payload: { group_id: string },
+): Promise<NotificationGroupResponse> {
+  return surveyRequest<NotificationGroupResponse>(
+    token,
+    `/locations/${locationId}/notification-groups`,
+    "POST",
+    payload,
+  )
+}
+
+export async function deleteNotificationGroup(
+  token: string,
+  groupId: string,
+): Promise<void> {
+  await surveyRequest<unknown>(token, `/notification-groups/${groupId}`, "DELETE")
+}
+
+export function fetchFlowRuns(token: string): Promise<FlowRunResponse[]> {
+  return surveyRequest<FlowRunResponse[]>(token, "/flow-runs")
 }
 
 export function fetchSurveysList(token: string): Promise<SurveyListItem[]> {

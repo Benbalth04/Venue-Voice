@@ -19,7 +19,14 @@ def get_me(
     """Return current user profile. Triggers auto-bootstrap if user does not exist."""
     company_name = None
     if user.onboarding_complete:
-        company = db.query(CompanyORM).filter(CompanyORM.owner_user_id == user.id).first()
+        company = (
+            db.query(CompanyORM)
+            .filter(
+                CompanyORM.owner_user_id == user.id,
+                CompanyORM.deleted_at.is_(None),
+            )
+            .first()
+        )
         company_name = company.name if company else None
 
     display_name = f"{user.first_name} {user.last_name}".strip() or "User"
@@ -45,7 +52,14 @@ def setup_account(
         return {"ok": True, "message": "Onboarding already complete"}
 
     # UNIQUE on owner_user_id prevents duplicate companies on retries
-    existing_company = db.query(CompanyORM).filter(CompanyORM.owner_user_id == user.id).first()
+    existing_company = (
+        db.query(CompanyORM)
+        .filter(
+            CompanyORM.owner_user_id == user.id,
+            CompanyORM.deleted_at.is_(None),
+        )
+        .first()
+    )
     if existing_company:
         # Idempotent: already provisioned, just mark complete
         user.onboarding_complete = True

@@ -106,7 +106,7 @@ export default function DashboardOverviewPage() {
             Welcome back, {data.user_display_name}
           </h1>
           <p className="mt-1 text-sm text-zinc-600">
-            You are viewing analytics for{" "}
+            You are managing {" "}
             <span className="font-medium text-zinc-900">{data.company_name || "your company"}</span>.
           </p>
         </div>

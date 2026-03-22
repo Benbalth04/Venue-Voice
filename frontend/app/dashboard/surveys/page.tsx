@@ -67,19 +67,15 @@ function StatusBadge({ status }: { status: string }) {
 function ActionsMenu({
   survey,
   onPublish,
-  onUnpublish,
-  onArchive,
-  onUnarchive,
   onDuplicate,
+  onConfirmUnpublish,
   onConfirmArchive,
   onConfirmUnarchive,
 }: {
   survey: SurveyListItem
   onPublish: (id: string) => Promise<void>
-  onUnpublish: (id: string) => Promise<void>
-  onArchive: (id: string) => Promise<void>
-  onUnarchive: (id: string) => Promise<void>
   onDuplicate: (id: string) => Promise<void>
+  onConfirmUnpublish: (id: string) => Promise<void>
   onConfirmArchive: (id: string) => Promise<void>
   onConfirmUnarchive: (id: string) => Promise<void>
 }) {
@@ -157,7 +153,7 @@ function ActionsMenu({
                 className="flex w-full items-center gap-2 px-3 py-2 text-sm text-amber-700 hover:bg-amber-50"
                 onClick={async () => {
                   setOpen(false)
-                  await onUnpublish(survey.id)
+                  await onConfirmUnpublish(survey.id)
                 }}
               >
                 <Globe className="h-4 w-4" /> Unpublish
@@ -290,6 +286,17 @@ export default function SurveysListPage() {
       variant: "danger",
     })
     if (ok) await handleArchive(id)
+  }
+
+  async function handleConfirmUnpublish(id: string) {
+    const ok = await confirm({
+      title: "Unpublish survey",
+      message: "This will deactivate all associated survey assignments. Continue?",
+      confirmLabel: "Unpublish",
+      cancelLabel: "Cancel",
+      variant: "danger",
+    })
+    if (ok) await handleUnpublish(id)
   }
 
   async function handleConfirmUnarchive(id: string) {
@@ -447,10 +454,8 @@ export default function SurveysListPage() {
         <ActionsMenu
           survey={s}
           onPublish={handlePublish}
-          onUnpublish={handleUnpublish}
-          onArchive={handleArchive}
-          onUnarchive={handleUnarchive}
           onDuplicate={handleDuplicate}
+          onConfirmUnpublish={handleConfirmUnpublish}
           onConfirmArchive={handleConfirmArchive}
           onConfirmUnarchive={handleConfirmUnarchive}
         />
@@ -466,7 +471,7 @@ export default function SurveysListPage() {
         <div>
           <h1 className="text-2xl font-bold text-zinc-900">Surveys</h1>
           <p className="mt-0.5 text-sm text-zinc-500">
-            Create and manage your feedback surveys
+            Create and manage your surveys.
           </p>
         </div>
         <button

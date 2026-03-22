@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from enum import Enum as PyEnum
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 from typing import Any, Literal
 
 
@@ -81,29 +81,99 @@ class LocationResponse(BaseModel):
 
 
 # --------------------------------------------------
+# LOCATION SURVEYS
+# --------------------------------------------------
+
+class LocationSurveyCreate(BaseModel):
+    location_id: uuid.UUID
+    survey_id: uuid.UUID
+    start_date: datetime
+    end_date: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_date_range(self):
+        if self.end_date is not None and self.end_date <= self.start_date:
+            raise ValueError("end_date must be after start_date")
+        return self
+
+
+class LocationSurveyBulkAssignCreate(BaseModel):
+    survey_id: uuid.UUID
+    location_ids: list[uuid.UUID] = Field(min_length=1)
+    start_date: datetime
+    end_date: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_date_range(self):
+        if len(set(self.location_ids)) != len(self.location_ids):
+            raise ValueError("location_ids must be unique")
+        if self.end_date is not None and self.end_date <= self.start_date:
+            raise ValueError("end_date must be after start_date")
+        return self
+
+
+class LocationSurveyUpdate(BaseModel):
+    is_active: bool | None = None
+    start_date: datetime | None = None
+    end_date: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_date_range(self):
+        if self.start_date is not None and self.end_date is not None and self.end_date <= self.start_date:
+            raise ValueError("end_date must be after start_date")
+        return self
+
+
+class LocationSurveyResponse(BaseModel):
+    id: uuid.UUID
+    location_id: uuid.UUID
+    location_name: str
+    location_google_business_url: str | None = None
+    location_is_active: bool
+    survey_id: uuid.UUID
+    survey_name: str
+    survey_is_published: bool
+    is_active: bool
+    start_date: str
+    end_date: str | None
+    status: str
+    created_at: str
+    updated_at: str
+
+
+class LocationNotificationGroupUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    group_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+# --------------------------------------------------
 # QR CODES (CRUD)
 # --------------------------------------------------
 
 class QRCodeCreate(BaseModel):
     title: str
-    survey_id: uuid.UUID
-    location_id: uuid.UUID | None = None
+    location_survey_id: uuid.UUID
 
 
 class QRCodeUpdate(BaseModel):
     title: str | None = None
-    survey_id: uuid.UUID | None = None
-    location_id: uuid.UUID | None = None
+    location_survey_id: uuid.UUID | None = None
     is_active: bool | None = None
 
 
 class QRCodeResponse(BaseModel):
     id: uuid.UUID
     title: str
+    location_survey_id: uuid.UUID
     survey_id: uuid.UUID
     survey_title: str | None
-    location_id: uuid.UUID | None
+    location_status: str | None = None
+    location_id: uuid.UUID
     location_name: str | None
+    start_date: str | None = None
+    end_date: str | None = None
+    assignment_status: str | None = None
     is_active: bool
     created_at: str
     updated_at: str
@@ -380,32 +450,67 @@ class AIAnalysisResponse(AIAnalysisBase):
 
 
 # --------------------------------------------------
-# LOGIC RULES / CONDITIONS / EVENTS
+# RULES / FLOWS / NOTIFICATION GROUPS
 # --------------------------------------------------
-class LogicActionType(str, PyEnum):
-    google_redirect = "google_redirect"
-    email_alert = "email_alert"
-    none = "none"
+class RuleConditionType(str, PyEnum):
+    rating = "rating"
+    sentiment = "sentiment"
+    not_empty = "not_empty"
 
 
-class LogicConnector(str, PyEnum):
+class RuleGroupOperator(str, PyEnum):
     AND = "AND"
     OR = "OR"
 
 
-class LogicOperator(str, PyEnum):
-    group = "group"
-    lt = "<"
-    lte = "<="
-    gte = ">="
-    gt = ">"
-    blank = "blank"
-    not_blank = "not_blank"
-    sentiment_positive = "sentiment_positive"
-    sentiment_negative = "sentiment_negative"
+class RuleOperator(str, PyEnum):
+    lt = "lt"
+    lte = "lte"
+    eq = "eq"
+    gte = "gte"
+    gt = "gt"
+    is_ = "is"
 
 
-class LogicQuestionOption(BaseModel):
+class SentimentValue(str, PyEnum):
+    positive = "positive"
+    neutral = "neutral"
+    negative = "negative"
+
+
+class FlowNodeType(str, PyEnum):
+    rule = "rule"
+    branch = "branch"
+    action = "action"
+
+
+class FlowBranchType(str, PyEnum):
+    TRUE = "TRUE"
+    FALSE = "FALSE"
+
+
+class FlowActionType(str, PyEnum):
+    redirect = "redirect"
+    email = "email"
+
+
+class FlowBranchMatchType(str, PyEnum):
+    all = "all"
+    any = "any"
+
+
+class FlowRedirectTargetType(str, PyEnum):
+    google_business_url = "google_business_url"
+    custom_url = "custom_url"
+
+
+class FlowEmailTargetType(str, PyEnum):
+    custom_email = "custom_email"
+    notification_group = "notification_group"
+    location_notification_groups = "location_notification_groups"
+
+
+class RuleQuestionOption(BaseModel):
     id: uuid.UUID
     question_key: str
     question_text: str
@@ -414,73 +519,400 @@ class LogicQuestionOption(BaseModel):
     position: int
 
 
-class LogicConditionBase(BaseModel):
+class RuleGroupCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    question_id: uuid.UUID | None = None
-    operator: LogicOperator
-    threshold_value: float | None = None
-    logical_connector: LogicConnector = LogicConnector.AND
-
-
-class LogicConditionUpsert(LogicConditionBase):
     id: uuid.UUID | None = None
-    children: list["LogicConditionUpsert"] = Field(default_factory=list)
+    operator: RuleGroupOperator
 
 
-class LogicConditionResponse(LogicConditionBase):
-    id: uuid.UUID
-    parent_condition_id: uuid.UUID | None = None
-    position: int
-    question_text: str | None = None
-    question_type: str | None = None
-    children: list["LogicConditionResponse"] = Field(default_factory=list)
+class RuleConditionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: uuid.UUID | None = None
+    condition_type: RuleConditionType
+    question_id: uuid.UUID | None = None
+    operator: RuleOperator | None = None
+    value: str | None = None
+    group_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def validate_shape(self):
+        if self.condition_type == RuleConditionType.not_empty:
+            if self.question_id is None:
+                raise ValueError("not_empty conditions require question_id")
+            if self.operator is not None or self.value is not None:
+                raise ValueError("not_empty conditions cannot define operator or value")
+            return self
+
+        if self.question_id is None:
+            raise ValueError("condition question_id is required")
+        if self.operator is None:
+            raise ValueError("condition operator is required")
+        if self.value is None or not str(self.value).strip():
+            raise ValueError("condition value is required")
+
+        if self.condition_type == RuleConditionType.rating:
+            if self.operator not in {
+                RuleOperator.lt,
+                RuleOperator.lte,
+                RuleOperator.eq,
+                RuleOperator.gte,
+                RuleOperator.gt,
+            }:
+                raise ValueError("rating conditions require a numeric comparison operator")
+        elif self.condition_type == RuleConditionType.sentiment:
+            if self.operator != RuleOperator.is_:
+                raise ValueError("sentiment conditions require the 'is' operator")
+            try:
+                SentimentValue(str(self.value).strip().lower())
+            except ValueError as exc:
+                raise ValueError("sentiment conditions must target positive, neutral, or negative") from exc
+
+        return self
 
 
-class LogicRuleCreate(BaseModel):
+class CreateRule(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=120)
     description: str | None = Field(default=None, max_length=240)
-    enabled: bool = True
-    action_type: LogicActionType = LogicActionType.none
-    conditions: list[LogicConditionUpsert] = Field(default_factory=list)
+    operator: RuleGroupOperator = RuleGroupOperator.AND
+    groups: list[RuleGroupCreate] = Field(default_factory=list)
+    conditions: list[RuleConditionCreate] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_groups(self):
+        group_ids = {group.id for group in self.groups if group.id is not None}
+        seen_group_ids: set[uuid.UUID] = set()
+        for condition in self.conditions:
+            if condition.group_id is None:
+                continue
+            if condition.group_id not in group_ids:
+                raise ValueError("condition references an unknown rule group")
+            seen_group_ids.add(condition.group_id)
+        if len(seen_group_ids) != len(group_ids):
+            raise ValueError("each rule group must contain at least one condition")
+        if not self.conditions:
+            raise ValueError("at least one condition is required")
+        return self
 
 
-class LogicRuleUpdate(LogicRuleCreate):
+class UpdateRule(CreateRule):
     pass
 
 
-class LogicRuleResponse(BaseModel):
+class RuleGroupResponse(BaseModel):
     id: uuid.UUID
+    operator: RuleGroupOperator
+    created_at: datetime
+
+
+class RuleConditionResponse(BaseModel):
+    id: uuid.UUID
+    condition_type: RuleConditionType
+    question_id: uuid.UUID | None
+    operator: RuleOperator | None
+    value: str | None
+    group_id: uuid.UUID | None
+    created_at: datetime
+
+
+class RuleResponse(BaseModel):
+    id: uuid.UUID
+    company_id: uuid.UUID
     survey_id: uuid.UUID
     name: str
     description: str | None = None
-    enabled: bool
-    action_type: LogicActionType
-    conditions: list[LogicConditionResponse] = Field(default_factory=list)
+    operator: RuleGroupOperator
+    groups: list[RuleGroupResponse] = Field(default_factory=list)
+    conditions: list[RuleConditionResponse] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
 
-class LogicRuleListResponse(BaseModel):
+class RuleListResponse(BaseModel):
     survey_id: uuid.UUID
-    questions: list[LogicQuestionOption] = Field(default_factory=list)
-    rules: list[LogicRuleResponse] = Field(default_factory=list)
+    questions: list[RuleQuestionOption] = Field(default_factory=list)
+    rules: list[RuleResponse] = Field(default_factory=list)
 
 
-class LogicEventBase(BaseModel):
+class NotificationGroupCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    survey_response_id: uuid.UUID
-    rule_id: uuid.UUID
-    action_type: LogicActionType
+    name: str = Field(min_length=1, max_length=120)
 
 
-class LogicEventResponse(LogicEventBase):
+class NotificationGroupMemberCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+    email: EmailStr
+
+
+class NotificationGroupUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+    members: list[NotificationGroupMemberCreate] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_unique_member_emails(self):
+        normalized_emails = [str(member.email).strip().lower() for member in self.members]
+        if len(set(normalized_emails)) != len(normalized_emails):
+            raise ValueError("notification group member emails must be unique")
+        return self
+
+
+class AssignNotificationGroupToLocation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    group_id: uuid.UUID
+
+
+class NotificationGroupMemberResponse(BaseModel):
     id: uuid.UUID
+    name: str
+    email: EmailStr
     created_at: datetime
 
 
-LogicConditionUpsert.model_rebuild()
-LogicConditionResponse.model_rebuild()
+class NotificationGroupResponse(BaseModel):
+    id: uuid.UUID
+    company_id: uuid.UUID
+    name: str
+    created_at: datetime
+    members: list[NotificationGroupMemberResponse] = Field(default_factory=list)
+    location_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class FlowNodeCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: uuid.UUID | None = None
+    parent_id: uuid.UUID | None = None
+    node_type: FlowNodeType
+    rule_id: uuid.UUID | None = None
+    branch_type: FlowBranchType | None = None
+    action_type: FlowActionType | None = None
+    config: dict[str, Any] | None = None
+    position: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_shape(self):
+        if self.node_type == FlowNodeType.rule:
+            if self.rule_id is None:
+                raise ValueError("rule nodes require rule_id")
+            if self.action_type is not None:
+                raise ValueError("rule nodes cannot define action_type")
+            return self
+
+        if self.node_type == FlowNodeType.branch:
+            if self.rule_id is not None or self.action_type is not None:
+                raise ValueError("branch nodes cannot define rule_id or action_type")
+            config = self.config or {}
+            match_type = config.get("match_type")
+            if match_type not in {FlowBranchMatchType.all.value, FlowBranchMatchType.any.value}:
+                raise ValueError("branch nodes require config.match_type of 'all' or 'any'")
+            # New format: rule_conditions [{rule_id, expected}]
+            raw_conditions = config.get("rule_conditions")
+            if isinstance(raw_conditions, list):
+                if not raw_conditions:
+                    raise ValueError("branch nodes require at least one rule condition")
+                for rc in raw_conditions:
+                    if not isinstance(rc, dict) or "rule_id" not in rc:
+                        raise ValueError("each branch rule_condition must have a rule_id")
+                    try:
+                        uuid.UUID(str(rc["rule_id"]))
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError("branch rule_condition.rule_id must be a valid UUID") from exc
+                    if "expected" in rc and not isinstance(rc.get("expected"), bool):
+                        raise ValueError("branch rule_condition.expected must be a boolean")
+            else:
+                # Legacy format: rule_ids + negate (kept for backwards compatibility)
+                raw_rule_ids = config.get("rule_ids")
+                if not isinstance(raw_rule_ids, list) or not raw_rule_ids:
+                    raise ValueError("branch nodes require config.rule_conditions or config.rule_ids")
+                for raw_rule_id in raw_rule_ids:
+                    try:
+                        uuid.UUID(str(raw_rule_id))
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError("branch config.rule_ids must contain valid rule IDs") from exc
+                negate = config.get("negate", False)
+                if not isinstance(negate, bool):
+                    raise ValueError("branch nodes require config.negate to be a boolean")
+            return self
+
+        if self.action_type is None:
+            raise ValueError("action nodes require action_type")
+        if self.rule_id is not None:
+            raise ValueError("action nodes cannot define rule_id")
+        config = self.config or {}
+        if self.action_type == FlowActionType.redirect:
+            target = config.get("target", FlowRedirectTargetType.google_business_url.value)
+            if target not in {
+                FlowRedirectTargetType.google_business_url.value,
+                FlowRedirectTargetType.custom_url.value,
+            }:
+                raise ValueError("redirect actions require a valid config.target")
+            if target == FlowRedirectTargetType.custom_url.value:
+                url = config.get("url")
+                if not isinstance(url, str) or not url.strip():
+                    raise ValueError("custom redirect actions require config.url")
+        if self.action_type == FlowActionType.email:
+            target = config.get("target")
+            if target == FlowEmailTargetType.custom_email.value:
+                email = config.get("email")
+                if not isinstance(email, str) or not email.strip():
+                    raise ValueError("custom email actions require config.email")
+            elif target == FlowEmailTargetType.notification_group.value:
+                group_id = config.get("notification_group_id")
+                if not group_id:
+                    raise ValueError("notification-group email actions require config.notification_group_id")
+            elif target != FlowEmailTargetType.location_notification_groups.value:
+                raise ValueError("email actions require a valid config.target")
+        return self
+
+
+class CreateFlow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=240)
+    is_active: bool = True
+    location_survey_ids: list[uuid.UUID] = Field(default_factory=list)
+    nodes: list[FlowNodeCreate] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_structure(self):
+        node_ids = [node.id for node in self.nodes if node.id is not None]
+        if len(node_ids) != len(set(node_ids)):
+            raise ValueError("flow node ids must be unique")
+
+        parent_ids = {node.id for node in self.nodes if node.id is not None}
+        roots = [node for node in self.nodes if node.parent_id is None]
+        if len(roots) != 1:
+            raise ValueError("flows must contain exactly one root node")
+        node_key_map: dict[uuid.UUID, FlowNodeCreate] = {}
+        for index, node in enumerate(self.nodes):
+            node_id = node.id or uuid.uuid5(uuid.NAMESPACE_URL, f"flow-node-{index}")
+            node_key_map[node_id] = node
+            if node.parent_id is not None and node.parent_id not in parent_ids:
+                raise ValueError("flow nodes cannot reference a missing parent")
+
+        total_rules = sum(1 for node in self.nodes if node.node_type == FlowNodeType.rule)
+        if total_rules > 10:
+            raise ValueError("flows can contain at most 10 rule nodes")
+
+        children_by_parent: dict[uuid.UUID | None, list[tuple[uuid.UUID, FlowNodeCreate]]] = {}
+        for index, node in enumerate(self.nodes):
+            node_id = node.id or uuid.uuid5(uuid.NAMESPACE_URL, f"flow-node-{index}")
+            children_by_parent.setdefault(node.parent_id, []).append((node_id, node))
+
+        for children in children_by_parent.values():
+            children.sort(key=lambda item: item[1].position)
+
+        for node_id, node in node_key_map.items():
+            children = children_by_parent.get(node_id, [])
+            if node.parent_id is None and node.branch_type is not None:
+                raise ValueError("root nodes cannot define branch_type")
+            if node.node_type == FlowNodeType.action and children:
+                raise ValueError("action nodes cannot have children")
+            if node.node_type == FlowNodeType.rule:
+                if len(children) != 1:
+                    raise ValueError("rule nodes must have exactly one child")
+                if children[0][1].branch_type is not None:
+                    raise ValueError("rule node children cannot define branch_type")
+            elif node.node_type == FlowNodeType.branch:
+                if len(children) != 2:
+                    raise ValueError("branch nodes must define both TRUE and FALSE children")
+                branch_values = [child.branch_type for _, child in children]
+                if sorted(branch_values) != [FlowBranchType.FALSE, FlowBranchType.TRUE]:
+                    raise ValueError("branch nodes must define one TRUE and one FALSE child")
+            else:
+                for _, child in children:
+                    if child.branch_type is not None:
+                        raise ValueError("only branch node children can define branch_type")
+
+        def walk(node_id: uuid.UUID) -> None:
+            node = node_key_map[node_id]
+            children = children_by_parent.get(node_id, [])
+            if node.node_type == FlowNodeType.action:
+                return
+            if not children:
+                raise ValueError("every flow path must end with an action node")
+            for child_id, _ in children:
+                walk(child_id)
+
+        root_id = roots[0].id or uuid.uuid5(uuid.NAMESPACE_URL, "flow-root")
+        walk(root_id)
+        return self
+
+
+class UpdateFlow(CreateFlow):
+    pass
+
+
+class FlowNodeResponse(BaseModel):
+    id: uuid.UUID
+    parent_id: uuid.UUID | None
+    node_type: FlowNodeType
+    rule_id: uuid.UUID | None
+    branch_type: FlowBranchType | None
+    action_type: FlowActionType | None
+    config: dict[str, Any] | None
+    position: int
+    created_at: datetime
+
+
+class FlowResponse(BaseModel):
+    id: uuid.UUID
+    company_id: uuid.UUID
+    survey_id: uuid.UUID
+    survey_name: str
+    name: str
+    description: str | None = None
+    is_active: bool
+    location_survey_ids: list[uuid.UUID] = Field(default_factory=list)
+    nodes: list[FlowNodeResponse] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class FlowActionResult(BaseModel):
+    type: FlowActionType
+    url: str | None = None
+    notification_group_id: uuid.UUID | None = None
+    recipient_email: str | None = None
+
+
+class FlowTestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mock_response: dict[str, Any] = Field(default_factory=dict)
+    location_survey_id: uuid.UUID
+    qr_code_id: uuid.UUID | None = None
+
+
+class FlowTestResponse(BaseModel):
+    execution_trace: dict[str, Any]
+    action: FlowActionResult | None = None
+
+
+class FlowRunResponse(BaseModel):
+    id: uuid.UUID
+    company_id: uuid.UUID
+    flow_id: uuid.UUID
+    flow_name: str
+    survey_id: uuid.UUID
+    survey_name: str
+    response_id: uuid.UUID | None
+    success: bool
+    location_survey_id: uuid.UUID | None
+    location_name: str | None = None
+    qr_code_id: uuid.UUID | None
+    qr_code_title: str | None = None
+    action_executed: str | None
+    runtime_ms: int | None = None
+    execution_trace: dict[str, Any]
+    created_at: datetime

@@ -1,23 +1,22 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
 import { Loader2 } from "lucide-react"
-import { fetchSurveyRedirect } from "@/lib/api/client"
+import { extractErrorMessage, fetchSurveyRedirect } from "@/lib/api/client"
 
 export default function SurveyRouterPage() {
   const params = useParams()
   const qrCodeId = params.qrCodeId as string
-  const idempotencyKeyRef = useRef<string | null>(null)
-  if (!idempotencyKeyRef.current && typeof crypto !== "undefined" && crypto.randomUUID) {
-    idempotencyKeyRef.current = crypto.randomUUID()
-  }
+  const [idempotencyKey] = useState<string | null>(() =>
+    typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : null,
+  )
 
   const [error, setError] = useState<string | null>(null)
+  const invalidQrCode = !qrCodeId
 
   useEffect(() => {
-    if (!qrCodeId) {
-      setError("Invalid QR code")
+    if (invalidQrCode) {
       return
     }
 
@@ -25,18 +24,18 @@ export default function SurveyRouterPage() {
 
     async function redirect() {
       try {
-        const result = await fetchSurveyRedirect(qrCodeId, idempotencyKeyRef.current ?? undefined)
+        const result = await fetchSurveyRedirect(qrCodeId, idempotencyKey ?? undefined)
         if (cancelled) return
 
-        if (result.valid && result.redirect_url) {
+        if (result.redirect_url) {
           window.location.href = result.redirect_url
           return
         }
 
         setError(result.error ?? "We couldn't detect which QR code you scanned. Please try again.")
-      } catch {
+      } catch (err) {
         if (!cancelled) {
-          setError("We couldn't detect which QR code you scanned. Please try again.")
+          setError(extractErrorMessage(err, "We couldn't detect which QR code you scanned. Please try again."))
         }
       }
     }
@@ -45,13 +44,13 @@ export default function SurveyRouterPage() {
     return () => {
       cancelled = true
     }
-  }, [qrCodeId])
+  }, [idempotencyKey, invalidQrCode, qrCodeId])
 
-  if (error) {
+  if (invalidQrCode || error) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-50 px-4">
         <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-8 text-center shadow-sm">
-          <p className="text-lg font-medium text-zinc-900">{error}</p>
+          <p className="text-lg font-medium text-zinc-900">{error ?? "Invalid QR code"}</p>
           <p className="mt-2 text-sm text-zinc-500">
             Please scan the QR code again or contact the venue for assistance.
           </p>

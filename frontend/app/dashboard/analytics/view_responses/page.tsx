@@ -462,7 +462,7 @@ export default function AnalyticsPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold text-zinc-900">Analytics</h1>
-          <p className="text-sm text-zinc-500">Survey response data for your company</p>
+          <p className="text-sm text-zinc-500">Survey response data across your company.</p>
         </div>
 
         <div className="flex items-center gap-2">

@@ -30,6 +30,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { useConfirm } from "@/components/ui/ConfirmDialog"
+import { SingleSelectDropdown } from "@/components/ui/DropdownSelect"
 import { supabase } from "@/lib/supabase/client"
 import {
   createSurveyLogicRule,
@@ -115,32 +116,30 @@ function operatorOptionsForQuestion(
     return [
       { value: "sentiment_positive", label: "sentiment is positive" },
       { value: "sentiment_negative", label: "sentiment is negative" },
+      { value: "=", label: "score is equal to" },
       { value: ">", label: "sentiment score is greater than" },
       { value: ">=", label: "sentiment score is greater than or equal to" },
       { value: "<", label: "sentiment score is less than" },
       { value: "<=", label: "sentiment score is less than or equal to" },
-      { value: "blank", label: "is blank" },
       { value: "not_blank", label: "is not blank" },
     ]
   }
   return [
-    { value: "blank", label: "is blank" },
     { value: "not_blank", label: "is not blank" },
   ]
 }
 
 function requiresThreshold(operator: LeafOperator) {
-  return operator === ">" || operator === ">=" || operator === "<" || operator === "<="
+  return operator === ">" || operator === ">=" || operator === "<" || operator === "<=" || operator === "="
 }
 
 function defaultOperatorForQuestion(question: Pick<LogicQuestionOption, "question_type" | "is_numeric">) {
   return operatorOptionsForQuestion(question)[0]?.value ?? "not_blank"
 }
 
-function savedActionLabel(action: LogicActionType) {
-  if (action === "google_redirect") return "Google redirect event"
-  if (action === "email_alert") return "Email alert event"
-  return "No action set"
+function truncateDescription(value: string, maxLength = 96) {
+  if (value.length <= maxLength) return value
+  return `${value.slice(0, maxLength).trimEnd()}…`
 }
 
 function makeLeafCondition(question: LogicQuestionOption): LeafConditionDraft {
@@ -321,6 +320,10 @@ function payloadFromDraft(draft: RuleDraft): LogicRulePayload {
         : mapLeaf(item),
     ),
   }
+}
+
+function serializeRuleDraft(draft: RuleDraft) {
+  return JSON.stringify(payloadFromDraft(draft))
 }
 
 function LevelConnectorPill({
@@ -663,7 +666,7 @@ function SortableTopLevelItem({
   )
 }
 
-export default function AutomationsPage() {
+export default function RulesPage() {
   const { confirm, ConfirmDialogRender } = useConfirm()
   const [surveys, setSurveys] = useState<SurveySummary[]>([])
   const [selectedSurveyId, setSelectedSurveyId] = useState("")
@@ -674,6 +677,7 @@ export default function AutomationsPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [draftError, setDraftError] = useState<string | null>(null)
+  const [draftSnapshot, setDraftSnapshot] = useState<string | null>(null)
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -695,6 +699,10 @@ export default function AutomationsPage() {
     () => questions.filter((question) => isSupportedQuestion(question)),
     [questions],
   )
+  const hasUnsavedChanges = useMemo(
+    () => (draft ? (!draft.id || serializeRuleDraft(draft) !== draftSnapshot) : false),
+    [draft, draftSnapshot],
+  )
 
   const loadBundle = useCallback(async (surveyId: string) => {
     const token = await getToken()
@@ -703,9 +711,21 @@ export default function AutomationsPage() {
     setQuestions(bundle.questions)
     setRules(bundle.rules)
     setDraft(null)
+    setDraftSnapshot(null)
     setDraftError(null)
     setError(null)
   }, [])
+
+  async function confirmDiscardChanges() {
+    if (!hasUnsavedChanges) return true
+    return confirm({
+      title: "You have unsaved changes",
+      message: "Discard the current rule changes?",
+      confirmLabel: "Discard",
+      cancelLabel: "Keep editing",
+      variant: "danger",
+    })
+  }
 
   useEffect(() => {
     async function load() {
@@ -725,7 +745,7 @@ export default function AutomationsPage() {
           setRules([])
         }
       } catch (err) {
-        setError(extractErrorMessage(err, "Failed to load automations"))
+        setError(extractErrorMessage(err, "Failed to load rules"))
       } finally {
         setLoading(false)
       }
@@ -733,21 +753,28 @@ export default function AutomationsPage() {
     load()
   }, [])
 
-  function startNewRule() {
+  async function startNewRule() {
+    const proceed = await confirmDiscardChanges()
+    if (!proceed) return
     const fallbackQuestion = supportedQuestions[0]
     if (!fallbackQuestion) return
     setDraft({
-      name: "New automation rule",
+      name: "New rule",
       description: "",
       enabled: true,
       action_type: "none",
       conditions: [makeLeafCondition(fallbackQuestion)],
     })
+    setDraftSnapshot(null)
     setDraftError(null)
   }
 
-  function openRule(rule: LogicRuleResponse) {
-    setDraft(draftFromRule(rule))
+  async function openRule(rule: LogicRuleResponse) {
+    const proceed = await confirmDiscardChanges()
+    if (!proceed) return
+    const nextDraft = draftFromRule(rule)
+    setDraft(nextDraft)
+    setDraftSnapshot(serializeRuleDraft(nextDraft))
     setDraftError(null)
   }
 
@@ -825,9 +852,11 @@ export default function AutomationsPage() {
           ? current.map((rule) => (rule.id === saved.id ? saved : rule))
           : [saved, ...current]
       })
-      setDraft(draftFromRule(saved))
+      const nextDraft = draftFromRule(saved)
+      setDraft(nextDraft)
+      setDraftSnapshot(serializeRuleDraft(nextDraft))
     } catch (err) {
-      setDraftError(extractErrorMessage(err, "Failed to save automation rule"))
+      setDraftError(extractErrorMessage(err, "Failed to save rule"))
     } finally {
       setSaving(false)
     }
@@ -835,7 +864,7 @@ export default function AutomationsPage() {
 
   async function deleteRule(rule: LogicRuleResponse) {
     const ok = await confirm({
-      title: "Delete automation rule",
+      title: "Delete rule",
       message: `Delete "${rule.name}"?`,
       confirmLabel: "Delete",
       variant: "danger",
@@ -849,8 +878,9 @@ export default function AutomationsPage() {
       await deleteSurveyLogicRule(token, selectedSurveyId, rule.id)
       setRules((current) => current.filter((item) => item.id !== rule.id))
       setDraft((current) => (current?.id === rule.id ? null : current))
+      setDraftSnapshot((current) => (draft?.id === rule.id ? null : current))
     } catch (err) {
-      setDraftError(extractErrorMessage(err, "Failed to delete automation rule"))
+      setDraftError(extractErrorMessage(err, "Failed to delete rule"))
     }
   }
 
@@ -874,7 +904,7 @@ export default function AutomationsPage() {
     return (
       <Card className="flex flex-col items-center gap-3 py-16">
         <Bell className="h-8 w-8 text-zinc-300" />
-        <p className="text-sm font-medium text-zinc-500">Create a survey before adding automations.</p>
+        <p className="text-sm font-medium text-zinc-500">Create a survey before adding rules.</p>
       </Card>
     )
   }
@@ -885,12 +915,12 @@ export default function AutomationsPage() {
 
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className={!draft && rules.length === 0 ? "h-full" : undefined}>
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-950">Automations</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-zinc-950">Rules</h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Define what counts as a good or bad response and record automation events in real time.
+            Create logic rules to automate actions based on survey responses.
           </p>
         </div>
-        <Button onClick={startNewRule} disabled={!selectedSurveyId || supportedQuestions.length === 0}>
+              <Button onClick={() => void startNewRule()} disabled={!selectedSurveyId || supportedQuestions.length === 0}>
           <Plus className="mr-1.5 h-4 w-4" />
           New rule
         </Button>
@@ -901,7 +931,7 @@ export default function AutomationsPage() {
           <Card>
             <div className="space-y-4">
               <div>
-                <h2 className="text-lg font-semibold text-zinc-900">Survey automations</h2>
+                <h2 className="text-lg font-semibold text-zinc-900">Survey rules</h2>
                 <p className="mt-1 text-sm text-zinc-500">
                   Choose the survey you want to configure rules for.
                 </p>
@@ -911,28 +941,25 @@ export default function AutomationsPage() {
                 <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
                   Survey
                 </span>
-                <select
-                  className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
-                  value={selectedSurveyId}
-                  onChange={async (event) => {
-                    const nextSurveyId = event.target.value
-                    setSelectedSurveyId(nextSurveyId)
-                    setLoading(true)
-                    try {
-                      await loadBundle(nextSurveyId)
-                    } catch (err) {
-                      setError(extractErrorMessage(err, "Failed to load survey rules"))
-                    } finally {
-                      setLoading(false)
-                    }
-                  }}
-                >
-                  {surveys.map((survey) => (
-                    <option key={survey.id} value={survey.id}>
-                      {survey.name}
-                    </option>
-                  ))}
-                </select>
+                <div className="mt-1">
+                  <SingleSelectDropdown
+                    options={surveys.map((survey) => ({ value: survey.id, label: survey.name }))}
+                    value={selectedSurveyId}
+                    onChange={async (nextSurveyId) => {
+                      const proceed = await confirmDiscardChanges()
+                      if (!proceed) return
+                      setSelectedSurveyId(nextSurveyId)
+                      setLoading(true)
+                      try {
+                        await loadBundle(nextSurveyId)
+                      } catch (err) {
+                        setError(extractErrorMessage(err, "Failed to load survey rules"))
+                      } finally {
+                        setLoading(false)
+                      }
+                    }}
+                  />
+                </div>
               </label>
             </div>
           </Card>
@@ -945,7 +972,7 @@ export default function AutomationsPage() {
 
             {rules.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-zinc-200 bg-zinc-50 px-4 py-8 text-center text-sm text-zinc-500">
-                No automation rules for this survey yet.
+                No rules for this survey yet.
               </div>
             ) : (
               <div className="space-y-3">
@@ -954,11 +981,11 @@ export default function AutomationsPage() {
                     key={rule.id}
                     role="button"
                     tabIndex={0}
-                    onClick={() => openRule(rule)}
+                    onClick={() => void openRule(rule)}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" || event.key === " ") {
                         event.preventDefault()
-                        openRule(rule)
+                        void openRule(rule)
                       }
                     }}
                     className={[
@@ -984,11 +1011,10 @@ export default function AutomationsPage() {
                           </span>
                         </div>
                         {rule.description ? (
-                          <p className="mt-1 line-clamp-2 text-sm text-zinc-600">{rule.description}</p>
-                        ) : null}
-                        <p className="mt-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
-                          {savedActionLabel(rule.action_type)}
-                        </p>
+                          <p className="mt-1 text-sm text-zinc-600">{truncateDescription(rule.description)}</p>
+                        ) : (
+                          <p className="mt-1 text-sm text-zinc-400">No description</p>
+                        )}
                       </div>
                       <div className="flex items-center gap-1">
                         <button
@@ -996,7 +1022,7 @@ export default function AutomationsPage() {
                           className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
                           onClick={(event) => {
                             event.stopPropagation()
-                            openRule(rule)
+                            void openRule(rule)
                           }}
                           aria-label={`Edit ${rule.name}`}
                         >
@@ -1025,8 +1051,8 @@ export default function AutomationsPage() {
         <div>
           {draft ? (
             <Card>
-              <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-                <div>
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div className="min-w-0">
                   <h2 className="text-base font-semibold text-zinc-900">
                     {draft.id ? "Edit rule" : "Create rule"}
                   </h2>
@@ -1034,8 +1060,18 @@ export default function AutomationsPage() {
                     Build your rule using standalone conditions and condition groups.
                   </p>
                 </div>
-                <div className="flex gap-2">
-                  <Button variant="ghost" onClick={() => setDraft(null)} disabled={saving}>
+
+                <div className="flex flex-shrink-0 gap-2">
+                  <Button
+                    variant="ghost"
+                    onClick={async () => {
+                      const proceed = await confirmDiscardChanges()
+                      if (!proceed) return
+                      setDraft(null)
+                      setDraftSnapshot(null)
+                    }}
+                    disabled={saving}
+                  >
                     Cancel
                   </Button>
                   <Button onClick={saveDraft} disabled={saving}>
@@ -1049,43 +1085,20 @@ export default function AutomationsPage() {
                 </div>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-2">
-                <label className="block">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                    Rule name
-                  </span>
-                  <input
-                    className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
-                    value={draft.name}
-                    onChange={(event) =>
-                      setDraft((current) =>
-                        current ? { ...current, name: event.target.value } : current,
-                      )
-                    }
-                  />
-                </label>
-
-                <label className="block">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                    Action
-                  </span>
-                  <select
-                    className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
-                    value={draft.action_type}
-                    onChange={(event) =>
-                      setDraft((current) =>
-                        current
-                          ? { ...current, action_type: event.target.value as LogicActionType }
-                          : current,
-                      )
-                    }
-                  >
-                    <option value="none">None</option>
-                    <option value="google_redirect">Google redirect</option>
-                    <option value="email_alert">Email alert</option>
-                  </select>
-                </label>
-              </div>
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                  Rule name
+                </span>
+                <input
+                  className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
+                  value={draft.name}
+                  onChange={(event) =>
+                    setDraft((current) =>
+                      current ? { ...current, name: event.target.value } : current,
+                    )
+                  }
+                />
+              </label>
 
               <label className="mt-4 block">
                 <div className="flex items-center justify-between gap-3">
@@ -1251,7 +1264,7 @@ export default function AutomationsPage() {
               <Bell className="h-8 w-8 text-zinc-300" />
               <p className="text-sm font-medium text-zinc-700">Select a rule to edit or create a new one.</p>
               <p className="max-w-md text-center text-sm text-zinc-500">
-                Matching rules are evaluated after each survey submission in real-time.
+                Rules can be added to one or more flows to be evaluated after each survey submission.
               </p>
             </Card>
           )}

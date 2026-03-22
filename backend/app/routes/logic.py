@@ -4,23 +4,55 @@ from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
 from ..auth.jwt import get_current_user
+from ..core.errors.exceptions import NotFoundError, PermissionError, ValidationError
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import Company as CompanyORM
 from ..models.postgres_model import Survey as SurveyORM
 from ..models.postgres_model import User as UserORM
 from ..schemas.pydantic_model import (
-    LogicRuleCreate,
-    LogicRuleListResponse,
-    LogicRuleResponse,
-    LogicRuleUpdate,
+    AssignNotificationGroupToLocation,
+    CreateFlow,
+    CreateRule,
+    FlowResponse,
+    FlowRunResponse,
+    FlowTestRequest,
+    FlowTestResponse,
+    LocationNotificationGroupUpdate,
+    NotificationGroupCreate,
+    NotificationGroupMemberCreate,
+    NotificationGroupUpdate,
+    NotificationGroupResponse,
+    RuleListResponse,
+    RuleResponse,
+    UpdateFlow,
+    UpdateRule,
 )
-from ..services.logic_service import (
-    create_logic_rule,
-    delete_logic_rule,
-    get_logic_rule_bundle,
-    update_logic_rule,
+from ..services.flow_service import (
+    create_flow,
+    delete_flow,
+    get_flow_for_company,
+    get_flow_response,
+    list_company_flows,
+    list_flow_runs,
+    list_flows,
+    test_flow,
+    update_flow,
 )
-from ..core.errors.exceptions import NotFoundError, PermissionError, ValidationError
+from ..services.notification_group_service import (
+    add_notification_group_member,
+    assign_notification_group_to_location,
+    create_notification_group,
+    delete_notification_group,
+    list_notification_groups,
+    sync_location_notification_groups,
+    update_notification_group,
+)
+from ..services.rule_service import (
+    create_rule as create_rule_service,
+    delete_rule as delete_rule_service,
+    get_rule_bundle,
+    update_rule as update_rule_service,
+)
 
 router = APIRouter()
 
@@ -33,59 +65,74 @@ def _parse_uuid(value: str, *, code: str, label: str) -> uuid.UUID:
 
 
 def _get_company_for_user(db: Session, current_user: UserORM) -> CompanyORM:
-    company = db.query(CompanyORM).filter(CompanyORM.owner_user_id == current_user.id).first()
+    company = (
+        db.query(CompanyORM)
+        .filter(
+            CompanyORM.owner_user_id == current_user.id,
+            CompanyORM.deleted_at.is_(None),
+        )
+        .first()
+    )
     if not company:
         raise NotFoundError(code="COMPANY_NOT_FOUND", message="Company not found for user")
     return company
 
 
-def _ensure_survey_access(db: Session, current_user: UserORM, survey_id: uuid.UUID) -> None:
+def _ensure_survey_access(db: Session, current_user: UserORM, survey_id: uuid.UUID) -> CompanyORM:
     company = _get_company_for_user(db, current_user)
-    survey = db.query(SurveyORM).filter(SurveyORM.id == survey_id).first()
+    survey = (
+        db.query(SurveyORM)
+        .filter(
+            SurveyORM.id == survey_id,
+            SurveyORM.deleted_at.is_(None),
+        )
+        .first()
+    )
     if not survey:
         raise NotFoundError(code="SURVEY_NOT_FOUND", message="Survey not found")
     if survey.company_id != company.id:
         raise PermissionError(code="ACCESS_DENIED", message="Access denied")
+    return company
 
 
-@router.get("/surveys/{survey_id}/logic-rules", response_model=LogicRuleListResponse)
-def list_logic_rules(
+@router.get("/surveys/{survey_id}/rules", response_model=RuleListResponse)
+def list_rules(
     survey_id: str,
     current_user: UserORM = Depends(get_current_user),
     db: Session = Depends(get_db_connection),
 ):
     survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
     _ensure_survey_access(db, current_user, survey_uuid)
-    return get_logic_rule_bundle(db, survey_uuid)
+    return get_rule_bundle(db, survey_uuid)
 
 
-@router.post("/surveys/{survey_id}/logic-rules", response_model=LogicRuleResponse, status_code=201)
+@router.post("/surveys/{survey_id}/rules", response_model=RuleResponse, status_code=201)
 def create_rule(
     survey_id: str,
-    payload: LogicRuleCreate,
+    payload: CreateRule,
     current_user: UserORM = Depends(get_current_user),
     db: Session = Depends(get_db_connection),
 ):
     survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
     _ensure_survey_access(db, current_user, survey_uuid)
-    return create_logic_rule(db, survey_uuid, payload)
+    return create_rule_service(db, survey_uuid, payload)
 
 
-@router.put("/surveys/{survey_id}/logic-rules/{rule_id}", response_model=LogicRuleResponse)
+@router.put("/surveys/{survey_id}/rules/{rule_id}", response_model=RuleResponse)
 def update_rule(
     survey_id: str,
     rule_id: str,
-    payload: LogicRuleUpdate,
+    payload: UpdateRule,
     current_user: UserORM = Depends(get_current_user),
     db: Session = Depends(get_db_connection),
 ):
     survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
-    rule_uuid = _parse_uuid(rule_id, code="INVALID_LOGIC_RULE_ID", label="logic rule ID")
+    rule_uuid = _parse_uuid(rule_id, code="INVALID_RULE_ID", label="rule ID")
     _ensure_survey_access(db, current_user, survey_uuid)
-    return update_logic_rule(db, survey_uuid, rule_uuid, payload)
+    return update_rule_service(db, survey_uuid, rule_uuid, payload)
 
 
-@router.delete("/surveys/{survey_id}/logic-rules/{rule_id}", status_code=204)
+@router.delete("/surveys/{survey_id}/rules/{rule_id}", status_code=204)
 def delete_rule(
     survey_id: str,
     rule_id: str,
@@ -93,7 +140,208 @@ def delete_rule(
     db: Session = Depends(get_db_connection),
 ):
     survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
-    rule_uuid = _parse_uuid(rule_id, code="INVALID_LOGIC_RULE_ID", label="logic rule ID")
+    rule_uuid = _parse_uuid(rule_id, code="INVALID_RULE_ID", label="rule ID")
     _ensure_survey_access(db, current_user, survey_uuid)
-    delete_logic_rule(db, survey_uuid, rule_uuid)
+    delete_rule_service(db, survey_uuid, rule_uuid)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/surveys/{survey_id}/flows", response_model=list[FlowResponse])
+def list_flows_route(
+    survey_id: str,
+    current_user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
+    company = _ensure_survey_access(db, current_user, survey_uuid)
+    return list_flows(db, company.id, survey_uuid)
+
+
+@router.get("/flows", response_model=list[FlowResponse])
+def list_company_flows_route(
+    current_user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    company = _get_company_for_user(db, current_user)
+    return list_company_flows(db, company.id)
+
+
+@router.get("/flows/{flow_id}", response_model=FlowResponse)
+def get_flow_route(
+    flow_id: str,
+    current_user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    flow_uuid = _parse_uuid(flow_id, code="INVALID_FLOW_ID", label="flow ID")
+    company = _get_company_for_user(db, current_user)
+    return get_flow_response(db, company.id, flow_uuid)
+
+
+@router.post("/surveys/{survey_id}/flows", response_model=FlowResponse, status_code=201)
+def create_flow_route(
+    survey_id: str,
+    payload: CreateFlow,
+    current_user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
+    company = _ensure_survey_access(db, current_user, survey_uuid)
+    return create_flow(db, company.id, survey_uuid, payload)
+
+
+@router.put("/surveys/{survey_id}/flows/{flow_id}", response_model=FlowResponse)
+def update_flow_route(
+    survey_id: str,
+    flow_id: str,
+    payload: UpdateFlow,
+    current_user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
+    flow_uuid = _parse_uuid(flow_id, code="INVALID_FLOW_ID", label="flow ID")
+    company = _ensure_survey_access(db, current_user, survey_uuid)
+    return update_flow(db, company.id, survey_uuid, flow_uuid, payload)
+
+
+@router.delete("/surveys/{survey_id}/flows/{flow_id}", status_code=204)
+def delete_flow_route(
+    survey_id: str,
+    flow_id: str,
+    current_user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
+    flow_uuid = _parse_uuid(flow_id, code="INVALID_FLOW_ID", label="flow ID")
+    company = _ensure_survey_access(db, current_user, survey_uuid)
+    delete_flow(db, company.id, survey_uuid, flow_uuid)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/flows/{flow_id}/test", response_model=FlowTestResponse)
+def test_flow_route(
+    flow_id: str,
+    payload: FlowTestRequest,
+    current_user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    flow_uuid = _parse_uuid(flow_id, code="INVALID_FLOW_ID", label="flow ID")
+    company = _get_company_for_user(db, current_user)
+    flow = get_flow_for_company(db, company.id, flow_uuid)
+    return test_flow(
+        db,
+        company_id=company.id,
+        survey_id=flow.survey_id,
+        flow_id=flow.id,
+        mock_response=payload.mock_response,
+        location_survey_id=payload.location_survey_id,
+    )
+
+
+@router.get("/notification-groups", response_model=list[NotificationGroupResponse])
+def list_notification_groups_route(
+    current_user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    company = _get_company_for_user(db, current_user)
+    return list_notification_groups(db, company.id)
+
+
+@router.post("/notification-groups", response_model=NotificationGroupResponse, status_code=201)
+def create_notification_group_route(
+    payload: NotificationGroupCreate,
+    current_user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    company = _get_company_for_user(db, current_user)
+    return create_notification_group(db, company.id, payload.name)
+
+
+@router.post("/notification-groups/{group_id}/members", response_model=NotificationGroupResponse, status_code=201)
+def add_notification_group_member_route(
+    group_id: str,
+    payload: NotificationGroupMemberCreate,
+    current_user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    company = _get_company_for_user(db, current_user)
+    group_uuid = _parse_uuid(group_id, code="INVALID_NOTIFICATION_GROUP_ID", label="notification group ID")
+    return add_notification_group_member(
+        db,
+        company.id,
+        group_uuid,
+        name=payload.name,
+        email=payload.email,
+    )
+
+
+@router.put("/notification-groups/{group_id}", response_model=NotificationGroupResponse)
+def update_notification_group_route(
+    group_id: str,
+    payload: NotificationGroupUpdate,
+    current_user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    company = _get_company_for_user(db, current_user)
+    group_uuid = _parse_uuid(group_id, code="INVALID_NOTIFICATION_GROUP_ID", label="notification group ID")
+    return update_notification_group(
+        db,
+        company.id,
+        group_uuid,
+        name=payload.name,
+        members=[{"name": member.name, "email": str(member.email)} for member in payload.members],
+    )
+
+
+@router.post("/locations/{location_id}/notification-groups", response_model=NotificationGroupResponse)
+def assign_notification_group_to_location_route(
+    location_id: str,
+    payload: AssignNotificationGroupToLocation,
+    current_user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    company = _get_company_for_user(db, current_user)
+    location_uuid = _parse_uuid(location_id, code="INVALID_LOCATION_ID", label="location ID")
+    return assign_notification_group_to_location(
+        db,
+        company.id,
+        location_uuid,
+        payload.group_id,
+    )
+
+
+@router.put("/locations/{location_id}/notification-groups", response_model=list[NotificationGroupResponse])
+def sync_location_notification_groups_route(
+    location_id: str,
+    payload: LocationNotificationGroupUpdate,
+    current_user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    company = _get_company_for_user(db, current_user)
+    location_uuid = _parse_uuid(location_id, code="INVALID_LOCATION_ID", label="location ID")
+    return sync_location_notification_groups(
+        db,
+        company.id,
+        location_uuid,
+        payload.group_ids,
+    )
+
+
+@router.delete("/notification-groups/{group_id}", status_code=204)
+def delete_notification_group_route(
+    group_id: str,
+    current_user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    company = _get_company_for_user(db, current_user)
+    group_uuid = _parse_uuid(group_id, code="INVALID_NOTIFICATION_GROUP_ID", label="notification group ID")
+    delete_notification_group(db, company.id, group_uuid)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/flow-runs", response_model=list[FlowRunResponse])
+def list_flow_runs_route(
+    current_user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    company = _get_company_for_user(db, current_user)
+    return list_flow_runs(db, company.id)

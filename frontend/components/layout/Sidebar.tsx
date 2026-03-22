@@ -13,6 +13,7 @@ import {
   MessageSquare,
   Users,
   Zap,
+  BookAudio
 } from "lucide-react"
 import { supabase } from "@/lib/supabase/client"
 import { useUnreadResponses } from "@/components/layout/UnreadResponsesContext"
@@ -86,6 +87,7 @@ const items: NavItem[] = [
       },
     ],
   },
+  { label: "Reports", icon: BookAudio, disabled: true },
   { label: "User Management", icon: Users, disabled: true },
 ]
 

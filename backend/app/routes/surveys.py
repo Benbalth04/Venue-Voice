@@ -17,6 +17,7 @@ from app.models.postgres_model import QuestionType as QuestionTypeORM
 from app.models.postgres_model import SurveyVersion as SurveyVersionORM
 from app.models.postgres_model import SurveyStatus
 from app.models.postgres_model import QuestionTypeSetting as QuestionTypeSettingORM
+from app.models.postgres_model import LocationSurvey as LocationSurveyORM
 from app.schemas.pydantic_model import (
     QuestionTypeResponse,
     SurveyCreate,
@@ -34,13 +35,20 @@ router = APIRouter()
 # ------------------------------------------------------------------
 def _get_valid_question_types(db: Session) -> set[str]:
     """Return set of valid question type strings from question_types table."""
-    rows = db.query(QuestionTypeORM.type).all()
+    rows = db.query(QuestionTypeORM.type).filter(QuestionTypeORM.deleted_at.is_(None)).all()
     return {r[0] for r in rows}
 
 
 def _get_is_numeric_for_type(db: Session, q_type: str) -> bool:
     """Return is_numeric for question type from question_types table."""
-    qt = db.query(QuestionTypeORM).filter(QuestionTypeORM.type == q_type).first()
+    qt = (
+        db.query(QuestionTypeORM)
+        .filter(
+            QuestionTypeORM.type == q_type,
+            QuestionTypeORM.deleted_at.is_(None),
+        )
+        .first()
+    )
     return qt.is_numeric if qt else False
 
 
@@ -49,7 +57,12 @@ def _get_is_numeric_for_type(db: Session, q_type: str) -> bool:
 # ------------------------------------------------------------------
 def _load_question_type_schemas(db: Session) -> dict[str, list[dict[str, Any]]]:
     """Load question type settings definitions from DB for validation."""
-    rows = db.query(QuestionTypeSettingORM).order_by(QuestionTypeSettingORM.question_type).all()
+    rows = (
+        db.query(QuestionTypeSettingORM)
+        .filter(QuestionTypeSettingORM.deleted_at.is_(None))
+        .order_by(QuestionTypeSettingORM.question_type)
+        .all()
+    )
     by_type: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
         by_type.setdefault(r.question_type, []).append({
@@ -153,7 +166,14 @@ def _get_user_company(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db_connection),
 ) -> CompanyORM:
-    company = db.query(CompanyORM).filter(CompanyORM.owner_user_id == current_user.id).first()
+    company = (
+        db.query(CompanyORM)
+        .filter(
+            CompanyORM.owner_user_id == current_user.id,
+            CompanyORM.deleted_at.is_(None),
+        )
+        .first()
+    )
     if not company:
         raise NotFoundError(code="COMPANY_NOT_FOUND", message="Company not found for user")
     return company
@@ -196,7 +216,14 @@ def _get_survey_or_404(survey_id: str, user: Any, db: Session, company_id = None
         sid = uuid.UUID(survey_id)
     except ValueError:
         raise ValidationError(code="INVALID_SURVEY_ID", message="Invalid survey ID")
-    survey = db.query(SurveyORM).filter(SurveyORM.id == sid).first()
+    survey = (
+        db.query(SurveyORM)
+        .filter(
+            SurveyORM.id == sid,
+            SurveyORM.deleted_at.is_(None),
+        )
+        .first()
+    )
     if not survey:
         raise NotFoundError(code="SURVEY_NOT_FOUND", message="Survey not found")
     if survey.company_id != company_id:
@@ -211,12 +238,20 @@ def _get_last_edited_by(survey_id: uuid.UUID, latest_version: int, current_user_
         .filter(
             SurveyVersionORM.survey_id == survey_id,
             SurveyVersionORM.version_number == latest_version,
+            SurveyVersionORM.deleted_at.is_(None),
         )
         .first()
     )
     if not latest_sv or not latest_sv.created_by:
         return None
-    editor = db.query(UserORM).filter(UserORM.id == latest_sv.created_by).first()
+    editor = (
+        db.query(UserORM)
+        .filter(
+            UserORM.id == latest_sv.created_by,
+            UserORM.deleted_at.is_(None),
+        )
+        .first()
+    )
 
     if not editor:
         return None
@@ -229,7 +264,10 @@ def _get_last_edited_by(survey_id: uuid.UUID, latest_version: int, current_user_
 def _get_latest_version_or_404(survey_id: uuid.UUID, db: Session) -> SurveyVersionORM:
     sv = (
         db.query(SurveyVersionORM)
-        .filter(SurveyVersionORM.survey_id == survey_id)
+        .filter(
+            SurveyVersionORM.survey_id == survey_id,
+            SurveyVersionORM.deleted_at.is_(None),
+        )
         .order_by(SurveyVersionORM.version_number.desc())
         .first()
     )
@@ -246,7 +284,12 @@ def list_question_types(
     db: Session = Depends(get_db_connection),
 ):
     """Return all question types from the question_types table."""
-    rows = db.query(QuestionTypeORM).order_by(QuestionTypeORM.category, QuestionTypeORM.type).all()
+    rows = (
+        db.query(QuestionTypeORM)
+        .filter(QuestionTypeORM.deleted_at.is_(None))
+        .order_by(QuestionTypeORM.category, QuestionTypeORM.type)
+        .all()
+    )
     return [
         QuestionTypeResponse(
             type=qt.type,
@@ -273,7 +316,10 @@ def list_surveys(
 
     q = (
         db.query(SurveyORM)
-        .filter(SurveyORM.company_id == company_id)
+        .filter(
+            SurveyORM.company_id == company_id,
+            SurveyORM.deleted_at.is_(None),
+        )
     )
     if status == "active":
         q = q.filter(SurveyORM.status == SurveyStatus.active)
@@ -344,6 +390,7 @@ def create_survey(
         .filter(
             SurveyORM.company_id == company_id,
             SurveyORM.name == title,
+            SurveyORM.deleted_at.is_(None),
         )
         .first()
     )
@@ -466,6 +513,7 @@ def update_survey_meta(
                 SurveyORM.company_id == company.id,
                 SurveyORM.name == new_title,
                 SurveyORM.id != survey.id,
+                SurveyORM.deleted_at.is_(None),
             )
             .first()
         )
@@ -540,6 +588,14 @@ def unpublish_survey(
             status_code=422,
         )
     survey.status = SurveyStatus.draft
+    (
+        db.query(LocationSurveyORM)
+        .filter(
+            LocationSurveyORM.survey_id == survey.id,
+            LocationSurveyORM.deleted_at.is_(None),
+        )
+        .update({"is_active": False}, synchronize_session=False)
+    )
     survey.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(survey)
@@ -599,6 +655,7 @@ def duplicate_survey(
             .filter(
                 SurveyORM.company_id == company_id,
                 SurveyORM.name == candidate,
+                SurveyORM.deleted_at.is_(None),
             )
             .first()
         )

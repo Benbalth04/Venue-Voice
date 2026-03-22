@@ -1,5 +1,6 @@
 -- Enable UUID support
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 --------------------------------------------------
 -- USERS
@@ -11,7 +12,8 @@ CREATE TABLE users (
     first_name TEXT NOT NULL,
     last_name TEXT NOT NULL,
     onboarding_complete BOOLEAN DEFAULT FALSE NOT NULL,
-    created_at TIMESTAMP DEFAULT NOW()
+    created_at TIMESTAMP DEFAULT NOW(),
+    deleted_at TIMESTAMP NULL
 );
 
 --------------------------------------------------
@@ -27,7 +29,8 @@ CREATE TABLE companies (
     location_count INTEGER,
     how_heard TEXT,
     thank_you_message TEXT,
-    created_at TIMESTAMP DEFAULT NOW()
+    created_at TIMESTAMP DEFAULT NOW(),
+    deleted_at TIMESTAMP NULL
 );
 
 --------------------------------------------------
@@ -44,6 +47,7 @@ CREATE TABLE locations (
     google_business_url TEXT,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
+    deleted_at TIMESTAMP NULL,
     UNIQUE(company_id, name)
 );
 
@@ -64,11 +68,32 @@ CREATE TABLE surveys (
     latest_version INTEGER NOT NULL DEFAULT 1,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
+    deleted_at TIMESTAMP NULL,
     UNIQUE(company_id, name)
 );
 
 CREATE INDEX idx_surveys_company_id
 ON surveys(company_id);
+
+--------------------------------------------------
+-- SURVEY VERSIONS
+--------------------------------------------------
+
+CREATE TABLE location_surveys (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    location_id UUID NOT NULL REFERENCES locations(id),
+    survey_id UUID NOT NULL REFERENCES surveys(id),
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    start_date TIMESTAMP NOT NULL DEFAULT NOW(),
+    end_date TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    deleted_at TIMESTAMP NULL,
+    CONSTRAINT unique_location_survey UNIQUE (location_id, survey_id)
+);
+
+CREATE INDEX idx_location_surveys_location_id ON location_surveys(location_id);
+CREATE INDEX idx_location_surveys_survey_id ON location_surveys(survey_id);
 
 --------------------------------------------------
 -- SURVEY VERSIONS
@@ -82,6 +107,7 @@ CREATE TABLE survey_versions (
     created_by UUID NULL REFERENCES users(id) ON DELETE SET NULL,
     created_at TIMESTAMP DEFAULT NOW(),
     theme_settings JSONB,
+    deleted_at TIMESTAMP NULL,
     UNIQUE(survey_id, version_number)
 );
 
@@ -96,7 +122,8 @@ CREATE TABLE question_types (
     category TEXT NOT NULL,
     label TEXT NOT NULL,
     is_numeric BOOLEAN NOT NULL DEFAULT FALSE, 
-    analyse_with_ai BOOLEAN NOT NULL DEFAULT FALSE
+    analyse_with_ai BOOLEAN NOT NULL DEFAULT FALSE,
+    deleted_at TIMESTAMP NULL
 );
 
 --------------------------------------------------
@@ -112,6 +139,7 @@ CREATE TABLE IF NOT EXISTS question_type_settings (
     default_value TEXT,
     allowed_values JSONB,
     validation_rules JSONB,
+    deleted_at TIMESTAMP NULL,
     UNIQUE(question_type, setting_key)
 );
 
@@ -128,7 +156,8 @@ CREATE TABLE questions (
     question_type TEXT NOT NULL REFERENCES question_types(type) ON DELETE RESTRICT,
     config JSONB,
     position INTEGER NOT NULL,
-    is_numeric BOOLEAN NOT NULL DEFAULT FALSE
+    is_numeric BOOLEAN NOT NULL DEFAULT FALSE,
+    deleted_at TIMESTAMP NULL
 );
 
 CREATE INDEX idx_questions_survey_version
@@ -143,14 +172,15 @@ CREATE TABLE qr_codes (
     company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
     title TEXT NOT NULL UNIQUE,
     is_active BOOLEAN DEFAULT TRUE NOT NULL,
-    survey_id UUID NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
-    location_id UUID REFERENCES locations(id) ON DELETE SET NULL,
+    location_survey_id UUID NOT NULL REFERENCES location_surveys(id),
+    location_id UUID NOT NULL REFERENCES locations(id),
     created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    updated_at TIMESTAMP DEFAULT NOW(),
+    deleted_at TIMESTAMP NULL
 );
 
 CREATE INDEX idx_qr_codes_company_id ON qr_codes(company_id);
-CREATE INDEX idx_qr_codes_survey_id ON qr_codes(survey_id);
+CREATE INDEX idx_qr_codes_location_survey_id ON qr_codes(location_survey_id);
 CREATE INDEX idx_qr_codes_location_id ON qr_codes(location_id);
 CREATE INDEX idx_qr_codes_title ON qr_codes(title);
 
@@ -164,7 +194,8 @@ CREATE TABLE location_snapshots (
     name TEXT NOT NULL,
     state TEXT,
     country TEXT,
-    created_at TIMESTAMP DEFAULT NOW()
+    created_at TIMESTAMP DEFAULT NOW(),
+    deleted_at TIMESTAMP NULL
 );
 
 CREATE INDEX idx_location_snapshots_location_id ON location_snapshots(location_id);
@@ -181,7 +212,8 @@ CREATE TABLE scan_events (
     scanned_at TIMESTAMP DEFAULT NOW(),
     ip_address TEXT,
     user_agent TEXT,
-    session_id UUID
+    session_id UUID,
+    deleted_at TIMESTAMP NULL
 );
 
 CREATE INDEX idx_scan_events_qr_code_id ON scan_events(qr_code_id);
@@ -205,7 +237,8 @@ CREATE TABLE survey_sessions (
     abandoned BOOLEAN NOT NULL DEFAULT FALSE,
     device_type TEXT,
     browser TEXT,
-    hashed_ip_address TEXT
+    hashed_ip_address TEXT,
+    deleted_at TIMESTAMP NULL
 );
 
 CREATE INDEX idx_survey_sessions_scan_id ON survey_sessions(scan_id);
@@ -221,7 +254,8 @@ CREATE TABLE IF NOT EXISTS survey_redirect_idempotency (
     scan_id UUID NOT NULL REFERENCES scan_events(id) ON DELETE CASCADE,
     session_id UUID NOT NULL REFERENCES survey_sessions(id) ON DELETE CASCADE,
     redirect_url TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT NOW()
+    created_at TIMESTAMP DEFAULT NOW(),
+    deleted_at TIMESTAMP NULL
 );
 
 --------------------------------------------------
@@ -238,7 +272,8 @@ CREATE TABLE survey_responses (
     time_taken_seconds INTEGER,
     device_type TEXT,
     browser TEXT,
-    hashed_ip_address TEXT
+    hashed_ip_address TEXT,
+    deleted_at TIMESTAMP NULL
 );
 
 CREATE INDEX idx_survey_responses_session_id ON survey_responses(session_id);
@@ -255,6 +290,7 @@ CREATE TABLE survey_response_answers (
     text_value TEXT,
     numeric_value NUMERIC,
     created_at TIMESTAMP DEFAULT NOW(),
+    deleted_at TIMESTAMP NULL,
     CHECK (
         (text_value IS NOT NULL AND numeric_value IS NULL)
         OR (text_value IS NULL AND numeric_value IS NOT NULL)
@@ -275,53 +311,165 @@ CREATE TABLE response_reads (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     response_id UUID NOT NULL REFERENCES survey_responses(id) ON DELETE CASCADE,
     read_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMP NULL,
     UNIQUE(user_id, response_id)
 );
 
 CREATE INDEX idx_response_reads_user_response
 ON response_reads(user_id, response_id);
 
--- LOGIC RULES / CONDITIONS / EVENTS
+-- RULES / FLOWS / NOTIFICATION GROUPS
 --------------------------------------------------
-CREATE TABLE logic_rules (
+CREATE TABLE rules (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    survey_id UUID NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
+    company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     description VARCHAR(240),
-    enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    action_type TEXT NOT NULL DEFAULT 'none',
+    operator TEXT NOT NULL DEFAULT 'AND' CHECK (operator IN ('AND', 'OR')),
+    survey_id UUID NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
     created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    updated_at TIMESTAMP DEFAULT NOW(),
+    deleted_at TIMESTAMP NULL
 );
 
-CREATE INDEX idx_logic_rules_survey_id ON logic_rules(survey_id);
+CREATE INDEX idx_rules_company_id ON rules(company_id);
+CREATE INDEX idx_rules_survey_id ON rules(survey_id);
+CREATE UNIQUE INDEX uq_rules_survey_name_active
+ON rules(survey_id, LOWER(name))
+WHERE deleted_at IS NULL;
 
-CREATE TABLE logic_conditions (
+CREATE TABLE rule_groups (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    rule_id UUID NOT NULL REFERENCES logic_rules(id) ON DELETE CASCADE,
-    question_id UUID REFERENCES questions(id) ON DELETE SET NULL,
-    operator TEXT NOT NULL,
-    threshold_value FLOAT,
-    logical_connector TEXT NOT NULL DEFAULT 'AND' CHECK (logical_connector IN ('AND', 'OR')),
-    parent_condition_id UUID REFERENCES logic_conditions(id) ON DELETE CASCADE,
-    position INTEGER NOT NULL DEFAULT 0
+    rule_id UUID NOT NULL REFERENCES rules(id) ON DELETE CASCADE,
+    operator TEXT NOT NULL CHECK (operator IN ('AND', 'OR')),
+    created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE INDEX idx_logic_conditions_rule_id ON logic_conditions(rule_id);
-CREATE INDEX idx_logic_conditions_question_id ON logic_conditions(question_id);
-CREATE INDEX idx_logic_conditions_parent_id ON logic_conditions(parent_condition_id);
+CREATE INDEX idx_rule_groups_rule_id ON rule_groups(rule_id);
 
-CREATE TABLE logic_events (
+CREATE TABLE rule_conditions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    survey_response_id UUID NOT NULL REFERENCES survey_responses(id) ON DELETE CASCADE,
-    rule_id UUID NOT NULL REFERENCES logic_rules(id) ON DELETE CASCADE,
-    action_type TEXT NOT NULL DEFAULT 'none',
+    rule_id UUID NOT NULL REFERENCES rules(id) ON DELETE CASCADE,
+    condition_type TEXT NOT NULL CHECK (condition_type IN ('rating', 'sentiment', 'not_empty')),
+    question_id UUID NULL REFERENCES questions(id) ON DELETE SET NULL,
+    operator TEXT NULL CHECK (operator IS NULL OR operator IN ('lt', 'lte', 'eq', 'gte', 'gt', 'is')),
+    value TEXT NULL,
+    group_id UUID NULL REFERENCES rule_groups(id) ON DELETE SET NULL,
     created_at TIMESTAMP DEFAULT NOW(),
-    UNIQUE (survey_response_id, rule_id)
+    deleted_at TIMESTAMP NULL
 );
 
-CREATE INDEX idx_logic_events_response_id ON logic_events(survey_response_id);
-CREATE INDEX idx_logic_events_rule_id ON logic_events(rule_id);
+CREATE INDEX idx_rule_conditions_rule_id ON rule_conditions(rule_id);
+CREATE INDEX idx_rule_conditions_question_id ON rule_conditions(question_id);
+CREATE INDEX idx_rule_conditions_group_id ON rule_conditions(group_id);
+
+CREATE TABLE notification_groups (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    deleted_at TIMESTAMP NULL
+);
+
+CREATE INDEX idx_notification_groups_company_id ON notification_groups(company_id);
+CREATE UNIQUE INDEX uq_notification_groups_company_name_active
+ON notification_groups(company_id, LOWER(name))
+WHERE deleted_at IS NULL;
+
+CREATE TABLE notification_group_members (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    group_id UUID NOT NULL REFERENCES notification_groups(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    deleted_at TIMESTAMP NULL
+);
+
+CREATE INDEX idx_notification_group_members_group_id ON notification_group_members(group_id);
+
+CREATE TABLE location_notification_groups (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+    group_id UUID NOT NULL REFERENCES notification_groups(id) ON DELETE CASCADE,
+    UNIQUE(location_id, group_id)
+);
+
+CREATE INDEX idx_location_notification_groups_location_id ON location_notification_groups(location_id);
+CREATE INDEX idx_location_notification_groups_group_id ON location_notification_groups(group_id);
+
+CREATE TABLE flows (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description VARCHAR(240),
+    is_active BOOLEAN DEFAULT TRUE,
+    survey_id UUID NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    deleted_at TIMESTAMP NULL
+);
+
+CREATE INDEX idx_flows_company_id ON flows(company_id);
+CREATE INDEX idx_flows_survey_id ON flows(survey_id);
+CREATE UNIQUE INDEX uq_flows_company_name_active
+ON flows(company_id, LOWER(name))
+WHERE deleted_at IS NULL;
+
+CREATE TABLE flow_location_surveys (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    flow_id UUID NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+    location_survey_id UUID NOT NULL REFERENCES location_surveys(id) ON DELETE CASCADE,
+    UNIQUE(flow_id, location_survey_id)
+);
+
+CREATE INDEX idx_flow_location_surveys_flow_id ON flow_location_surveys(flow_id);
+CREATE INDEX idx_flow_location_surveys_location_survey_id ON flow_location_surveys(location_survey_id);
+
+CREATE TABLE flow_nodes (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    flow_id UUID NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+    parent_id UUID NULL REFERENCES flow_nodes(id) ON DELETE CASCADE,
+    node_type TEXT NOT NULL CHECK (node_type IN ('rule', 'branch', 'action')),
+    rule_id UUID NULL REFERENCES rules(id) ON DELETE RESTRICT,
+    branch_type TEXT NULL CHECK (branch_type IS NULL OR branch_type IN ('TRUE', 'FALSE')),
+    action_type TEXT NULL CHECK (action_type IS NULL OR action_type IN ('redirect', 'email')),
+    action_config JSONB NULL,
+    position INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_flow_nodes_flow_id ON flow_nodes(flow_id);
+CREATE INDEX idx_flow_nodes_parent_id ON flow_nodes(parent_id);
+CREATE INDEX idx_flow_nodes_rule_id ON flow_nodes(rule_id);
+
+CREATE TABLE flow_runs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    flow_id UUID NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+    response_id UUID NULL REFERENCES survey_responses(id) ON DELETE SET NULL,
+    success BOOLEAN NOT NULL,
+    location_survey_id UUID NULL REFERENCES location_surveys(id) ON DELETE SET NULL,
+    qr_code_id UUID NULL REFERENCES qr_codes(id) ON DELETE SET NULL,
+    execution_trace JSONB NOT NULL,
+    action_executed TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_flow_runs_company_id ON flow_runs(company_id);
+CREATE INDEX idx_flow_runs_flow_id ON flow_runs(flow_id);
+CREATE INDEX idx_flow_runs_location_survey_id ON flow_runs(location_survey_id);
+
+CREATE TABLE email_events (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    flow_run_id UUID NULL REFERENCES flow_runs(id) ON DELETE SET NULL,
+    recipient_email TEXT,
+    status TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_email_events_company_id ON email_events(company_id);
+CREATE INDEX idx_email_events_flow_run_id ON email_events(flow_run_id);
 
 --------------------------------------------------
 -- AI ANALYSIS
@@ -357,6 +505,7 @@ CREATE TABLE ai_analysis (
     error TEXT,
 
     created_at TIMESTAMP DEFAULT NOW(),
+    deleted_at TIMESTAMP NULL,
 
     UNIQUE (survey_response_id, question_id)
 );
@@ -444,20 +593,23 @@ INSERT INTO question_type_settings (question_type, setting_key, setting_label, s
 ('phone', 'placeholder', 'Placeholder', 'string', FALSE, '+61 400 000 000', NULL, NULL)
 ON CONFLICT (question_type, setting_key) DO NOTHING;
 
-INSERT INTO users (id, email, first_name, last_name, onboarding_complete, created_at) VALUES
-('8567b7dc-6049-415e-97d8-740a6483c1b6', 'benbalthes@gmail.com', 'Ben', 'Balthes', true, '2026-03-15 05:56:39.091809');
+INSERT INTO users (id, email, first_name, last_name, onboarding_complete, created_at, deleted_at) VALUES
+('8567b7dc-6049-415e-97d8-740a6483c1b6', 'benbalthes@gmail.com', 'Ben', 'Balthes', true, '2026-03-15 05:56:39.091809', NULL);
 
-INSERT INTO companies (id, owner_user_id, name, primary_industry, company_size, location_count, how_heard, thank_you_message, created_at) VALUES
-('02238978-8b23-408a-a5e4-a0399578229a', '8567b7dc-6049-415e-97d8-740a6483c1b6', 'Test Company', NULL, NULL, 3, NULL, NULL, '2026-03-15 05:56:49.03126');
+INSERT INTO companies (id, owner_user_id, name, primary_industry, company_size, location_count, how_heard, thank_you_message, created_at, deleted_at) VALUES
+('02238978-8b23-408a-a5e4-a0399578229a', '8567b7dc-6049-415e-97d8-740a6483c1b6', 'Test Company', NULL, NULL, 3, NULL, NULL, '2026-03-15 05:56:49.03126', NULL);
 
-INSERT INTO locations (id, company_id, name, is_active, state, country, google_business_url, created_at, updated_at) VALUES
-('87ff1d9a-d62a-425f-a378-06bab8438eb7', '02238978-8b23-408a-a5e4-a0399578229a', 'Test Venue', true, NULL, NULL, NULL, '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126');
+INSERT INTO locations (id, company_id, name, is_active, state, country, google_business_url, created_at, updated_at, deleted_at) VALUES
+('87ff1d9a-d62a-425f-a378-06bab8438eb7', '02238978-8b23-408a-a5e4-a0399578229a', 'Test Venue', true, NULL, NULL, NULL, '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126', NULL);
 
-INSERT INTO surveys (id, company_id, name, status, latest_version, created_at, updated_at) VALUES
-('a3be873f-0271-48e4-84a1-ba8b26f15d14', '02238978-8b23-408a-a5e4-a0399578229a', 'Survey 1', 'active', 1, '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126');
+INSERT INTO surveys (id, company_id, name, status, latest_version, created_at, updated_at, deleted_at) VALUES
+('a3be873f-0271-48e4-84a1-ba8b26f15d14', '02238978-8b23-408a-a5e4-a0399578229a', 'Survey 1', 'active', 1, '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126', NULL);
 
-INSERT INTO qr_codes (id, company_id, title, is_active, survey_id, location_id, created_at, updated_at) VALUES
-('c172ef94-9f1d-4308-aa11-715d668a8686', '02238978-8b23-408a-a5e4-a0399578229a', 'Default QR Code', true, 'a3be873f-0271-48e4-84a1-ba8b26f15d14', '87ff1d9a-d62a-425f-a378-06bab8438eb7', '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126');
+INSERT INTO location_surveys (id, location_id, survey_id, is_active, start_date, end_date, created_at, updated_at, deleted_at) VALUES
+('bf0c4580-ebee-4a2e-a7f0-14663d3316c0', '87ff1d9a-d62a-425f-a378-06bab8438eb7', 'a3be873f-0271-48e4-84a1-ba8b26f15d14', true, '2026-03-15 05:56:49.03126', NULL, '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126', NULL);
+
+INSERT INTO qr_codes (id, company_id, title, is_active, location_survey_id, location_id, created_at, updated_at, deleted_at) VALUES
+('c172ef94-9f1d-4308-aa11-715d668a8686', '02238978-8b23-408a-a5e4-a0399578229a', 'Default QR Code', true, 'bf0c4580-ebee-4a2e-a7f0-14663d3316c0', '87ff1d9a-d62a-425f-a378-06bab8438eb7', '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126', NULL);
 
 INSERT INTO survey_versions (id, survey_id, version_number, schema_json, created_by, created_at, theme_settings) VALUES
 (
@@ -537,7 +689,7 @@ $$::jsonb
 INSERT INTO questions (id, survey_version_id, question_key, question_text, question_type, config, position, is_numeric) VALUES
 (
     '80b07b18-1d33-424d-a73d-37eeb06139f8',
-    'a3be873f-0271-48e4-84a1-ba8b26f15d14', 
+    '9d781c15-9b16-4920-bfee-9577fd19320b', 
     '53fc5573-5d03-4ca1-8c15-0f70bc0b177f', 
     'How would you rate our service?',
     'star', 

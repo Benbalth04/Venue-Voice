@@ -25,6 +25,10 @@ class Base(DeclarativeBase):
     pass
 
 
+class SoftDeleteMixin:
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
+
 # --------------------------------------------------
 # ENUMS
 # --------------------------------------------------
@@ -38,7 +42,7 @@ class SurveyStatus(str, enum.Enum):
 # --------------------------------------------------
 # USERS
 # --------------------------------------------------
-class User(Base):
+class User(SoftDeleteMixin, Base):
     __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -64,7 +68,7 @@ class User(Base):
 # COMPANIES
 # --------------------------------------------------
 
-class Company(Base):
+class Company(SoftDeleteMixin, Base):
     __tablename__ = "companies"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -101,7 +105,7 @@ class Company(Base):
 # LOCATIONS
 # --------------------------------------------------
 
-class Location(Base):
+class Location(SoftDeleteMixin, Base):
     __tablename__ = "locations"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -126,13 +130,19 @@ class Location(Base):
     )
 
     company = relationship("Company", back_populates="locations")
+    location_surveys = relationship("LocationSurvey", back_populates="location")
+    notification_group_links = relationship(
+        "LocationNotificationGroup",
+        back_populates="location",
+        cascade="all, delete-orphan",
+    )
 
 
 # --------------------------------------------------
 # LOCATION SNAPSHOTS
 # --------------------------------------------------
 
-class LocationSnapshot(Base):
+class LocationSnapshot(SoftDeleteMixin, Base):
     __tablename__ = "location_snapshots"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -156,7 +166,7 @@ class LocationSnapshot(Base):
 # SURVEYS
 # --------------------------------------------------
 
-class Survey(Base):
+class Survey(SoftDeleteMixin, Base):
     __tablename__ = "surveys"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -184,13 +194,16 @@ class Survey(Base):
     )
 
     company = relationship("Company", back_populates="surveys")
+    location_surveys = relationship("LocationSurvey", back_populates="survey")
+    rules = relationship("Rule", back_populates="survey", cascade="all, delete-orphan")
+    flows = relationship("Flow", back_populates="survey", cascade="all, delete-orphan")
 
 
 # --------------------------------------------------
 # SURVEY VERSIONS
 # --------------------------------------------------
 
-class SurveyVersion(Base):
+class SurveyVersion(SoftDeleteMixin, Base):
     __tablename__ = "survey_versions"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -218,7 +231,7 @@ class SurveyVersion(Base):
 # --------------------------------------------------
 # QUESTION TYPES
 # --------------------------------------------------
-class QuestionType(Base):
+class QuestionType(SoftDeleteMixin, Base):
     __tablename__ = "question_types"
 
     type: Mapped[str] = mapped_column(String, primary_key=True)
@@ -231,7 +244,7 @@ class QuestionType(Base):
 # --------------------------------------------------
 # QUESTION TYPE SETTINGS (defines settings per question type)
 # --------------------------------------------------
-class QuestionTypeSetting(Base):
+class QuestionTypeSetting(SoftDeleteMixin, Base):
     __tablename__ = "question_type_settings"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -258,7 +271,7 @@ class QuestionTypeSetting(Base):
 # QUESTIONS
 # --------------------------------------------------
 
-class Question(Base):
+class Question(SoftDeleteMixin, Base):
     __tablename__ = "questions"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -283,10 +296,12 @@ class Question(Base):
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     is_numeric: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    rule_conditions = relationship("RuleCondition", back_populates="question")
+
 # --------------------------------------------------
 # ANSWERS (legacy responses - one row per question)
 # --------------------------------------------------
-class Answer(Base):
+class Answer(SoftDeleteMixin, Base):
     __tablename__ = "answers"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -320,9 +335,62 @@ class Answer(Base):
 
 
 # --------------------------------------------------
+# LOCATION SURVEYS
+# --------------------------------------------------
+class LocationSurvey(SoftDeleteMixin, Base):
+    __tablename__ = "location_surveys"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.uuid_generate_v4()
+    )
+    location_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("locations.id"),
+        nullable=False,
+        index=True,
+    )
+    survey_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("surveys.id"),
+        nullable=False,
+        index=True,
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    start_date: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+    end_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("location_id", "survey_id", name="unique_location_survey"),
+    )
+
+    location: Mapped["Location"] = relationship("Location", back_populates="location_surveys", lazy="joined")
+    survey: Mapped["Survey"] = relationship("Survey", back_populates="location_surveys", lazy="joined")
+    qr_codes = relationship("QRCode", back_populates="location_survey")
+    flow_links = relationship(
+        "FlowLocationSurvey",
+        back_populates="location_survey",
+        cascade="all, delete-orphan",
+    )
+    flow_runs = relationship("FlowRun", back_populates="location_survey")
+
+    def is_effectively_active(self, now: datetime) -> bool:
+        if not self.is_active:
+            return False
+        if now < self.start_date:
+            return False
+        if self.end_date is not None and now > self.end_date:
+            return False
+        return True
+
+
+# --------------------------------------------------
 # QR CODES
 # --------------------------------------------------
-class QRCode(Base):
+class QRCode(SoftDeleteMixin, Base):
     __tablename__ = "qr_codes"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -338,31 +406,38 @@ class QRCode(Base):
     )
     title: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    survey_id: Mapped[uuid.UUID] = mapped_column(
+    location_survey_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("surveys.id", ondelete="CASCADE"),
+        ForeignKey("location_surveys.id"),
         nullable=False,
         index=True
     )
-    location_id: Mapped[uuid.UUID | None] = mapped_column(
+    location_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("locations.id", ondelete="SET NULL"),
-        nullable=True,
+        ForeignKey("locations.id"),
+        nullable=False,
         index=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
     # Relationships
-    survey: Mapped["Survey"] = relationship("Survey", lazy="joined", uselist=False, foreign_keys=[survey_id])
+    location_survey: Mapped["LocationSurvey"] = relationship(
+        "LocationSurvey",
+        lazy="joined",
+        uselist=False,
+        foreign_keys=[location_survey_id],
+        back_populates="qr_codes",
+    )
     location: Mapped["Location"] = relationship("Location", lazy="joined", uselist=False, foreign_keys=[location_id])
+    flow_runs = relationship("FlowRun", back_populates="qr_code")
 
 
 # --------------------------------------------------
 # SCAN EVENTS
 # --------------------------------------------------
 
-class ScanEvent(Base):
+class ScanEvent(SoftDeleteMixin, Base):
     __tablename__ = "scan_events"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -394,7 +469,7 @@ class ScanEvent(Base):
     session_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
 
 
-class SurveySession(Base):
+class SurveySession(SoftDeleteMixin, Base):
     __tablename__ = "survey_sessions"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -440,7 +515,7 @@ class SurveySession(Base):
     hashed_ip_address: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
-class SurveyResponse(Base):
+class SurveyResponse(SoftDeleteMixin, Base):
     __tablename__ = "survey_responses"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -479,11 +554,13 @@ class SurveyResponse(Base):
     browser: Mapped[str | None] = mapped_column(String, nullable=True)
     hashed_ip_address: Mapped[str | None] = mapped_column(String, nullable=True)
 
+    flow_runs = relationship("FlowRun", back_populates="response")
+
 
 # --------------------------------------------------
 # SURVEY RESPONSE ANSWERS (normalized answers for public survey flow)
 # --------------------------------------------------
-class SurveyResponseAnswer(Base):
+class SurveyResponseAnswer(SoftDeleteMixin, Base):
     __tablename__ = "survey_response_answers"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -519,7 +596,7 @@ class SurveyResponseAnswer(Base):
 # --------------------------------------------------
 # AI ANALYSIS (sentiment per survey answer)
 # --------------------------------------------------
-class AIAnalysis(Base):
+class AIAnalysis(SoftDeleteMixin, Base):
     __tablename__ = "ai_analysis"
     __table_args__ = (
         UniqueConstraint(
@@ -588,15 +665,24 @@ class AIAnalysis(Base):
 
 
 # --------------------------------------------------
-# LOGIC RULES / CONDITIONS / EVENTS
+# RULES / FLOWS / NOTIFICATION GROUPS
 # --------------------------------------------------
-class LogicRule(Base):
-    __tablename__ = "logic_rules"
+class Rule(SoftDeleteMixin, Base):
+    __tablename__ = "rules"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         primary_key=True,
         server_default=func.uuid_generate_v4(),
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    operator: Mapped[str] = mapped_column(String, nullable=False, default="AND", server_default="AND")
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     survey_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -604,10 +690,6 @@ class LogicRule(Base):
         nullable=False,
         index=True,
     )
-    name: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[str | None] = mapped_column(String(240), nullable=True)
-    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
-    action_type: Mapped[str] = mapped_column(String, nullable=False, default="none", server_default="none")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
@@ -615,9 +697,14 @@ class LogicRule(Base):
         onupdate=func.now(),
     )
 
+    survey = relationship("Survey", back_populates="rules")
+    conditions = relationship("RuleCondition", back_populates="rule", cascade="all, delete-orphan")
+    groups = relationship("RuleGroup", back_populates="rule", cascade="all, delete-orphan")
+    flow_nodes = relationship("FlowNode", back_populates="rule")
 
-class LogicCondition(Base):
-    __tablename__ = "logic_conditions"
+
+class RuleGroup(Base):
+    __tablename__ = "rule_groups"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -626,36 +713,107 @@ class LogicCondition(Base):
     )
     rule_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("logic_rules.id", ondelete="CASCADE"),
+        ForeignKey("rules.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
+    operator: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    rule = relationship("Rule", back_populates="groups")
+    conditions = relationship("RuleCondition", back_populates="group")
+
+
+class RuleCondition(SoftDeleteMixin, Base):
+    __tablename__ = "rule_conditions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.uuid_generate_v4(),
+    )
+    rule_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("rules.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    condition_type: Mapped[str] = mapped_column(String, nullable=False)
     question_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("questions.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
-    operator: Mapped[str] = mapped_column(String, nullable=False)
-    threshold_value: Mapped[float | None] = mapped_column(Float, nullable=True)
-    logical_connector: Mapped[str] = mapped_column(String, nullable=False, default="AND", server_default="AND")
-    parent_condition_id: Mapped[uuid.UUID | None] = mapped_column(
+    operator: Mapped[str | None] = mapped_column(String, nullable=True)
+    value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    group_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("logic_conditions.id", ondelete="CASCADE"),
+        ForeignKey("rule_groups.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
-    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    rule = relationship("Rule", back_populates="conditions")
+    group = relationship("RuleGroup", back_populates="conditions")
+    question = relationship("Question", back_populates="rule_conditions")
 
 
-class LogicEvent(Base):
-    __tablename__ = "logic_events"
+class NotificationGroup(SoftDeleteMixin, Base):
+    __tablename__ = "notification_groups"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.uuid_generate_v4(),
+    )
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    members = relationship(
+        "NotificationGroupMember",
+        back_populates="group",
+        cascade="all, delete-orphan",
+    )
+    location_links = relationship(
+        "LocationNotificationGroup",
+        back_populates="group",
+        cascade="all, delete-orphan",
+    )
+
+
+class NotificationGroupMember(SoftDeleteMixin, Base):
+    __tablename__ = "notification_group_members"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.uuid_generate_v4(),
+    )
+    group_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("notification_groups.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    email: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    group = relationship("NotificationGroup", back_populates="members")
+
+
+class LocationNotificationGroup(Base):
+    __tablename__ = "location_notification_groups"
     __table_args__ = (
-        UniqueConstraint(
-            "survey_response_id",
-            "rule_id",
-            name="uq_logic_events_response_rule",
-        ),
+        UniqueConstraint("location_id", "group_id", name="uq_location_notification_group"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -663,29 +821,209 @@ class LogicEvent(Base):
         primary_key=True,
         server_default=func.uuid_generate_v4(),
     )
-    survey_response_id: Mapped[uuid.UUID] = mapped_column(
+    location_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("survey_responses.id", ondelete="CASCADE"),
+        ForeignKey("locations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    rule_id: Mapped[uuid.UUID] = mapped_column(
+    group_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("logic_rules.id", ondelete="CASCADE"),
+        ForeignKey("notification_groups.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    action_type: Mapped[str] = mapped_column(String, nullable=False, default="none", server_default="none")
-    created_at: Mapped[datetime] = mapped_column(
+
+    location = relationship("Location", back_populates="notification_group_links")
+    group = relationship("NotificationGroup", back_populates="location_links")
+
+
+class Flow(SoftDeleteMixin, Base):
+    __tablename__ = "flows"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.uuid_generate_v4(),
+    )
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    survey_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("surveys.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         server_default=func.now(),
+        onupdate=func.now(),
     )
+
+    survey = relationship("Survey", back_populates="flows")
+    location_surveys = relationship(
+        "FlowLocationSurvey",
+        back_populates="flow",
+        cascade="all, delete-orphan",
+    )
+    nodes = relationship("FlowNode", back_populates="flow", cascade="all, delete-orphan")
+    runs = relationship("FlowRun", back_populates="flow")
+
+
+class FlowLocationSurvey(Base):
+    __tablename__ = "flow_location_surveys"
+    __table_args__ = (
+        UniqueConstraint("flow_id", "location_survey_id", name="uq_flow_location_survey"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.uuid_generate_v4(),
+    )
+    flow_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("flows.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    location_survey_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("location_surveys.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    flow = relationship("Flow", back_populates="location_surveys")
+    location_survey = relationship("LocationSurvey", back_populates="flow_links")
+
+
+class FlowNode(Base):
+    __tablename__ = "flow_nodes"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.uuid_generate_v4(),
+    )
+    flow_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("flows.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("flow_nodes.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    node_type: Mapped[str] = mapped_column(String, nullable=False)
+    rule_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("rules.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    branch_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    action_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    action_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    flow = relationship("Flow", back_populates="nodes")
+    parent = relationship("FlowNode", remote_side=[id], back_populates="children")
+    children = relationship("FlowNode", back_populates="parent", cascade="all, delete-orphan")
+    rule = relationship("Rule", back_populates="flow_nodes")
+
+
+class FlowRun(Base):
+    __tablename__ = "flow_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.uuid_generate_v4(),
+    )
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    flow_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("flows.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    response_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("survey_responses.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    success: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    location_survey_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("location_surveys.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    qr_code_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("qr_codes.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    execution_trace: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    action_executed: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    flow = relationship("Flow", back_populates="runs")
+    response = relationship("SurveyResponse", back_populates="flow_runs")
+    location_survey = relationship("LocationSurvey", back_populates="flow_runs")
+    qr_code = relationship("QRCode", back_populates="flow_runs")
+    email_events = relationship("EmailEvent", back_populates="flow_run")
+
+
+class EmailEvent(Base):
+    __tablename__ = "email_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.uuid_generate_v4(),
+    )
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    flow_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("flow_runs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    recipient_email: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    flow_run = relationship("FlowRun", back_populates="email_events")
 
 
 # --------------------------------------------------
 # RESPONSE READS (user has viewed response answers)
 # --------------------------------------------------
-class ResponseRead(Base):
+class ResponseRead(SoftDeleteMixin, Base):
     __tablename__ = "response_reads"
 
     id: Mapped[uuid.UUID] = mapped_column(

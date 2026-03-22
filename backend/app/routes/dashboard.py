@@ -9,6 +9,7 @@ from ..db.postgres import get_db_connection
 from ..models.postgres_model import (
     Company as CompanyORM,
     Location as LocationORM,
+    LocationSurvey as LocationSurveyORM,
     QRCode as QRCodeORM,
     SurveyResponse as SurveyResponseORM,
     ScanEvent as ScanEventORM,
@@ -30,7 +31,14 @@ router = APIRouter()
 
 
 def _get_user_company(user: UserORM, db: Session) -> CompanyORM | None:
-    return db.query(CompanyORM).filter(CompanyORM.owner_user_id == user.id).first()
+    return (
+        db.query(CompanyORM)
+        .filter(
+            CompanyORM.owner_user_id == user.id,
+            CompanyORM.deleted_at.is_(None),
+        )
+        .first()
+    )
 
 
 @router.get("/dashboard", response_model=DashboardData)
@@ -57,29 +65,60 @@ def get_dashboard(
         )
 
     # Survey IDs for this company
-    survey_ids = [s.id for s in db.query(SurveyORM.id).filter(SurveyORM.company_id == company.id).all()]
+    survey_ids = [
+        s.id
+        for s in db.query(SurveyORM.id)
+        .filter(
+            SurveyORM.company_id == company.id,
+            SurveyORM.deleted_at.is_(None),
+        )
+        .all()
+    ]
 
     # Survey version IDs for these surveys
     sv_ids = (
-        [r[0] for r in db.query(SurveyVersionORM.id).filter(SurveyVersionORM.survey_id.in_(survey_ids)).all()]
+        [
+            r[0]
+            for r in db.query(SurveyVersionORM.id)
+            .filter(
+                SurveyVersionORM.survey_id.in_(survey_ids),
+                SurveyVersionORM.deleted_at.is_(None),
+            )
+            .all()
+        ]
         if survey_ids
         else []
     )
 
     # Total submissions (responses for company's surveys)
     total_submissions = (
-        db.query(func.count(SurveyResponseORM.id)).filter(SurveyResponseORM.survey_version_id.in_(sv_ids)).scalar()
+        db.query(func.count(SurveyResponseORM.id))
+        .filter(
+            SurveyResponseORM.survey_version_id.in_(sv_ids),
+            SurveyResponseORM.deleted_at.is_(None),
+        )
+        .scalar()
         if sv_ids
         else 0
     ) or 0
 
-    # Total scans (scan_events for QR codes belonging to company's surveys)
+    # Total scans (scan_events for QR codes belonging to company)
     qr_ids = [
         r[0]
-        for r in db.query(QRCodeORM.id).filter(QRCodeORM.survey_id.in_(survey_ids)).all()
+        for r in db.query(QRCodeORM.id)
+        .filter(
+            QRCodeORM.company_id == company.id,
+            QRCodeORM.deleted_at.is_(None),
+        )
+        .all()
     ]
     total_scans = (
-        db.query(func.count(ScanEventORM.id)).filter(ScanEventORM.qr_code_id.in_(qr_ids)).scalar()
+        db.query(func.count(ScanEventORM.id))
+        .filter(
+            ScanEventORM.qr_code_id.in_(qr_ids),
+            ScanEventORM.deleted_at.is_(None),
+        )
+        .scalar()
         if qr_ids
         else 0
     )
@@ -87,7 +126,11 @@ def get_dashboard(
     # Active surveys
     active_surveys_orm = (
         db.query(SurveyORM)
-        .filter(SurveyORM.company_id == company.id, SurveyORM.status == SurveyStatus.active)
+        .filter(
+            SurveyORM.company_id == company.id,
+            SurveyORM.status == SurveyStatus.active,
+            SurveyORM.deleted_at.is_(None),
+        )
         .all()
     )
     active_surveys_count = len(active_surveys_orm)
@@ -99,7 +142,11 @@ def get_dashboard(
         count = (
             db.query(func.count(QuestionORM.id))
             .join(SurveyVersionORM, QuestionORM.survey_version_id == SurveyVersionORM.id)
-            .filter(SurveyVersionORM.survey_id == survey_id)
+            .filter(
+                SurveyVersionORM.survey_id == survey_id,
+                SurveyVersionORM.deleted_at.is_(None),
+                QuestionORM.deleted_at.is_(None),
+            )
             .scalar()
         )
         return count or 0
@@ -117,16 +164,27 @@ def get_dashboard(
     # Active QR codes (with scan count)
     active_qr_orm = (
         db.query(QRCodeORM)
-        .filter(QRCodeORM.survey_id.in_(survey_ids), QRCodeORM.is_active.is_(True))
+        .join(LocationSurveyORM, LocationSurveyORM.id == QRCodeORM.location_survey_id)
+        .filter(
+            QRCodeORM.company_id == company.id,
+            QRCodeORM.is_active.is_(True),
+            QRCodeORM.deleted_at.is_(None),
+            LocationSurveyORM.deleted_at.is_(None),
+        )
         .all()
-        if survey_ids
+        if company
         else []
     )
     active_qr_codes_count = len(active_qr_orm)
 
     def _scan_count(qr_id):
         return (
-            db.query(func.count(ScanEventORM.id)).filter(ScanEventORM.qr_code_id == qr_id).scalar()
+            db.query(func.count(ScanEventORM.id))
+            .filter(
+                ScanEventORM.qr_code_id == qr_id,
+                ScanEventORM.deleted_at.is_(None),
+            )
+            .scalar()
             or 0
         )
 
@@ -134,7 +192,7 @@ def get_dashboard(
         DashboardQRCodeSummary(
             id=q.id,
             title=q.title,
-            survey_id=q.survey_id,
+            survey_id=q.location_survey.survey_id,
             location_id=q.location_id,
             is_active=q.is_active,
             scan_count=_scan_count(q.id),
@@ -142,8 +200,15 @@ def get_dashboard(
         for q in active_qr_orm
     ]
 
-    # Active locations (all locations for company - no active flag in schema)
-    locations_orm = db.query(LocationORM).filter(LocationORM.company_id == company.id).all()
+    locations_orm = (
+        db.query(LocationORM)
+        .filter(
+            LocationORM.company_id == company.id,
+            LocationORM.is_active.is_(True),
+            LocationORM.deleted_at.is_(None),
+        )
+        .all()
+    )
     active_locations_count = len(locations_orm)
     active_locations = [
         DashboardLocationSummary(id=l.id, name=l.name) for l in locations_orm
@@ -156,6 +221,7 @@ def get_dashboard(
             func.count(SurveyResponseORM.id).label("cnt"),
         )
         .filter(SurveyResponseORM.survey_version_id.in_(sv_ids))
+        .filter(SurveyResponseORM.deleted_at.is_(None))
         .group_by(func.date(SurveyResponseORM.completion_datetime))
         .order_by(func.date(SurveyResponseORM.completion_datetime))
         .all()
@@ -174,7 +240,10 @@ def get_dashboard(
                 func.date(ScanEventORM.scanned_at).label("day"),
                 func.count(ScanEventORM.id).label("cnt"),
             )
-            .filter(ScanEventORM.qr_code_id.in_(qr_ids))
+            .filter(
+                ScanEventORM.qr_code_id.in_(qr_ids),
+                ScanEventORM.deleted_at.is_(None),
+            )
             .group_by(func.date(ScanEventORM.scanned_at))
             .order_by(func.date(ScanEventORM.scanned_at))
             .all()
@@ -208,11 +277,22 @@ def get_dashboard_submissions_by_date(
     if not company:
         return []
 
-    survey_ids = [s.id for s in db.query(SurveyORM.id).filter(SurveyORM.company_id == company.id).all()]
+    survey_ids = [
+        s.id
+        for s in db.query(SurveyORM.id)
+        .filter(
+            SurveyORM.company_id == company.id,
+            SurveyORM.deleted_at.is_(None),
+        )
+        .all()
+    ]
     sv_ids = [
         r[0]
         for r in db.query(SurveyVersionORM.id)
-        .filter(SurveyVersionORM.survey_id.in_(survey_ids))
+        .filter(
+            SurveyVersionORM.survey_id.in_(survey_ids),
+            SurveyVersionORM.deleted_at.is_(None),
+        )
         .all()
     ]
 
@@ -225,6 +305,7 @@ def get_dashboard_submissions_by_date(
             SurveyResponseORM.survey_version_id.in_(sv_ids),
             SurveyResponseORM.completion_datetime >= start,
             SurveyResponseORM.completion_datetime <= end,
+            SurveyResponseORM.deleted_at.is_(None),
         )
         .order_by(SurveyResponseORM.completion_datetime)
         .all()

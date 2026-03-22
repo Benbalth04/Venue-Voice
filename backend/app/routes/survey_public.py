@@ -9,12 +9,11 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request, status
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, Request
 
 from ..core.errors.exceptions import ConflictError, NotFoundError, ValidationError
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from ..db.postgres import get_db_connection
 from decimal import Decimal
@@ -23,6 +22,7 @@ from ..models.postgres_model import (
     Company as CompanyORM,
     Location as LocationORM,
     LocationSnapshot as LocationSnapshotORM,
+    LocationSurvey as LocationSurveyORM,
     QRCode as QRCodeORM,
     Question as QuestionORM,
     QuestionType as QuestionTypeORM,
@@ -34,6 +34,7 @@ from ..models.postgres_model import (
     SurveySession as SurveySessionORM,
     SurveyVersion as SurveyVersionORM,
 )
+from ..services.location_survey_service import utc_now, validate_qr_scan_access
 
 router = APIRouter()
 
@@ -233,70 +234,62 @@ def survey_redirect(
         from sqlalchemy import text
         row = db.execute(
             text(
-                "SELECT session_id, redirect_url FROM survey_redirect_idempotency WHERE idempotency_key = :k"
+                """
+                SELECT session_id, redirect_url
+                FROM survey_redirect_idempotency
+                WHERE idempotency_key = :k AND deleted_at IS NULL
+                """
             ),
             {"k": idempotency_key},
         ).first()
         if row:
-            return JSONResponse(
-                status_code=status.HTTP_200_OK,
-                content={
-                    "valid": True,
-                    "redirect_url": row[1],
-                    "session_id": str(row[0]),
-                    "qr_code_id": r,
-                    "survey_version_id": "",  # Not needed for redirect
-                },
-            )
+            return {
+                "valid": True,
+                "redirect_url": row[1],
+                "session_id": str(row[0]),
+                "qr_code_id": r,
+                "survey_version_id": "",
+            }
 
     try:
         qr_uid = uuid.UUID(r)
     except ValueError:
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"valid": False, "error": "Invalid QR code ID"},
-        )
+        raise ValidationError(code="INVALID_QR_CODE_ID", message="Invalid QR code ID")
 
     qr = (
         db.query(QRCodeORM)
-        .filter(QRCodeORM.id == qr_uid, QRCodeORM.is_active.is_(True))
+        .options(
+            joinedload(QRCodeORM.location_survey).joinedload(LocationSurveyORM.location),
+            joinedload(QRCodeORM.location_survey).joinedload(LocationSurveyORM.survey),
+        )
+        .filter(
+            QRCodeORM.id == qr_uid,
+            QRCodeORM.deleted_at.is_(None),
+        )
         .first()
     )
     if not qr:
-        return JSONResponse(
-            status_code=status.HTTP_404_NOT_FOUND,
-            content={"valid": False, "error": "QR code not found or inactive"},
-        )
+        raise NotFoundError(code="QR_CODE_NOT_FOUND", message="QR code not found")
 
-    survey = db.query(SurveyORM).filter(SurveyORM.id == qr.survey_id).first()
-    if not survey or survey.status != "active":
-        return JSONResponse(
-            status_code=status.HTTP_404_NOT_FOUND,
-            content={"valid": False, "error": "Survey not found or inactive"},
-        )
+    location_survey, location, survey = validate_qr_scan_access(qr, utc_now())
 
     sv = (
         db.query(SurveyVersionORM)
         .filter(
             SurveyVersionORM.survey_id == survey.id,
             SurveyVersionORM.version_number == survey.latest_version,
+            SurveyVersionORM.deleted_at.is_(None),
         )
         .first()
     )
     if not sv:
-        return JSONResponse(
-            status_code=status.HTTP_404_NOT_FOUND,
-            content={"valid": False, "error": "Survey version not found"},
-        )
+        raise NotFoundError(code="SURVEY_VERSION_NOT_FOUND", message="Survey version not found")
 
     ip = request.client.host if request.client else None
     ua = request.headers.get("user-agent")
     device_type, browser = _parse_user_agent(ua)
 
-    loc = None
-    if qr.location_id:
-        loc = db.query(LocationORM).filter(LocationORM.id == qr.location_id).first()
-    loc_snap = _create_location_snapshot(db, loc)
+    loc_snap = _create_location_snapshot(db, location)
 
     scan = ScanEventORM(
         qr_code_id=qr.id,
@@ -338,16 +331,13 @@ def survey_redirect(
         )
     db.commit()
 
-    return JSONResponse(
-        status_code=status.HTTP_200_OK,
-        content={
-            "valid": True,
-            "redirect_url": redirect_url,
-            "session_id": str(session.id),
-            "qr_code_id": str(qr.id),
-            "survey_version_id": str(sv.id),
-        },
-    )
+    return {
+        "valid": True,
+        "redirect_url": redirect_url,
+        "session_id": str(session.id),
+        "qr_code_id": str(qr.id),
+        "survey_version_id": str(sv.id),
+    }
 
 
 # --------------------------------------------------
@@ -375,6 +365,7 @@ def get_survey_for_session(
         .filter(
             SurveySessionORM.id == session_uid,
             SurveySessionORM.qr_code_id == qr_uid,
+            SurveySessionORM.deleted_at.is_(None),
         )
         .first()
     )
@@ -383,20 +374,30 @@ def get_survey_for_session(
 
     sv = (
         db.query(SurveyVersionORM)
-        .filter(SurveyVersionORM.id == sess.survey_version_id)
+        .filter(
+            SurveyVersionORM.id == sess.survey_version_id,
+            SurveyVersionORM.deleted_at.is_(None),
+        )
         .first()
     )
     if not sv:
         raise NotFoundError(code="SURVEY_VERSION_NOT_FOUND", message="Survey version not found")
 
+    company = None
+    if sess.company_id:
+        company = (
+            db.query(CompanyORM)
+            .filter(
+                CompanyORM.id == sess.company_id,
+                CompanyORM.deleted_at.is_(None),
+            )
+            .first()
+        )
+
     return {
         "survey_version_id": str(sv.id),
         "schema": sv.schema_json,
-        "company_name": (
-            db.query(CompanyORM).filter(CompanyORM.id == sess.company_id).first().name
-            if sess.company_id
-            else None
-        ),
+        "company_name": company.name if company else None,
     }
 
 
@@ -445,6 +446,7 @@ def submit_survey(
         .filter(
             SurveySessionORM.id == session_uid,
             SurveySessionORM.qr_code_id == qr_uid,
+            SurveySessionORM.deleted_at.is_(None),
         )
         .first()
     )
@@ -453,7 +455,10 @@ def submit_survey(
 
     existing = (
         db.query(SurveyResponseORM)
-        .filter(SurveyResponseORM.session_id == sess.id)
+        .filter(
+            SurveyResponseORM.session_id == sess.id,
+            SurveyResponseORM.deleted_at.is_(None),
+        )
         .first()
     )
     if existing:
@@ -465,7 +470,10 @@ def submit_survey(
     # Load schema to validate compulsory questions
     sv = (
         db.query(SurveyVersionORM)
-        .filter(SurveyVersionORM.id == sess.survey_version_id)
+        .filter(
+            SurveyVersionORM.id == sess.survey_version_id,
+            SurveyVersionORM.deleted_at.is_(None),
+        )
         .first()
     )
     if not sv:
@@ -490,7 +498,10 @@ def submit_survey(
     questions_by_key = {
         str(q.question_key): q
         for q in db.query(QuestionORM)
-        .filter(QuestionORM.survey_version_id == sess.survey_version_id)
+        .filter(
+            QuestionORM.survey_version_id == sess.survey_version_id,
+            QuestionORM.deleted_at.is_(None),
+        )
         .all()
     }
 
@@ -568,11 +579,18 @@ def submit_survey(
     db.commit()
 
     from ..services.ai_analysis_service import run_ai_analysis_for_response
-    from ..services.logic_service import evaluate_logic
+    from ..services.flow_service import (
+        execute_flows_for_response,
+        has_sync_redirect_flow,
+        trigger_flow_execution_in_background,
+    )
 
     saved = (
         db.query(SurveyResponseORM)
-        .filter(SurveyResponseORM.id == response_id)
+        .filter(
+            SurveyResponseORM.id == response_id,
+            SurveyResponseORM.deleted_at.is_(None),
+        )
         .first()
     )
     if saved:
@@ -583,20 +601,61 @@ def submit_survey(
                 "AI sentiment analysis failed after survey submit (response_id=%s)",
                 response_id,
             )
-        try:
-            evaluate_logic(db, response_id)
-        except Exception:
-            logger.exception(
-                "Logic evaluation failed after survey submit (response_id=%s)",
-                response_id,
+        qr = (
+            db.query(QRCodeORM)
+            .filter(
+                QRCodeORM.id == sess.qr_code_id,
+                QRCodeORM.deleted_at.is_(None),
             )
+            .first()
+        )
+        if qr:
+            try:
+                if has_sync_redirect_flow(db, sess.company_id, sv.survey_id, qr.location_survey_id):
+                    workflow_action = execute_flows_for_response(
+                        db,
+                        company_id=sess.company_id,
+                        survey_id=sv.survey_id,
+                        survey_response_id=response_id,
+                        location_survey_id=qr.location_survey_id,
+                        qr_code_id=sess.qr_code_id,
+                    )
+                else:
+                    trigger_flow_execution_in_background(
+                        company_id=sess.company_id,
+                        survey_id=sv.survey_id,
+                        survey_response_id=response_id,
+                        location_survey_id=qr.location_survey_id,
+                        qr_code_id=sess.qr_code_id,
+                    )
+                    workflow_action = None
+            except Exception:
+                logger.exception(
+                    "Flow evaluation failed after survey submit (response_id=%s)",
+                    response_id,
+                )
+                workflow_action = None
+        else:
+            workflow_action = None
+    else:
+        workflow_action = None
 
-    company = db.query(CompanyORM).filter(CompanyORM.id == sess.company_id).first()
+    company = (
+        db.query(CompanyORM)
+        .filter(
+            CompanyORM.id == sess.company_id,
+            CompanyORM.deleted_at.is_(None),
+        )
+        .first()
+    )
     thank_you_message = (company.thank_you_message or "Thank you for your feedback!") if company else "Thank you for your feedback!"
+    redirect_url = f"{FRONTEND_ORIGIN}/survey/thank-you?session={sess.id}&qr={sess.qr_code_id}"
+    if workflow_action and workflow_action.get("type") == "redirect" and workflow_action.get("url"):
+        redirect_url = str(workflow_action["url"])
 
     return {
         "success": True,
-        "redirect_url": f"{FRONTEND_ORIGIN}/survey/thank-you?session={sess.id}&qr={sess.qr_code_id}",
+        "redirect_url": redirect_url,
         "thank_you_message": thank_you_message,
         "company_name": company.name if company else None,
     }
@@ -619,6 +678,7 @@ def abandon_survey(
         .filter(
             SurveySessionORM.id == session_uid,
             SurveySessionORM.qr_code_id == qr_uid,
+            SurveySessionORM.deleted_at.is_(None),
         )
         .first()
     )
@@ -627,7 +687,10 @@ def abandon_survey(
 
     existing = (
         db.query(SurveyResponseORM)
-        .filter(SurveyResponseORM.session_id == sess.id)
+        .filter(
+            SurveyResponseORM.session_id == sess.id,
+            SurveyResponseORM.deleted_at.is_(None),
+        )
         .first()
     )
     if existing:
@@ -660,17 +723,32 @@ def get_thank_you_data(
         .filter(
             SurveyResponseORM.session_id == session_uid,
             SurveyResponseORM.qr_code_id == qr_uid,
+            SurveyResponseORM.deleted_at.is_(None),
         )
         .first()
     )
     if not resp:
         raise NotFoundError(code="SUBMISSION_NOT_FOUND", message="Submission not found")
 
-    sess = db.query(SurveySessionORM).filter(SurveySessionORM.id == resp.session_id).first()
+    sess = (
+        db.query(SurveySessionORM)
+        .filter(
+            SurveySessionORM.id == resp.session_id,
+            SurveySessionORM.deleted_at.is_(None),
+        )
+        .first()
+    )
     if not sess:
         raise NotFoundError(code="SESSION_NOT_FOUND", message="Session not found")
 
-    company = db.query(CompanyORM).filter(CompanyORM.id == sess.company_id).first()
+    company = (
+        db.query(CompanyORM)
+        .filter(
+            CompanyORM.id == sess.company_id,
+            CompanyORM.deleted_at.is_(None),
+        )
+        .first()
+    )
     thank_you_message = (
         (company.thank_you_message or "Thank you for your feedback!")
         if company
