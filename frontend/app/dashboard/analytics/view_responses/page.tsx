@@ -456,6 +456,16 @@ export default function AnalyticsPage() {
 
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
 
+  const handleMarkResponseRead = useCallback(
+    (id: string) => {
+      markResponseRead(id)
+      setRows((prev) =>
+        prev.map((r) => (r.response_id === id ? { ...r, unread: false } : r)),
+      )
+    },
+    [markResponseRead],
+  )
+
   return (
     <div className="flex flex-col gap-4 p-6">
       {/* Page header */}
@@ -682,14 +692,7 @@ export default function AnalyticsPage() {
         <ReviewModal
           responseId={reviewId}
           onClose={() => setReviewId(null)}
-          onMarkRead={(id) => {
-            markResponseRead(id)
-            setRows((prev) =>
-              prev.map((r) =>
-                r.response_id === id ? { ...r, unread: false } : r,
-              ),
-            )
-          }}
+          onMarkRead={handleMarkResponseRead}
         />
       )}
     </div>

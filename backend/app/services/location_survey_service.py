@@ -19,40 +19,55 @@ def ensure_utc(value: datetime) -> datetime:
 
 
 def derive_location_survey_status(location_survey, location, survey, now: datetime) -> str:
+    """Return one of: active, scheduled, inactive, deleted (assignment lifecycle, independent of QR codes)."""
+    if getattr(location_survey, "deleted_at", None) is not None:
+        return "deleted"
+
+    if survey is None or getattr(survey, "deleted_at", None) is not None:
+        return "inactive"
+    if getattr(survey, "status", None) != SurveyStatus.active:
+        return "inactive"
+
+    if location is None or getattr(location, "deleted_at", None) is not None:
+        return "inactive"
+    if not getattr(location, "is_active", False):
+        return "inactive"
+
     current_time = ensure_utc(now)
     start_date = ensure_utc(location_survey.start_date)
     end_date = ensure_utc(location_survey.end_date) if location_survey.end_date is not None else None
 
-    if survey is None or getattr(survey, "deleted_at", None) is not None:
-        return "inactive_survey"
-    if getattr(survey, "status", None) != SurveyStatus.active:
-        return "inactive_survey"
+    if end_date is not None and current_time > end_date:
+        return "inactive"
 
-    if location is None or getattr(location, "deleted_at", None) is not None:
-        return "inactive_location"
-    if not getattr(location, "is_active", False):
-        return "inactive_location"
+    if current_time < start_date:
+        if not getattr(location_survey, "is_active", False):
+            return "inactive"
+        return "scheduled"
 
     if not getattr(location_survey, "is_active", False):
-        return "inactive_assignment"
-    if current_time < start_date:
-        return "not_started"
-    if end_date is not None and current_time > end_date:
-        return "expired"
+        return "inactive"
+
+    return "active"
+
+
+def derive_qr_code_status(qr) -> str:
+    """Return one of: active, inactive, deleted (QR only; not tied to location_survey flags)."""
+    if getattr(qr, "deleted_at", None) is not None:
+        return "deleted"
+    if not getattr(qr, "is_active", False):
+        return "inactive"
     return "active"
 
 
 def validate_qr_scan_access(qr, now: datetime):
+    if getattr(qr, "deleted_at", None) is not None:
+        raise ValidationError(code="QR_CODE_INACTIVE", message="QR code is inactive")
     if not getattr(qr, "is_active", False):
         raise ValidationError(code="QR_CODE_INACTIVE", message="QR code is inactive")
 
     location_survey = getattr(qr, "location_survey", None)
     if location_survey is None or getattr(location_survey, "deleted_at", None) is not None:
-        raise ValidationError(
-            code="LOCATION_SURVEY_INACTIVE",
-            message="This survey is not available right now",
-        )
-    if not getattr(location_survey, "is_active", False):
         raise ValidationError(
             code="LOCATION_SURVEY_INACTIVE",
             message="This survey is not available right now",

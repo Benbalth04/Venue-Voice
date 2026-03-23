@@ -38,11 +38,9 @@ function toIsoOrNull(value: string) {
 function statusBadge(status: LocationSurveyResponse["status"]) {
   const map: Record<LocationSurveyResponse["status"], { label: string; cls: string }> = {
     active: { label: "Active", cls: "bg-emerald-50 text-emerald-700" },
-    inactive_assignment: { label: "Inactive", cls: "bg-zinc-100 text-zinc-600" },
-    inactive_survey: { label: "Inactive (Survey)", cls: "bg-amber-50 text-amber-700" },
-    inactive_location: { label: "Inactive (Location)", cls: "bg-orange-50 text-orange-700" },
-    expired: { label: "Expired", cls: "bg-red-50 text-red-700" },
-    not_started: { label: "Not started", cls: "bg-sky-50 text-sky-700" },
+    scheduled: { label: "Scheduled", cls: "bg-sky-50 text-sky-700" },
+    inactive: { label: "Inactive", cls: "bg-zinc-100 text-zinc-600" },
+    deleted: { label: "Deleted", cls: "bg-red-50 text-red-700" },
   }
   const resolved = map[status]
   return (

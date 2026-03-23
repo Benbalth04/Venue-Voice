@@ -12,6 +12,7 @@ import {
   AlertCircle,
   Save,
 } from "lucide-react"
+import { LoadingSpinner } from "@/components/ui/LoadingSpinner"
 import { supabase } from "@/lib/supabase/client"
 import {
   fetchQuestionTypesPublic,
@@ -64,6 +65,7 @@ export default function SurveyEditorPage() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [pendingDraft, setPendingDraft] = useState<Survey | null>(null)
   const [questionTypes, setQuestionTypes] = useState<QuestionTypeResponse[]>([])
+  const [isMobileViewport, setIsMobileViewport] = useState(false)
 
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const schemaRef = useRef(schema)
@@ -91,6 +93,14 @@ export default function SurveyEditorPage() {
     fetchQuestionTypesPublic()
       .then(setQuestionTypes)
       .catch(() => setQuestionTypes([]))
+  }, [])
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)")
+    const apply = () => setIsMobileViewport(mq.matches)
+    apply()
+    mq.addEventListener("change", apply)
+    return () => mq.removeEventListener("change", apply)
   }, [])
 
   useEffect(() => {
@@ -351,7 +361,7 @@ export default function SurveyEditorPage() {
   if (loading) {
     return (
       <div className="flex min-h-[300px] items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-violet-500" />
+        <LoadingSpinner size="lg" />
       </div>
     )
   }
@@ -360,6 +370,25 @@ export default function SurveyEditorPage() {
     return (
       <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
         {loadError}
+      </div>
+    )
+  }
+
+  if (isMobileViewport) {
+    return (
+      <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 bg-zinc-50 p-6">
+        <div className="max-w-md rounded-2xl border border-zinc-200 bg-white p-6 text-center shadow-sm">
+          <p className="text-sm leading-relaxed text-zinc-700">
+            The survey editor is not available on small screens. Use a larger display to edit surveys.
+          </p>
+          <button
+            type="button"
+            className="mt-5 w-full rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700"
+            onClick={() => router.push("/dashboard/surveys")}
+          >
+            Go to survey overview
+          </button>
+        </div>
       </div>
     )
   }

@@ -38,13 +38,34 @@ export function TrendChart({
     labels: hasData ? points.map((p) => p.label) : [""],
     datasets: [
       {
-        label: title,
         data: hasData ? points.map((p) => p.value) : [0],
         borderColor: "#7C3AED",
-        backgroundColor: "rgba(124, 58, 237, 0.12)",
+        borderWidth: 2,
         tension: 0.4,
         fill: true,
-        pointRadius: hasData ? 3 : 0,
+
+        // Gradient fill
+        backgroundColor: (context: any) => {
+          const chart = context.chart
+          const { ctx, chartArea } = chart
+
+          if (!chartArea) return null
+
+          const gradient = ctx.createLinearGradient(
+            0,
+            chartArea.top,
+            0,
+            chartArea.bottom
+          )
+          gradient.addColorStop(0, "rgba(124, 58, 237, 0.25)")
+          gradient.addColorStop(1, "rgba(124, 58, 237, 0.02)")
+
+          return gradient
+        },
+
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        pointHoverBackgroundColor: "#7C3AED",
       },
     ],
   }
@@ -63,10 +84,34 @@ export function TrendChart({
           options={{
             responsive: true,
             maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
-            scales: {
-              x: { grid: { display: false } },
-              y: { grid: { color: "#f4f4f5" } },
+            interaction: {
+              mode: "index",
+              intersect: false,
+            },
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                backgroundColor: "#18181b",
+                titleColor: "#fff",
+                bodyColor: "#fff",
+                borderColor: "#27272a",
+                borderWidth: 1,
+                padding: 10,
+                displayColors: false,
+              },
+            },
+            elements: {
+              line: {
+                capBezierPoints: true,
+              },
+            },
+            layout: {
+              padding: {
+                top: 8,
+                bottom: 4,
+                left: 4,
+                right: 8,
+              },
             },
             onClick: (_evt, elements) => {
               if (!hasData || !onPointClick || elements.length === 0) return

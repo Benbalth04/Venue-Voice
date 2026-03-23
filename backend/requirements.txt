@@ -8,3 +8,8 @@ python-jose[cryptography]
 itsdangerous
 openpyxl
 openai
+segno
+Pillow
+requests
+cairosvg
+alembic

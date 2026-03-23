@@ -210,13 +210,8 @@ export interface LocationSurveyResponse {
   is_active: boolean
   start_date: string
   end_date: string | null
-  status:
-    | "active"
-    | "inactive_assignment"
-    | "inactive_survey"
-    | "inactive_location"
-    | "expired"
-    | "not_started"
+  /** Assignment lifecycle: active | scheduled | inactive | deleted */
+  status: "active" | "scheduled" | "inactive" | "deleted"
   created_at: string
   updated_at: string
 }
@@ -235,26 +230,46 @@ export interface LocationSurveyUpdate {
 }
 
 // QR Codes
+export interface QRCodeAssetUrls {
+  svg: string
+  png: string
+  jpeg: string
+}
+
 export interface QRCodeResponse {
   id: string
   title: string
   location_survey_id: string
   survey_id: string
   survey_title: string | null
-  location_status: string | null
+  /** QR code only: active | inactive | deleted */
+  qr_status: "active" | "inactive" | "deleted"
+  /** Linked assignment: active | scheduled | inactive | deleted */
+  location_survey_status: "active" | "scheduled" | "inactive" | "deleted"
   location_id: string
   location_name: string | null
   start_date: string | null
   end_date: string | null
-  assignment_status: string | null
   is_active: boolean
+  /** URL encoded in the stored QR assets (null for legacy rows). */
+  redirect_url: string | null
+  has_logo: boolean
+  /** Supabase public URLs when generated server-side. */
+  assets: QRCodeAssetUrls | null
   created_at: string
   updated_at: string
+  /** @deprecated use location_survey_status */
+  location_status?: string | null
+  /** @deprecated use location_survey_status */
+  assignment_status?: string | null
 }
 
 export interface QRCodeCreate {
   title: string
   location_survey_id: string
+  /** If omitted, backend uses NEXT_PUBLIC_APP_ORIGIN /r/{id} */
+  redirect_url?: string | null
+  has_logo?: boolean
 }
 
 export interface QRCodeUpdate {
@@ -399,7 +414,7 @@ export interface LogicRuleBundleResponse {
 
 export type RuleConditionType = "rating" | "sentiment" | "not_empty"
 export type RuleOperatorApi = "lt" | "lte" | "eq" | "gte" | "gt" | "is"
-export type FlowNodeType = "rule" | "branch" | "action"
+export type FlowNodeType = "rule" | "branch" | "action" | "terminate"
 export type FlowBranchType = "TRUE" | "FALSE"
 export type FlowActionType = "redirect" | "email"
 export type FlowBranchMatchType = "all" | "any"
@@ -520,6 +535,12 @@ export interface FlowTestResponse {
     notification_group_id?: string | null
     recipient_email?: string | null
   } | null
+  actions?: Array<{
+    type: FlowActionType
+    url?: string | null
+    notification_group_id?: string | null
+    recipient_email?: string | null
+  }>
 }
 
 export interface FlowRunResponse {
@@ -1037,6 +1058,12 @@ export async function fetchQRCodes(accessToken: string): Promise<QRCodeResponse[
   })
 }
 
+export async function fetchQRCode(accessToken: string, id: string): Promise<QRCodeResponse> {
+  return apiFetch<QRCodeResponse>(`${BACKEND_BASE}/api/v1/qr-codes/${id}`, {
+    headers: authGetHeaders(accessToken),
+  })
+}
+
 export async function createQRCode(
   accessToken: string,
   payload: QRCodeCreate,
@@ -1234,6 +1261,21 @@ export function updateSurveyFlow(
     `/surveys/${surveyId}/flows/${flowId}`,
     "PUT",
     payload,
+  )
+}
+
+/** Toggle flow availability without sending the full node graph. */
+export function setSurveyFlowActive(
+  token: string,
+  surveyId: string,
+  flowId: string,
+  body: { is_active: boolean },
+): Promise<FlowResponse> {
+  return surveyRequest<FlowResponse>(
+    token,
+    `/surveys/${surveyId}/flows/${flowId}/active`,
+    "PATCH",
+    body,
   )
 }
 

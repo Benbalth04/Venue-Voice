@@ -56,7 +56,7 @@ class FlowAction:
 class FlowEvaluationResult:
     flow: FlowORM
     trace: dict[str, Any]
-    action: FlowAction | None
+    actions: list[FlowAction]
     runtime_ms: int
 
 
@@ -244,6 +244,38 @@ def _ensure_unique_flow_name(
             )
 
 
+def _preorder_flow_nodes_for_persist(nodes: list) -> list:
+    """Order nodes parent-before-child so INSERTs satisfy flow_nodes.parent_id FK constraints.
+
+    The API accepts nodes in arbitrary list order; the client often appends newly inserted nodes at the end,
+    which can place deep descendants before their parents and cause save failures or inconsistent rows.
+    """
+    from uuid import NAMESPACE_URL, uuid5
+
+    node_by_id: dict[uuid.UUID, Any] = {}
+    children_by_parent: dict[uuid.UUID | None, list[uuid.UUID]] = {}
+    for index, node in enumerate(nodes):
+        nid = node.id if node.id is not None else uuid5(NAMESPACE_URL, f"flow-node-{index}")
+        node_by_id[nid] = node
+        children_by_parent.setdefault(node.parent_id, []).append(nid)
+    roots = children_by_parent.get(None) or []
+    if len(roots) != 1 or len(node_by_id) != len(nodes):
+        return list(nodes)
+    for child_ids in children_by_parent.values():
+        child_ids.sort(key=lambda cid: (node_by_id[cid].position, str(cid)))
+    ordered: list[Any] = []
+
+    def walk(nid: uuid.UUID) -> None:
+        ordered.append(node_by_id[nid])
+        for cid in children_by_parent.get(nid, []):
+            walk(cid)
+
+    walk(roots[0])
+    if len(ordered) != len(nodes):
+        return list(nodes)
+    return ordered
+
+
 def _validate_nodes(
     db: Session,
     company_id: uuid.UUID,
@@ -395,7 +427,7 @@ def create_flow(db: Session, company_id: uuid.UUID, survey_id: uuid.UUID, payloa
 
     for location_survey_id in payload.location_survey_ids:
         db.add(FlowLocationSurveyORM(flow_id=flow.id, location_survey_id=location_survey_id))
-    for node in payload.nodes:
+    for node in _preorder_flow_nodes_for_persist(list(payload.nodes)):
         db.add(
             FlowNodeORM(
                 id=node.id or uuid.uuid4(),
@@ -414,6 +446,20 @@ def create_flow(db: Session, company_id: uuid.UUID, survey_id: uuid.UUID, payloa
     return _flow_to_response(_get_flow_or_404(db, company_id, survey_id, flow.id))
 
 
+def set_flow_active(
+    db: Session,
+    company_id: uuid.UUID,
+    survey_id: uuid.UUID,
+    flow_id: uuid.UUID,
+    *,
+    is_active: bool,
+) -> dict[str, Any]:
+    flow = _get_flow_or_404(db, company_id, survey_id, flow_id)
+    flow.is_active = is_active
+    db.commit()
+    return _flow_to_response(_get_flow_or_404(db, company_id, survey_id, flow_id))
+
+
 def update_flow(db: Session, company_id: uuid.UUID, survey_id: uuid.UUID, flow_id: uuid.UUID, payload) -> dict[str, Any]:
     flow = _get_flow_or_404(db, company_id, survey_id, flow_id)
     _ensure_unique_flow_name(db, company_id, payload.name, exclude_flow_id=flow.id)
@@ -430,12 +476,16 @@ def update_flow(db: Session, company_id: uuid.UUID, survey_id: uuid.UUID, flow_i
     flow.description = payload.description.strip() if payload.description and payload.description.strip() else None
     flow.is_active = payload.is_active
     db.query(FlowLocationSurveyORM).filter(FlowLocationSurveyORM.flow_id == flow.id).delete(synchronize_session=False)
-    db.query(FlowNodeORM).filter(FlowNodeORM.flow_id == flow.id).delete(synchronize_session=False)
+    # Use 'fetch' so deleted FlowNodeORM rows are removed from the session identity map.
+    # With synchronize_session=False, stale instances can remain keyed by the same PKs; re-adding
+    # nodes with those ids on update then fails to INSERT (or merges incorrectly), dropping nodes.
+    db.query(FlowNodeORM).filter(FlowNodeORM.flow_id == flow.id).delete(synchronize_session="fetch")
     db.flush()
+    db.expire(flow, ["nodes"])
 
     for location_survey_id in payload.location_survey_ids:
         db.add(FlowLocationSurveyORM(flow_id=flow.id, location_survey_id=location_survey_id))
-    for node in payload.nodes:
+    for node in _preorder_flow_nodes_for_persist(list(payload.nodes)):
         db.add(
             FlowNodeORM(
                 id=node.id or uuid.uuid4(),
@@ -465,7 +515,17 @@ def _load_flow_rules(db: Session, flow: FlowORM) -> dict[uuid.UUID, RuleORM]:
     for node in flow.nodes:
         if node.node_type != FlowNodeType.branch.value:
             continue
-        for raw_rule_id in (node.action_config or {}).get("rule_ids", []):
+        cfg = node.action_config or {}
+        raw_conditions = cfg.get("rule_conditions")
+        if isinstance(raw_conditions, list):
+            for rc in raw_conditions:
+                if not isinstance(rc, dict) or rc.get("rule_id") is None:
+                    continue
+                try:
+                    rule_ids.add(uuid.UUID(str(rc["rule_id"])))
+                except (TypeError, ValueError):
+                    continue
+        for raw_rule_id in cfg.get("rule_ids", []):
             try:
                 rule_ids.add(uuid.UUID(str(raw_rule_id)))
             except (TypeError, ValueError):
@@ -557,7 +617,18 @@ def _evaluate_flow_node(
     contexts: dict[uuid.UUID, Any],
     runtime_context: dict[str, Any],
     trace_nodes: list[dict[str, Any]],
-) -> FlowAction | None:
+) -> list[FlowAction]:
+    if node.node_type == FlowNodeType.terminate.value:
+        trace_nodes.append(
+            {
+                "id": str(node.id),
+                "type": node.node_type,
+                "executed": False,
+                "reason": "terminated",
+            }
+        )
+        return []
+
     if node.node_type == FlowNodeType.rule.value:
         rule = rule_map.get(node.rule_id)
         if rule is None:
@@ -576,10 +647,10 @@ def _evaluate_flow_node(
             }
         )
         if not result:
-            return None
+            return []
         child = _select_single_child(node.id, children_by_parent)
         if child is None:
-            return None
+            return []
         return _evaluate_flow_node(
             child,
             children_by_parent=children_by_parent,
@@ -647,7 +718,7 @@ def _evaluate_flow_node(
             children_by_parent,
         )
         if child is None:
-            return None
+            return []
         return _evaluate_flow_node(
             child,
             children_by_parent=children_by_parent,
@@ -675,7 +746,7 @@ def _evaluate_flow_node(
                     "reason": "missing_redirect_url",
                 }
             )
-            return None
+            return []
     elif node.action_type == FlowActionType.email.value:
         target = str(config.get("target") or "")
         action.email_target = target
@@ -692,7 +763,20 @@ def _evaluate_flow_node(
             "executed": True,
         }
     )
-    return action
+    out: list[FlowAction] = [action]
+    chain_child = _select_single_child(node.id, children_by_parent)
+    if chain_child is not None and chain_child.node_type in (FlowNodeType.action.value, FlowNodeType.terminate.value):
+        out.extend(
+            _evaluate_flow_node(
+                chain_child,
+                children_by_parent=children_by_parent,
+                rule_map=rule_map,
+                contexts=contexts,
+                runtime_context=runtime_context,
+                trace_nodes=trace_nodes,
+            )
+        )
+    return out
 
 
 def _evaluate_single_flow(
@@ -706,7 +790,7 @@ def _evaluate_single_flow(
     _, children_by_parent, root = _build_tree(flow)
     rule_map = _load_flow_rules(db, flow)
     trace_nodes: list[dict[str, Any]] = []
-    action = _evaluate_flow_node(
+    actions = _evaluate_flow_node(
         root,
         children_by_parent=children_by_parent,
         rule_map=rule_map,
@@ -723,7 +807,7 @@ def _evaluate_single_flow(
             "runtime_ms": runtime_ms,
             "nodes": trace_nodes,
         },
-        action=action,
+        actions=actions,
         runtime_ms=runtime_ms,
     )
 
@@ -737,22 +821,25 @@ def _persist_flow_run(
     location_survey_id: uuid.UUID,
     qr_code_id: uuid.UUID | None,
     execution_trace: dict[str, Any],
-    action: FlowAction | None,
+    actions: list[FlowAction],
 ) -> FlowRunORM:
+    action_executed = ",".join(a.type for a in actions) if actions else None
     row = FlowRunORM(
         company_id=company_id,
         flow_id=flow.id,
         response_id=response_id,
-        success=action is not None,
+        success=len(actions) > 0,
         location_survey_id=location_survey_id,
         qr_code_id=qr_code_id,
         execution_trace=execution_trace,
-        action_executed=action.type if action else None,
+        action_executed=action_executed,
     )
     db.add(row)
     db.flush()
 
-    if action and action.type == FlowActionType.email.value:
+    for action in actions:
+        if action.type != FlowActionType.email.value:
+            continue
         recipient_emails: list[str] = []
         if action.email_target == FlowEmailTargetType.custom_email.value and action.recipient_email:
             recipient_emails = [action.recipient_email]
@@ -867,7 +954,7 @@ def execute_flows_for_response(
 
     for flow in flows:
         result = _evaluate_single_flow(db, flow, contexts, runtime_context=runtime_context)
-        action = result.action
+        actions = result.actions
         _persist_flow_run(
             db,
             company_id=company_id,
@@ -876,14 +963,19 @@ def execute_flows_for_response(
             location_survey_id=location_survey_id,
             qr_code_id=qr_code_id,
             execution_trace=result.trace,
-            action=action,
+            actions=actions,
         )
-        if action and first_action is None:
+        if actions and first_action is None:
+            redirect_action = next(
+                (a for a in actions if a.type == FlowActionType.redirect.value and a.url),
+                None,
+            )
+            chosen = redirect_action or actions[0]
             first_action = {
-                "type": action.type,
-                "url": action.url,
-                "notification_group_id": str(action.notification_group_id) if action.notification_group_id else None,
-                "recipient_email": action.recipient_email,
+                "type": chosen.type,
+                "url": chosen.url,
+                "notification_group_id": str(chosen.notification_group_id) if chosen.notification_group_id else None,
+                "recipient_email": chosen.recipient_email,
             }
             break
 
@@ -952,18 +1044,31 @@ def test_flow(
         location_survey_id=location_survey_id,
     )
     result = _evaluate_single_flow(db, flow, contexts, runtime_context=runtime_context)
+    actions = result.actions
+    redirect_action = next((a for a in actions if a.type == FlowActionType.redirect.value and a.url), None)
+    primary = redirect_action or (actions[0] if actions else None)
+    action_payloads = [
+        {
+            "type": a.type,
+            "url": a.url,
+            "notification_group_id": a.notification_group_id,
+            "recipient_email": a.recipient_email,
+        }
+        for a in actions
+    ]
     return {
         "execution_trace": result.trace,
         "action": (
             {
-                "type": result.action.type,
-                "url": result.action.url,
-                "notification_group_id": result.action.notification_group_id,
-                "recipient_email": result.action.recipient_email,
+                "type": primary.type,
+                "url": primary.url,
+                "notification_group_id": primary.notification_group_id,
+                "recipient_email": primary.recipient_email,
             }
-            if result.action
+            if primary
             else None
         ),
+        "actions": action_payloads,
     }
 
 

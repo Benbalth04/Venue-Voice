@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
-import { Loader2 } from "lucide-react"
+import { LoadingBlock } from "@/components/ui/LoadingSpinner"
 import { extractErrorMessage, fetchSurveyRedirect } from "@/lib/api/client"
 
 export default function SurveyRouterPage() {
@@ -61,10 +61,7 @@ export default function SurveyRouterPage() {
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-50 px-4">
-      <div className="flex flex-col items-center gap-4">
-        <Loader2 className="h-10 w-10 animate-spin text-violet-600" />
-        <p className="text-sm font-medium text-zinc-700">Redirecting to survey page...</p>
-      </div>
+      <LoadingBlock message="Redirecting to survey page…" size="xl" />
     </div>
   )
 }

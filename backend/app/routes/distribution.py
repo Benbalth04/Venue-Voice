@@ -1,23 +1,43 @@
+import logging
 import os
 import uuid
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import RedirectResponse
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from ..auth.jwt import get_current_user
-from ..core.errors.exceptions import ConflictError, NotFoundError, ValidationError
+from ..core.errors.exceptions import ConflictError, ExternalAPIError, NotFoundError, ValidationError
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import (
     Company as CompanyORM,
     Location as LocationORM,
     LocationSurvey as LocationSurveyORM,
     QRCode as QRCodeORM,
+    QRCodeAsset as QRCodeAssetORM,
     Survey as SurveyORM,
     User as UserORM,
 )
-from ..schemas.pydantic_model import QRCodeCreate, QRCodeResponse, QRCodeUpdate
-from ..services.location_survey_service import derive_location_survey_status, utc_now
+from ..schemas.pydantic_model import (
+    QRCodeAssetUrls,
+    QRCodeCreate,
+    QRCodeResponse,
+    QRCodeUpdate,
+)
+from ..services.location_survey_service import (
+    derive_location_survey_status,
+    derive_qr_code_status,
+    utc_now,
+)
+from ..services.qr_code_service import (
+    default_redirect_url_for_qr_id,
+    delete_storage_paths,
+    generate_qr_bytes,
+    storage_path_for,
+    upload_qr_assets_to_supabase,
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 public_router = APIRouter()
@@ -73,6 +93,16 @@ def _get_location_survey_for_company(
     return location_survey
 
 
+def _asset_urls(qr: QRCodeORM) -> QRCodeAssetUrls | None:
+    assets = getattr(qr, "assets", None) or []
+    if not assets:
+        return None
+    m = {a.format: a.public_url for a in assets}
+    if not all(k in m for k in ("svg", "png", "jpeg")):
+        return None
+    return QRCodeAssetUrls(svg=m["svg"], png=m["png"], jpeg=m["jpeg"])
+
+
 def _get_qr_or_404(qr_id: str, company_id: uuid.UUID, db: Session) -> QRCodeORM:
     try:
         uid = uuid.UUID(qr_id)
@@ -85,6 +115,7 @@ def _get_qr_or_404(qr_id: str, company_id: uuid.UUID, db: Session) -> QRCodeORM:
             joinedload(QRCodeORM.location),
             joinedload(QRCodeORM.location_survey).joinedload(LocationSurveyORM.location),
             joinedload(QRCodeORM.location_survey).joinedload(LocationSurveyORM.survey),
+            selectinload(QRCodeORM.assets),
         )
         .join(LocationSurveyORM, LocationSurveyORM.id == QRCodeORM.location_survey_id)
         .join(LocationORM, LocationORM.id == QRCodeORM.location_id)
@@ -93,7 +124,6 @@ def _get_qr_or_404(qr_id: str, company_id: uuid.UUID, db: Session) -> QRCodeORM:
             QRCodeORM.id == uid,
             QRCodeORM.company_id == company_id,
             QRCodeORM.deleted_at.is_(None),
-            LocationSurveyORM.deleted_at.is_(None),
             LocationORM.deleted_at.is_(None),
             SurveyORM.deleted_at.is_(None),
         )
@@ -108,22 +138,29 @@ def _to_response(qr: QRCodeORM) -> QRCodeResponse:
     location_survey = qr.location_survey
     location = location_survey.location
     survey = location_survey.survey
-    status = derive_location_survey_status(location_survey, location, survey, utc_now())
+    now = utc_now()
+    ls_status = derive_location_survey_status(location_survey, location, survey, now)
+    qr_status = derive_qr_code_status(qr)
     return QRCodeResponse(
         id=qr.id,
         title=qr.title,
         location_survey_id=location_survey.id,
         survey_id=survey.id,
         survey_title=survey.name,
-        location_status=status,
+        qr_status=qr_status,
+        location_survey_status=ls_status,
         location_id=location.id,
         location_name=location.name,
         start_date=location_survey.start_date.isoformat(),
         end_date=location_survey.end_date.isoformat() if location_survey.end_date else None,
-        assignment_status=status,
         is_active=qr.is_active,
+        redirect_url=qr.redirect_url,
+        has_logo=qr.has_logo,
+        assets=_asset_urls(qr),
         created_at=qr.created_at.isoformat(),
         updated_at=qr.updated_at.isoformat(),
+        location_status=ls_status,
+        assignment_status=ls_status,
     )
 
 
@@ -139,6 +176,7 @@ def list_qr_codes(
             joinedload(QRCodeORM.location),
             joinedload(QRCodeORM.location_survey).joinedload(LocationSurveyORM.location),
             joinedload(QRCodeORM.location_survey).joinedload(LocationSurveyORM.survey),
+            selectinload(QRCodeORM.assets),
         )
         .join(LocationSurveyORM, LocationSurveyORM.id == QRCodeORM.location_survey_id)
         .join(LocationORM, LocationORM.id == QRCodeORM.location_id)
@@ -146,7 +184,6 @@ def list_qr_codes(
         .filter(
             QRCodeORM.company_id == company.id,
             QRCodeORM.deleted_at.is_(None),
-            LocationSurveyORM.deleted_at.is_(None),
             LocationORM.deleted_at.is_(None),
             SurveyORM.deleted_at.is_(None),
         )
@@ -156,12 +193,23 @@ def list_qr_codes(
     return [_to_response(qr) for qr in qrs]
 
 
+@router.get("/qr-codes/{qr_id}", response_model=QRCodeResponse)
+def get_qr_code(
+    qr_id: str,
+    user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    company = _get_company(user, db)
+    return _to_response(_get_qr_or_404(qr_id, company.id, db))
+
+
 @router.post("/qr-codes", response_model=QRCodeResponse, status_code=201)
 def create_qr_code(
     payload: QRCodeCreate,
     user: UserORM = Depends(get_current_user),
     db: Session = Depends(get_db_connection),
 ):
+    """Create a QR code; its active flag is independent of the assignment's is_active."""
     company = _get_company(user, db)
 
     location_survey = _get_location_survey_for_company(payload.location_survey_id, company.id, db)
@@ -181,17 +229,75 @@ def create_qr_code(
     if existing:
         raise ConflictError(code="QR_TITLE_CONFLICT", message="Title is already in use")
 
+    qr_id = uuid.uuid4()
+    raw_redirect = (payload.redirect_url or "").strip()
+    if raw_redirect:
+        redirect = raw_redirect
+    else:
+        redirect = default_redirect_url_for_qr_id(qr_id)
+
+    logger.info(
+        "QR creation started",
+        extra={"qr_code_id": str(qr_id), "has_logo": payload.has_logo},
+    )
+
+    try:
+        assets_bytes = generate_qr_bytes(redirect_url=redirect, has_logo=payload.has_logo)
+    except ValidationError:
+        raise
+    except ExternalAPIError:
+        raise
+    except Exception as e:
+        logger.exception("QR generation failed", extra={"qr_code_id": str(qr_id)})
+        raise ExternalAPIError(
+            service_name="qr_generation",
+            error_message="Failed to generate QR code images",
+            code="QR_GENERATION_FAILED",
+            status_code=502,
+            details={"qr_code_id": str(qr_id)},
+        ) from e
+
     qr = QRCodeORM(
+        id=qr_id,
         company_id=company.id,
         title=title,
         is_active=True,
         location_survey_id=location_survey.id,
         location_id=location_survey.location_id,
+        redirect_url=redirect,
+        has_logo=payload.has_logo,
     )
     db.add(qr)
-    db.commit()
-    db.refresh(qr)
-    return _to_response(_get_qr_or_404(str(qr.id), company.id, db))
+    db.flush()
+
+    paths_uploaded: list[str] = []
+    try:
+        urls, paths_uploaded = upload_qr_assets_to_supabase(qr_code_id=qr_id, assets=assets_bytes)
+        for fmt, url in urls.items():
+            db.add(
+                QRCodeAssetORM(
+                    qr_code_id=qr_id,
+                    format=fmt,
+                    storage_path=storage_path_for(qr_id, fmt),
+                    public_url=url,
+                )
+            )
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        delete_storage_paths(paths_uploaded)
+        if isinstance(e, ExternalAPIError):
+            raise
+        logger.exception("QR persist failed", extra={"qr_code_id": str(qr_id)})
+        raise ExternalAPIError(
+            service_name="qr_storage",
+            error_message="Failed to store QR code assets",
+            code="QR_PERSIST_FAILED",
+            status_code=502,
+            details={"qr_code_id": str(qr_id)},
+        ) from e
+
+    return _to_response(_get_qr_or_404(str(qr_id), company.id, db))
 
 
 @router.patch("/qr-codes/{qr_id}", response_model=QRCodeResponse)
@@ -235,14 +341,14 @@ def update_qr_code(
 
 
 @router.delete("/qr-codes/{qr_id}", status_code=204)
-def deactivate_qr_code(
+def delete_qr_code(
     qr_id: str,
     user: UserORM = Depends(get_current_user),
     db: Session = Depends(get_db_connection),
 ):
     company = _get_company(user, db)
     qr = _get_qr_or_404(qr_id, company.id, db)
-    qr.is_active = False
+    qr.deleted_at = utc_now()
     db.commit()
 
 

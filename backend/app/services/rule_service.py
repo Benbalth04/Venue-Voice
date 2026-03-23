@@ -248,7 +248,7 @@ def _ensure_unique_rule_name(
         if row.name.strip().casefold() == normalized_name:
             raise ConflictError(
                 code="RULE_NAME_CONFLICT",
-                message="Rule name must be unique within this survey",
+                message="A rule with this name already exists",
             )
 
 
@@ -392,22 +392,50 @@ def update_rule(db: Session, survey_id: uuid.UUID, rule_id: uuid.UUID, payload: 
     return _rule_to_response(_get_rule_or_404(db, survey_id, rule.id))
 
 
+def _rule_id_in_flow_branch_config(config: dict | None, rule_id: uuid.UUID) -> bool:
+    if not config:
+        return False
+    raw_conditions = config.get("rule_conditions")
+    if isinstance(raw_conditions, list):
+        for rc in raw_conditions:
+            if not isinstance(rc, dict) or rc.get("rule_id") is None:
+                continue
+            try:
+                if uuid.UUID(str(rc["rule_id"])) == rule_id:
+                    return True
+            except (TypeError, ValueError):
+                continue
+    for raw_rule_id in config.get("rule_ids") or []:
+        try:
+            if uuid.UUID(str(raw_rule_id)) == rule_id:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
 def delete_rule(db: Session, survey_id: uuid.UUID, rule_id: uuid.UUID) -> None:
     rule = _get_rule_or_404(db, survey_id, rule_id)
-    in_use = (
-        db.query(FlowNodeORM.id)
+    flow_nodes = (
+        db.query(FlowNodeORM)
         .join(FlowORM, FlowORM.id == FlowNodeORM.flow_id)
         .filter(
-            FlowNodeORM.rule_id == rule.id,
+            FlowORM.survey_id == survey_id,
             FlowORM.deleted_at.is_(None),
         )
-        .first()
+        .all()
     )
-    if in_use:
-        raise ConflictError(
-            code="RULE_IN_USE",
-            message="Cannot delete a rule that is used by a flow",
-        )
+    for node in flow_nodes:
+        if node.rule_id == rule.id:
+            raise ConflictError(
+                code="RULE_IN_USE",
+                message="Cannot delete a rule that is being used by a flow.",
+            )
+        if node.node_type == "branch" and _rule_id_in_flow_branch_config(node.action_config, rule.id):
+            raise ConflictError(
+                code="RULE_IN_USE",
+                message="Cannot delete a rule that is being used by a flow",
+            )
 
     rule.deleted_at = rule.updated_at
     for condition in rule.conditions:

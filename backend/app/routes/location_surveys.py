@@ -209,6 +209,7 @@ def update_location_survey(
     user: UserORM = Depends(get_current_user),
     db: Session = Depends(get_db_connection),
 ):
+    """Update assignment dates and is_active. QR code active/inactive is managed separately via /qr-codes."""
     company = _get_company(user, db)
     location_survey = _get_location_survey_or_404(location_survey_id, company.id, db)
 

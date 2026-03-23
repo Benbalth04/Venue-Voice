@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Loader2, Pencil, Plus, Save, Trash2, UserPlus, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { LoadingSpinner } from "@/components/ui/LoadingSpinner"
 import { Card } from "@/components/ui/card"
 import { useConfirm } from "@/components/ui/ConfirmDialog"
 import { supabase } from "@/lib/supabase/client"
@@ -148,6 +149,20 @@ export default function NotificationGroupsPage() {
         return
       }
 
+      const nameConflict = groups.some(
+        (g) =>
+          g.id !== draft.id && g.name.trim().toLowerCase() === trimmedName.toLowerCase(),
+      )
+      if (nameConflict) {
+        setError("A notification group with this name already exists.")
+        return
+      }
+
+      if (members.length === 0) {
+        setError("Add at least one member with a name and email.")
+        return
+      }
+
       const duplicateEmails = new Set<string>()
       for (const member of members) {
         const key = member.email.toLowerCase()
@@ -210,8 +225,8 @@ export default function NotificationGroupsPage() {
 
   async function handleDelete(group: NotificationGroupResponse) {
     const ok = await confirm({
-      title: "Delete notification group",
-      message: `Delete "${group.name}"?`,
+      title: `Delete Notification Group - ${group.name}`,
+      message: `Are you sure you want to delete this notification group? This cannot be undone.`,
       confirmLabel: "Delete",
       cancelLabel: "Cancel",
       variant: "danger",
@@ -236,7 +251,7 @@ export default function NotificationGroupsPage() {
   if (loading) {
     return (
       <div className="flex min-h-[220px] items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-violet-500" />
+        <LoadingSpinner size="lg" />
       </div>
     )
   }

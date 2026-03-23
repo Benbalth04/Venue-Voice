@@ -262,9 +262,9 @@ export default function PublicSurveyPageContent() {
             </button>
             <div className="mt-6 flex justify-center">
               <img
-                src="/venue_voice_logo_3.png"
+                src="/PrimaryLogo_PoweredBy.svg"
                 alt="Venue Voice"
-                className="h-15 w-auto object-contain margin-bottom-0"
+                className="h-20 w-auto object-contain margin-bottom-0 margin-top-4"
                 aria-hidden
               />
             </div>

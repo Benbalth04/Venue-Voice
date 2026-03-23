@@ -7,6 +7,7 @@ from app.core.errors.exceptions import ValidationError
 from app.models.postgres_model import LocationSurvey, SurveyStatus
 from app.services.location_survey_service import (
     derive_location_survey_status,
+    derive_qr_code_status,
     find_duplicate_location_ids,
     validate_qr_scan_access,
 )
@@ -41,8 +42,13 @@ def make_location_survey(
     )
 
 
-def make_qr(*, is_active: bool = True, location_survey=None):
-    return SimpleNamespace(id=uuid.uuid4(), is_active=is_active, location_survey=location_survey)
+def make_qr(*, is_active: bool = True, location_survey=None, deleted_at=None):
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        is_active=is_active,
+        location_survey=location_survey,
+        deleted_at=deleted_at,
+    )
 
 
 class LocationSurveyServiceTests(unittest.TestCase):
@@ -71,7 +77,7 @@ class LocationSurveyServiceTests(unittest.TestCase):
             location_survey.survey,
             now,
         )
-        self.assertEqual(status, "not_started")
+        self.assertEqual(status, "scheduled")
 
     def test_derive_status_expired(self):
         now = datetime.now(timezone.utc)
@@ -82,22 +88,38 @@ class LocationSurveyServiceTests(unittest.TestCase):
             location_survey.survey,
             now,
         )
-        self.assertEqual(status, "expired")
+        self.assertEqual(status, "inactive")
 
     def test_derive_status_inactive_survey(self):
         now = datetime.now(timezone.utc)
         survey = make_survey(status=SurveyStatus.draft)
         location_survey = make_location_survey(survey=survey)
         status = derive_location_survey_status(location_survey, location_survey.location, survey, now)
-        self.assertEqual(status, "inactive_survey")
+        self.assertEqual(status, "inactive")
 
-    def test_qr_scan_fails_for_inactive_assignment(self):
+    def test_derive_status_deleted_assignment(self):
+        now = datetime.now(timezone.utc)
+        location_survey = make_location_survey(deleted_at=now)
+        status = derive_location_survey_status(
+            location_survey,
+            location_survey.location,
+            location_survey.survey,
+            now,
+        )
+        self.assertEqual(status, "deleted")
+
+    def test_derive_qr_code_status(self):
+        self.assertEqual(derive_qr_code_status(make_qr()), "active")
+        self.assertEqual(derive_qr_code_status(make_qr(is_active=False)), "inactive")
+        self.assertEqual(derive_qr_code_status(make_qr(deleted_at=datetime.now(timezone.utc))), "deleted")
+
+    def test_qr_scan_allows_inactive_assignment_flag_when_qr_active(self):
         qr = make_qr(location_survey=make_location_survey(is_active=False))
 
-        with self.assertRaises(ValidationError) as ctx:
-            validate_qr_scan_access(qr, datetime.now(timezone.utc))
-
-        self.assertEqual(ctx.exception.message, "This survey is not available right now")
+        location_survey, location, survey = validate_qr_scan_access(qr, datetime.now(timezone.utc))
+        self.assertIs(location_survey, qr.location_survey)
+        self.assertIs(location, qr.location_survey.location)
+        self.assertIs(survey, qr.location_survey.survey)
 
     def test_qr_scan_fails_for_expired_assignment(self):
         qr = make_qr(

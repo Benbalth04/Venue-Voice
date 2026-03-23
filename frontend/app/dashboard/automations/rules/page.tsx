@@ -28,6 +28,7 @@ import {
   Trash2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { LoadingSpinner } from "@/components/ui/LoadingSpinner"
 import { Card } from "@/components/ui/card"
 import { useConfirm } from "@/components/ui/ConfirmDialog"
 import { SingleSelectDropdown } from "@/components/ui/DropdownSelect"
@@ -81,7 +82,6 @@ type RuleDraft = {
   id?: string
   name: string
   description: string
-  enabled: boolean
   action_type: LogicActionType
   conditions: RuleItemDraft[]
 }
@@ -286,7 +286,6 @@ function draftFromRule(rule: LogicRuleResponse): RuleDraft {
     id: rule.id,
     name: rule.name,
     description: rule.description ?? "",
-    enabled: rule.enabled,
     action_type: rule.action_type,
     conditions: rule.conditions.map(mapNode),
   }
@@ -305,7 +304,7 @@ function payloadFromDraft(draft: RuleDraft): LogicRulePayload {
   return {
     name: draft.name.trim(),
     description: draft.description.trim() || null,
-    enabled: draft.enabled,
+    enabled: true,
     action_type: draft.action_type,
     conditions: draft.conditions.map((item) =>
       item.kind === "group"
@@ -677,6 +676,7 @@ export default function RulesPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [draftError, setDraftError] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const [draftSnapshot, setDraftSnapshot] = useState<string | null>(null)
 
   const sensors = useSensors(
@@ -753,17 +753,35 @@ export default function RulesPage() {
     load()
   }, [])
 
+  // Error timeouts
+  useEffect(() => {
+    if (!draftError) return
+
+    const timer = setTimeout(() => {
+      setDraftError(null)
+    }, 5000)
+
+    return () => clearTimeout(timer)
+  }, [draftError])
+
+  useEffect(() => {
+    if (!deleteError) return
+
+    const timer = setTimeout(() => {
+      setDeleteError(null)
+    }, 5000)
+
+    return () => clearTimeout(timer)
+  }, [deleteError])
+
   async function startNewRule() {
     const proceed = await confirmDiscardChanges()
     if (!proceed) return
-    const fallbackQuestion = supportedQuestions[0]
-    if (!fallbackQuestion) return
     setDraft({
       name: "New rule",
       description: "",
-      enabled: true,
       action_type: "none",
-      conditions: [makeLeafCondition(fallbackQuestion)],
+      conditions: [],
     })
     setDraftSnapshot(null)
     setDraftError(null)
@@ -780,8 +798,8 @@ export default function RulesPage() {
 
   async function requestDeleteTopLevelItem(label: string, localId: string) {
     const ok = await confirm({
-      title: "Delete condition",
-      message: `Delete ${label}?`,
+      title: `Delete Condition`,
+      message: `Are you sure you want to delete this condition. This cannot be undone.`,
       confirmLabel: "Delete",
       variant: "danger",
     })
@@ -864,8 +882,8 @@ export default function RulesPage() {
 
   async function deleteRule(rule: LogicRuleResponse) {
     const ok = await confirm({
-      title: "Delete rule",
-      message: `Delete "${rule.name}"?`,
+      title: `Delete rule - ${rule.name}`,
+      message: `Are you sure you want to delete this rule. This cannot be undone.`,
       confirmLabel: "Delete",
       variant: "danger",
     })
@@ -880,14 +898,14 @@ export default function RulesPage() {
       setDraft((current) => (current?.id === rule.id ? null : current))
       setDraftSnapshot((current) => (draft?.id === rule.id ? null : current))
     } catch (err) {
-      setDraftError(extractErrorMessage(err, "Failed to delete rule"))
+      setDeleteError(extractErrorMessage(err, "Failed to delete rule"))
     }
   }
 
   if (loading) {
     return (
       <div className="flex min-h-[220px] items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-violet-500" />
+        <LoadingSpinner size="lg" />
       </div>
     )
   }
@@ -925,6 +943,12 @@ export default function RulesPage() {
           New rule
         </Button>
       </div>
+
+      {deleteError ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {deleteError}
+        </div>
+      ) : null}
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,430px)_minmax(0,1fr)]">
         <div className="space-y-4">
@@ -999,16 +1023,6 @@ export default function RulesPage() {
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
                           <p className="truncate font-medium text-zinc-900">{rule.name}</p>
-                          <span
-                            className={[
-                              "rounded-full px-2 py-0.5 text-xs font-medium",
-                              rule.enabled
-                                ? "bg-emerald-50 text-emerald-700"
-                                : "bg-zinc-100 text-zinc-500",
-                            ].join(" ")}
-                          >
-                            {rule.enabled ? "Enabled" : "Disabled"}
-                          </span>
                         </div>
                         {rule.description ? (
                           <p className="mt-1 text-sm text-zinc-600">{truncateDescription(rule.description)}</p>
@@ -1100,6 +1114,12 @@ export default function RulesPage() {
                 />
               </label>
 
+              {draftError ? (
+                <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {draftError}
+                </div>
+              ) : null}
+
               <label className="mt-4 block">
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
@@ -1122,25 +1142,6 @@ export default function RulesPage() {
                   placeholder="Add a short description for this rule."
                 />
               </label>
-
-              <label className="mt-4 flex items-center gap-2 text-sm text-zinc-700">
-                <input
-                  type="checkbox"
-                  checked={draft.enabled}
-                  onChange={(event) =>
-                    setDraft((current) =>
-                      current ? { ...current, enabled: event.target.checked } : current,
-                    )
-                  }
-                />
-                Rule is enabled
-              </label>
-
-              {draftError ? (
-                <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {draftError}
-                </div>
-              ) : null}
 
               <div className="mt-6">
                 <DndContext

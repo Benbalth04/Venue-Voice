@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { DropdownSelect } from "@/components/ui/DropdownSelect"
 import { DataTable, type DataTableColumn } from "@/components/ui/DataTable"
+import { LoadingBlock } from "@/components/ui/LoadingSpinner"
 import { useConfirm } from "@/components/ui/ConfirmDialog"
 import { supabase } from "@/lib/supabase/client"
 import {
@@ -434,7 +435,7 @@ export default function LocationsPage() {
       {/* Content */}
       {loading ? (
         <div className="flex min-h-[200px] items-center justify-center">
-          <p className="text-sm text-zinc-500">Loading locations…</p>
+          <LoadingBlock message="Loading locations…" />
         </div>
       ) : error ? (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">

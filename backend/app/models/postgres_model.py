@@ -378,6 +378,8 @@ class LocationSurvey(SoftDeleteMixin, Base):
     flow_runs = relationship("FlowRun", back_populates="location_survey")
 
     def is_effectively_active(self, now: datetime) -> bool:
+        if getattr(self, "deleted_at", None) is not None:
+            return False
         if not self.is_active:
             return False
         if now < self.start_date:
@@ -418,6 +420,8 @@ class QRCode(SoftDeleteMixin, Base):
         nullable=False,
         index=True
     )
+    redirect_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    has_logo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -431,6 +435,41 @@ class QRCode(SoftDeleteMixin, Base):
     )
     location: Mapped["Location"] = relationship("Location", lazy="joined", uselist=False, foreign_keys=[location_id])
     flow_runs = relationship("FlowRun", back_populates="qr_code")
+    assets: Mapped[list["QRCodeAsset"]] = relationship(
+        "QRCodeAsset",
+        back_populates="qr_code",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )
+
+
+class QRCodeAsset(Base):
+    __tablename__ = "qr_code_assets"
+    __table_args__ = (
+        UniqueConstraint("qr_code_id", "format", name="uq_qr_code_assets_qr_code_id_format"),
+        CheckConstraint(
+            "format IN ('svg', 'png', 'jpeg')",
+            name="ck_qr_code_assets_format",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.uuid_generate_v4(),
+    )
+    qr_code_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("qr_codes.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    format: Mapped[str] = mapped_column(String(8), nullable=False)
+    storage_path: Mapped[str] = mapped_column(Text, nullable=False)
+    public_url: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    qr_code: Mapped["QRCode"] = relationship("QRCode", back_populates="assets")
 
 
 # --------------------------------------------------

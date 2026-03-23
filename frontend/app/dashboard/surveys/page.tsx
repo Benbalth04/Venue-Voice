@@ -290,8 +290,8 @@ export default function SurveysListPage() {
 
   async function handleConfirmUnpublish(id: string) {
     const ok = await confirm({
-      title: "Unpublish survey",
-      message: "This will deactivate all associated survey assignments. Continue?",
+      title: "Unpublish Survey",
+      message: "Are you sure you want to unpublish this survey? This will:\n- Make the survey inaccessible to respondents\n- Deactivate all assignments of this survey to locations\n- Disable any flows for this survey\nAre you sure you want to continue?",
       confirmLabel: "Unpublish",
       cancelLabel: "Cancel",
       variant: "danger",
@@ -447,7 +447,7 @@ export default function SurveysListPage() {
     },
     {
       key: "actions",
-      label: "",
+      label: "Actions",
       sortable: false,
       align: "center",
       render: (s) => (

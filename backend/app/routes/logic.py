@@ -24,6 +24,7 @@ from ..schemas.pydantic_model import (
     NotificationGroupResponse,
     RuleListResponse,
     RuleResponse,
+    SetFlowActive,
     UpdateFlow,
     UpdateRule,
 )
@@ -35,6 +36,7 @@ from ..services.flow_service import (
     list_company_flows,
     list_flow_runs,
     list_flows,
+    set_flow_active,
     test_flow,
     update_flow,
 )
@@ -201,6 +203,20 @@ def update_flow_route(
     flow_uuid = _parse_uuid(flow_id, code="INVALID_FLOW_ID", label="flow ID")
     company = _ensure_survey_access(db, current_user, survey_uuid)
     return update_flow(db, company.id, survey_uuid, flow_uuid, payload)
+
+
+@router.patch("/surveys/{survey_id}/flows/{flow_id}/active", response_model=FlowResponse)
+def set_flow_active_route(
+    survey_id: str,
+    flow_id: str,
+    payload: SetFlowActive,
+    current_user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
+    flow_uuid = _parse_uuid(flow_id, code="INVALID_FLOW_ID", label="flow ID")
+    company = _ensure_survey_access(db, current_user, survey_uuid)
+    return set_flow_active(db, company.id, survey_uuid, flow_uuid, is_active=payload.is_active)
 
 
 @router.delete("/surveys/{survey_id}/flows/{flow_id}", status_code=204)

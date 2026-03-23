@@ -33,6 +33,59 @@ export function ConfirmDialog({
 }: ConfirmDialogProps) {
   const cancelRef = useRef<HTMLButtonElement>(null)
 
+
+  function renderMessage(message: string): React.ReactNode[] {
+    const lines = message.split("\n")
+
+    const elements: React.ReactNode[] = []
+    let currentList: string[] = []
+
+    const flushList = (key: number) => {
+      if (currentList.length === 0) return null
+      const list = (
+        <ul
+          key={`list-${key}`}
+          className="ml-5 list-disc space-y-1 text-sm text-zinc-600"
+        >
+          {currentList.map((item, i) => (
+            <li key={i} className="marker:text-zinc-400">
+              {item}
+            </li>
+          ))}
+        </ul>
+      )
+      currentList = []
+      return list
+    }
+
+    lines.forEach((line, index) => {
+      const trimmed = line.trim()
+
+      // Bullet point
+      if (trimmed.startsWith("- ")) {
+        currentList.push(trimmed.slice(2))
+      } else {
+        // Flush any existing list before adding normal text
+        const list = flushList(index)
+        if (list) elements.push(list)
+
+        if (trimmed.length > 0) {
+          elements.push(
+            <p key={`p-${index}`} className="text-sm text-zinc-600">
+              {trimmed}
+            </p>
+          )
+        }
+      }
+    })
+
+    // Flush remaining list at end
+    const finalList = flushList(lines.length)
+    if (finalList) elements.push(finalList)
+
+    return elements
+  }
+
   useEffect(() => {
     if (!open) return
     cancelRef.current?.focus()
@@ -60,9 +113,9 @@ export function ConfirmDialog({
         >
           {title}
         </h2>
-        <p id="confirm-dialog-desc" className="mt-2 text-sm text-zinc-600">
-          {message}
-        </p>
+        <div id="confirm-dialog-desc" className="mt-2 space-y-2">
+          {renderMessage(message)}
+        </div>
         <div className="mt-6 flex justify-end gap-2">
           <button
             ref={cancelRef}

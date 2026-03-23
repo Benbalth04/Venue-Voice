@@ -7,6 +7,7 @@ import { QRCodeCanvas, QRCodeSVG } from "qrcode.react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { DataTable, type DataTableColumn } from "@/components/ui/DataTable"
+import { LoadingBlock } from "@/components/ui/LoadingSpinner"
 import { SingleSelectDropdown } from "@/components/ui/DropdownSelect"
 import { supabase } from "@/lib/supabase/client"
 import {
@@ -37,9 +38,23 @@ function QRPanel({
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const svgContainerRef = useRef<HTMLDivElement | null>(null)
-  const url = qrUrl(qr.id)
+  const displayUrl = qr.redirect_url ?? qrUrl(qr.id)
+  const assets = qr.assets
+
+  function downloadFromUrl(href: string, filename: string) {
+    const link = document.createElement("a")
+    link.download = filename
+    link.href = href
+    link.rel = "noopener noreferrer"
+    link.target = "_blank"
+    link.click()
+  }
 
   function downloadPNG() {
+    if (assets) {
+      downloadFromUrl(assets.png, `qr-${qr.id}.png`)
+      return
+    }
     const canvas = canvasRef.current
     if (!canvas) return
     const link = document.createElement("a")
@@ -49,6 +64,10 @@ function QRPanel({
   }
 
   function downloadJPEG() {
+    if (assets) {
+      downloadFromUrl(assets.jpeg, `qr-${qr.id}.jpeg`)
+      return
+    }
     const canvas = canvasRef.current
     if (!canvas) return
     const link = document.createElement("a")
@@ -58,6 +77,10 @@ function QRPanel({
   }
 
   function downloadSVG() {
+    if (assets) {
+      downloadFromUrl(assets.svg, `qr-${qr.id}.svg`)
+      return
+    }
     const container = svgContainerRef.current
     if (!container) return
     const svgEl = container.querySelector("svg")
@@ -89,25 +112,34 @@ function QRPanel({
         </div>
 
         <div className="flex flex-col items-center gap-4">
-          {/* Visible QR (canvas for download) */}
           <div className="rounded-xl border border-zinc-200 bg-white p-3">
-            <QRCodeCanvas
-              ref={(el) => {
-                if (el) canvasRef.current = el
-              }}
-              value={url}
-              size={200}
-              level="H"
-              includeMargin={false}
-            />
+            {assets ? (
+              // eslint-disable-next-line @next/next/no-img-element -- remote Supabase asset URL
+              <img
+                src={assets.png}
+                alt=""
+                className="h-[200px] w-[200px] object-contain"
+              />
+            ) : (
+              <QRCodeCanvas
+                ref={(el) => {
+                  if (el) canvasRef.current = el
+                }}
+                value={displayUrl}
+                size={200}
+                level="H"
+                includeMargin={false}
+              />
+            )}
           </div>
 
-          {/* Hidden SVG for SVG download */}
-          <div ref={svgContainerRef} className="hidden">
-            <QRCodeSVG value={url} size={200} level="H" includeMargin={false} />
-          </div>
+          {!assets ? (
+            <div ref={svgContainerRef} className="hidden">
+              <QRCodeSVG value={displayUrl} size={200} level="H" includeMargin={false} />
+            </div>
+          ) : null}
 
-          <p className="break-all text-center text-xs text-zinc-500">{url}</p>
+          <p className="break-all text-center text-xs text-zinc-500">{displayUrl}</p>
 
           <div className="flex w-full gap-2">
             <button
@@ -145,18 +177,30 @@ interface QRFormData {
   location_survey_id: string
 }
 
-function statusBadge(status: string | null) {
-  const map: Record<string, { label: string; cls: string }> = {
-    active: { label: "Active", cls: "bg-emerald-50 text-emerald-700" },
-    inactive_assignment: { label: "Inactive", cls: "bg-zinc-100 text-zinc-600" },
-    inactive_survey: { label: "Inactive (Survey)", cls: "bg-amber-50 text-amber-700" },
-    inactive_location: { label: "Inactive (Location)", cls: "bg-orange-50 text-orange-700" },
-    expired: { label: "Expired", cls: "bg-red-50 text-red-700" },
-    not_started: { label: "Not started", cls: "bg-sky-50 text-sky-700" },
+function qrStatusBadge(status: QRCodeResponse["qr_status"]) {
+  const map: Record<QRCodeResponse["qr_status"], { label: string; cls: string }> = {
+    active: { label: "True", cls: "bg-emerald-50 text-emerald-700" },
+    inactive: { label: "False", cls: "bg-red-50 text-red-700" },
+    deleted: { label: "False", cls: "bg-red-50 text-red-700" },
   }
-  const resolved = map[status ?? "inactive_assignment"] ?? map.inactive_assignment
+  const resolved = map[status]
   return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${resolved.cls}`}>
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${resolved.cls}`}>
+      {resolved.label}
+    </span>
+  )
+}
+
+function assignmentStatusBadge(status: QRCodeResponse["location_survey_status"]) {
+  const map: Record<QRCodeResponse["location_survey_status"], { label: string; cls: string }> = {
+    active: { label: "True", cls: "bg-emerald-50 text-emerald-700" },
+    scheduled: { label: "False", cls: "bg-red-50 text-red-700" },
+    inactive: { label: "False", cls: "bg-red-50 text-red-700" },
+    deleted: { label: "False", cls: "bg-red-50 text-red-700" },
+  }
+  const resolved = map[status]
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${resolved.cls}`}>
       {resolved.label}
     </span>
   )
@@ -371,9 +415,9 @@ export default function DistributionPage() {
 
   async function handleDelete(qr: QRCodeResponse) {
     const ok = await confirm({
-      title: "Deactivate QR code",
-      message: `Deactivate QR code "${qr.title}"?`,
-      confirmLabel: "Deactivate",
+      title: `Delete QR code - ${qr.title}`,
+      message: `Are you sure you want to delete this QR code? This cannot be undone.`,
+      confirmLabel: "Delete",
       variant: "danger",
     })
     if (!ok) return
@@ -381,9 +425,9 @@ export default function DistributionPage() {
     if (!token) return
     try {
       await deleteQRCode(token, qr.id)
-      setQRCodes((prev) => prev.map((q) => (q.id === qr.id ? { ...q, is_active: false } : q)))
+      setQRCodes((prev) => prev.filter((q) => q.id !== qr.id))
     } catch (err) {
-      alert(extractErrorMessage(err, "Failed to deactivate QR code"))
+      alert(extractErrorMessage(err, "Failed to delete QR code"))
     }
   }
 
@@ -403,7 +447,7 @@ export default function DistributionPage() {
         cmp = (a.location_name ?? "").localeCompare(b.location_name ?? "")
         break
       case "status":
-        cmp = (a.assignment_status ?? "").localeCompare(b.assignment_status ?? "")
+        cmp = `${a.qr_status}|${a.location_survey_status}`.localeCompare(`${b.qr_status}|${b.location_survey_status}`)
         break
       default:
         return 0
@@ -433,12 +477,21 @@ export default function DistributionPage() {
             className="flex-shrink-0 rounded-lg border border-zinc-200 bg-white p-0.5 hover:border-violet-400"
             title="View & download QR"
           >
-            <QRCodeCanvas
-              value={qrUrl(qr.id)}
-              size={36}
-              level="M"
-              includeMargin={false}
-            />
+            {qr.assets ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={qr.assets.png}
+                alt=""
+                className="h-9 w-9 object-contain"
+              />
+            ) : (
+              <QRCodeCanvas
+                value={qrUrl(qr.id)}
+                size={36}
+                level="M"
+                includeMargin={false}
+              />
+            )}
           </button>
           <span className="break-words font-medium text-zinc-900">
             {qr.title}
@@ -473,7 +526,18 @@ export default function DistributionPage() {
       label: "Status",
       sortable: true,
       align: "center",
-      render: (qr) => statusBadge(qr.assignment_status),
+      render: (qr) => (
+        <div className="flex flex-col items-center gap-1.5">
+          <div className="flex flex-wrap items-center justify-center gap-1">
+            <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">Accepting Scans</span>
+            {qrStatusBadge(qr.qr_status)}
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-1">
+            <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">Accepting Submissions</span>
+            {assignmentStatusBadge(qr.location_survey_status)}
+          </div>
+        </div>
+      ),
     },
     {
       key: "actions",
@@ -514,7 +578,7 @@ export default function DistributionPage() {
             type="button"
             onClick={() => handleDelete(qr)}
             className="rounded-lg p-1.5 text-zinc-400 hover:bg-red-50 hover:text-red-600"
-            title="Deactivate"
+            title="Delete QR code"
           >
             <Trash2 className="h-3.5 w-3.5" />
           </button>
@@ -545,7 +609,7 @@ export default function DistributionPage() {
       {/* Content */}
       {loading ? (
         <div className="flex min-h-[200px] items-center justify-center">
-          <p className="text-sm text-zinc-500">Loading QR codes…</p>
+          <LoadingBlock message="Loading QR codes…" />
         </div>
       ) : error ? (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">

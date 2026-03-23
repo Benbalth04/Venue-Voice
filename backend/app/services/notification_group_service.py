@@ -137,6 +137,12 @@ def update_notification_group(
     )
 
     normalized_emails = [member["email"].strip().lower() for member in members]
+    if not members:
+        raise ValidationError(
+            code="NOTIFICATION_GROUP_MEMBERS_REQUIRED",
+            message="Notification group must have at least one member",
+            status_code=422,
+        )
     if len(set(normalized_emails)) != len(normalized_emails):
         raise ValidationError(
             code="NOTIFICATION_GROUP_MEMBER_DUPLICATE",
@@ -280,18 +286,34 @@ def sync_location_notification_groups(
 
 def delete_notification_group(db: Session, company_id: uuid.UUID, group_id: uuid.UUID) -> None:
     group = _get_notification_group_or_404(db, company_id, group_id)
-    in_use = (
+
+    assigned_to_location = (
+        db.query(LocationNotificationGroupORM)
+        .filter(LocationNotificationGroupORM.group_id == group.id)
+        .all()
+    )
+
+    if assigned_to_location:
+        raise ConflictError(
+            code="NOTIFICATION_GROUP_ASSIGNED_TO_LOCATION",
+            message=f"Cannot delete a notification group that is assigned to a location. This notification group is currently assigned to {len(assigned_to_location)} location{('s' if len(assigned_to_location) > 1 else '')}.",
+            details={"Assigned location_ids": [str(link.location_id) for link in assigned_to_location]},
+        )
+
+    in_flow = (
         db.query(FlowNodeORM.id)
         .filter(
             FlowNodeORM.action_type == "email",
             FlowNodeORM.action_config["notification_group_id"].astext == str(group.id),
         )
-        .first()
+        .all()
     )
-    if in_use:
+
+    if in_flow:
         raise ConflictError(
             code="NOTIFICATION_GROUP_IN_USE",
-            message="Cannot delete a notification group that is used by a flow",
+            message=f"Cannot delete a notification group that is used by a flow. This notification group is currently used by {len(in_flow)} flow node{('s' if len(in_flow) > 1 else '')}.",
+            details={"Assigned flow_node_ids": [str(node_id) for node_id in in_flow]},
         )
 
     group.deleted_at = _now()

@@ -70,9 +70,9 @@ export default function ThankYouPageContent() {
         <p className="mt-2 text-zinc-600">{message}</p>
       </div>
       <img
-        src="/venue_voice_logo_3.png"
+        src="/PrimaryLogo_PoweredBy.svg"
         alt="Venue Voice"
-        className="mt-8 h-12 w-auto object-contain"
+        className="h-20 w-auto object-contain margin-bottom-0"
         aria-hidden
       />
     </div>

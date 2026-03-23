@@ -116,9 +116,9 @@ export function Sidebar() {
         <Image
           src="/venue_voice_logo_1.png"
           alt="Venue Voice"
-          width={800}
+          width={1000}
           height={800}
-          className="m-0 h-24 w-full object-contain"
+          className="mb-3s h-17 w-full object-contain"
         />
       </Link>
 
@@ -135,7 +135,7 @@ export function Sidebar() {
           return (
             <div key={item.label} className="space-y-1">
               {item.disabled ? (
-                <div className="flex flex-col rounded-xl px-3 py-2 text-sm font-medium text-zinc-400">
+                <div className="flex flex-col rounded-xl px-3 py-2 text-sm font-small text-zinc-400">
                   {/* Level 0 */}
                   <div className="flex items-center gap-2">
                     {Icon ? <Icon className="h-4 w-4" /> : null}
@@ -151,7 +151,7 @@ export function Sidebar() {
                 <Link
                   href={item.href}
                   className={[
-                    "flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition-colors",
+                    "flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-small transition-colors",
                     active ? "bg-violet-50 text-violet-700" : "text-zinc-700 hover:bg-zinc-50",
                   ].join(" ")}
                 >
@@ -169,17 +169,20 @@ export function Sidebar() {
                         key={child.href}
                         href={child.href}
                         className={[
-                          "flex items-center justify-between gap-2 rounded-xl px-3 py-2 text-sm font-medium transition-colors",
+                          "flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-small transition-colors",
                           childActive
                             ? "bg-violet-50 text-violet-700"
                             : "text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900",
                         ].join(" ")}
                       >
-                        <span className="truncate">{child.label}</span>
+                        <span className="min-w-0 flex-1 truncate">{child.label}</span>
                         {child.showUnreadCount && unreadCount > 0 ? (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
-                            <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden />
-                            {`${unreadCount} new`}
+                          <span
+                            className="inline-flex h-4 shrink-0 items-center justify-center rounded-full bg-emerald-500 px-1 text-[9px] font-bold leading-none text-white tabular-nums"
+                            title={`${unreadCount} new response${unreadCount === 1 ? "" : "s"}`}
+                            aria-label={`${unreadCount} new response${unreadCount === 1 ? "" : "s"}`}
+                          >
+                            {unreadCount > 99 ? "99+" : unreadCount}
                           </span>
                         ) : null}
                       </Link>

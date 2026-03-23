@@ -174,6 +174,8 @@ CREATE TABLE qr_codes (
     is_active BOOLEAN DEFAULT TRUE NOT NULL,
     location_survey_id UUID NOT NULL REFERENCES location_surveys(id),
     location_id UUID NOT NULL REFERENCES locations(id),
+    redirect_url TEXT NULL,
+    has_logo BOOLEAN DEFAULT TRUE NOT NULL,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
     deleted_at TIMESTAMP NULL
@@ -183,6 +185,19 @@ CREATE INDEX idx_qr_codes_company_id ON qr_codes(company_id);
 CREATE INDEX idx_qr_codes_location_survey_id ON qr_codes(location_survey_id);
 CREATE INDEX idx_qr_codes_location_id ON qr_codes(location_id);
 CREATE INDEX idx_qr_codes_title ON qr_codes(title);
+
+CREATE TABLE qr_code_assets (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    qr_code_id UUID NOT NULL REFERENCES qr_codes(id) ON DELETE CASCADE,
+    format TEXT NOT NULL,
+    storage_path TEXT NOT NULL,
+    public_url TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    CONSTRAINT ck_qr_code_assets_format CHECK (format IN ('svg', 'png', 'jpeg')),
+    CONSTRAINT uq_qr_code_assets_qr_code_id_format UNIQUE (qr_code_id, format)
+);
+
+CREATE INDEX idx_qr_code_assets_qr_code_id ON qr_code_assets(qr_code_id);
 
 --------------------------------------------------
 -- LOCATION SNAPSHOTS
@@ -318,7 +333,8 @@ CREATE TABLE response_reads (
 CREATE INDEX idx_response_reads_user_response
 ON response_reads(user_id, response_id);
 
--- RULES / FLOWS / NOTIFICATION GROUPS
+--------------------------------------------------
+-- RULES
 --------------------------------------------------
 CREATE TABLE rules (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -338,6 +354,9 @@ CREATE UNIQUE INDEX uq_rules_survey_name_active
 ON rules(survey_id, LOWER(name))
 WHERE deleted_at IS NULL;
 
+--------------------------------------------------
+-- Rule Groups
+--------------------------------------------------
 CREATE TABLE rule_groups (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     rule_id UUID NOT NULL REFERENCES rules(id) ON DELETE CASCADE,
@@ -347,6 +366,9 @@ CREATE TABLE rule_groups (
 
 CREATE INDEX idx_rule_groups_rule_id ON rule_groups(rule_id);
 
+--------------------------------------------------
+-- RULE CONDITIONS
+--------------------------------------------------
 CREATE TABLE rule_conditions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     rule_id UUID NOT NULL REFERENCES rules(id) ON DELETE CASCADE,
@@ -363,6 +385,9 @@ CREATE INDEX idx_rule_conditions_rule_id ON rule_conditions(rule_id);
 CREATE INDEX idx_rule_conditions_question_id ON rule_conditions(question_id);
 CREATE INDEX idx_rule_conditions_group_id ON rule_conditions(group_id);
 
+--------------------------------------------------
+-- NOTIFICATION GROUPS
+--------------------------------------------------
 CREATE TABLE notification_groups (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
@@ -376,6 +401,9 @@ CREATE UNIQUE INDEX uq_notification_groups_company_name_active
 ON notification_groups(company_id, LOWER(name))
 WHERE deleted_at IS NULL;
 
+--------------------------------------------------
+-- NOTIFCATION GROUP MEMBERS
+--------------------------------------------------
 CREATE TABLE notification_group_members (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     group_id UUID NOT NULL REFERENCES notification_groups(id) ON DELETE CASCADE,
@@ -387,6 +415,9 @@ CREATE TABLE notification_group_members (
 
 CREATE INDEX idx_notification_group_members_group_id ON notification_group_members(group_id);
 
+--------------------------------------------------
+-- LOCATION NOTIFICATION GROUPS (i.e. mapping notificaton groups to locations)
+--------------------------------------------------
 CREATE TABLE location_notification_groups (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
@@ -397,6 +428,9 @@ CREATE TABLE location_notification_groups (
 CREATE INDEX idx_location_notification_groups_location_id ON location_notification_groups(location_id);
 CREATE INDEX idx_location_notification_groups_group_id ON location_notification_groups(group_id);
 
+--------------------------------------------------
+-- FLOWS
+--------------------------------------------------
 CREATE TABLE flows (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
@@ -415,6 +449,9 @@ CREATE UNIQUE INDEX uq_flows_company_name_active
 ON flows(company_id, LOWER(name))
 WHERE deleted_at IS NULL;
 
+--------------------------------------------------
+-- FLOW LOCATION SURVEYS (map flows to location surveys for execution)
+--------------------------------------------------
 CREATE TABLE flow_location_surveys (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     flow_id UUID NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
@@ -425,11 +462,14 @@ CREATE TABLE flow_location_surveys (
 CREATE INDEX idx_flow_location_surveys_flow_id ON flow_location_surveys(flow_id);
 CREATE INDEX idx_flow_location_surveys_location_survey_id ON flow_location_surveys(location_survey_id);
 
+--------------------------------------------------
+-- FLOW NODES
+--------------------------------------------------
 CREATE TABLE flow_nodes (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     flow_id UUID NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
     parent_id UUID NULL REFERENCES flow_nodes(id) ON DELETE CASCADE,
-    node_type TEXT NOT NULL CHECK (node_type IN ('rule', 'branch', 'action')),
+    node_type TEXT NOT NULL CHECK (node_type IN ('rule', 'branch', 'action', 'terminate')),
     rule_id UUID NULL REFERENCES rules(id) ON DELETE RESTRICT,
     branch_type TEXT NULL CHECK (branch_type IS NULL OR branch_type IN ('TRUE', 'FALSE')),
     action_type TEXT NULL CHECK (action_type IS NULL OR action_type IN ('redirect', 'email')),
@@ -442,6 +482,9 @@ CREATE INDEX idx_flow_nodes_flow_id ON flow_nodes(flow_id);
 CREATE INDEX idx_flow_nodes_parent_id ON flow_nodes(parent_id);
 CREATE INDEX idx_flow_nodes_rule_id ON flow_nodes(rule_id);
 
+--------------------------------------------------
+-- FLOW RUNS
+--------------------------------------------------
 CREATE TABLE flow_runs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
@@ -459,6 +502,9 @@ CREATE INDEX idx_flow_runs_company_id ON flow_runs(company_id);
 CREATE INDEX idx_flow_runs_flow_id ON flow_runs(flow_id);
 CREATE INDEX idx_flow_runs_location_survey_id ON flow_runs(location_survey_id);
 
+--------------------------------------------------
+-- EMAIL EVENTS
+--------------------------------------------------
 CREATE TABLE email_events (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,

@@ -1,19 +1,23 @@
 "use client"
 
 import { useRouter } from "next/navigation"
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useState } from "react"
 import { ArrowRight, Loader2, Pencil, Plus, Save, ToggleLeft, ToggleRight, Trash2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { LoadingSpinner } from "@/components/ui/LoadingSpinner"
 import { Card } from "@/components/ui/card"
 import { useConfirm } from "@/components/ui/ConfirmDialog"
 import { SingleSelectDropdown } from "@/components/ui/DropdownSelect"
 import { supabase } from "@/lib/supabase/client"
+
+import { draftFromFlow, preorderDraftNodesWithPositions } from "@/components/flow-editor/draftUtils"
 import {
   deleteSurveyFlow,
   extractErrorMessage,
   fetchFlowRuns,
   fetchFlows,
   fetchSurveys,
+  setSurveyFlowActive,
   updateSurveyFlow,
   type FlowPayload,
   type FlowResponse,
@@ -40,12 +44,13 @@ function flowCounts(flow: FlowResponse) {
 }
 
 function flowToPayload(flow: FlowResponse, isActive: boolean): FlowPayload {
+  const ordered = preorderDraftNodesWithPositions(draftFromFlow(flow).nodes)
   return {
     name: flow.name,
     description: flow.description,
     is_active: isActive,
     location_survey_ids: flow.location_survey_ids,
-    nodes: flow.nodes.map((node) => ({
+    nodes: ordered.map((node) => ({
       id: node.id,
       parent_id: node.parent_id,
       node_type: node.node_type,
@@ -74,12 +79,6 @@ function CreateFlowModal({
   const [name, setName] = useState("")
   const [surveyId, setSurveyId] = useState(surveys[0]?.id ?? "")
   const [error, setError] = useState<string | null>(null)
-
-  const duplicateName = useMemo(() => {
-    const normalized = name.trim().toLowerCase()
-    if (!normalized) return false
-    return existingFlows.some((flow) => flow.name.trim().toLowerCase() === normalized)
-  }, [existingFlows, name])
 
   if (!open) return null
 
@@ -130,12 +129,6 @@ function CreateFlowModal({
             </div>
           </label>
 
-          {duplicateName ? (
-            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              A flow with that name already exists for this company.
-            </div>
-          ) : null}
-
           {error ? (
             <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               {error}
@@ -158,7 +151,10 @@ function CreateFlowModal({
                 setError("Choose a survey for this flow.")
                 return
               }
-              if (duplicateName) {
+              const nameTaken = existingFlows.some(
+                (flow) => flow.name.trim().toLowerCase() === normalizedName.toLowerCase(),
+              )
+              if (nameTaken) {
                 setError("A flow with that name already exists for this company.")
                 return
               }
@@ -191,12 +187,6 @@ function EditFlowModal({
   const [name, setName] = useState(flow.name)
   const [description, setDescription] = useState(flow.description ?? "")
   const [error, setError] = useState<string | null>(null)
-
-  const duplicateName = useMemo(() => {
-    const normalized = name.trim().toLowerCase()
-    if (!normalized || normalized === flow.name.trim().toLowerCase()) return false
-    return existingFlows.some((f) => f.id !== flow.id && f.name.trim().toLowerCase() === normalized)
-  }, [existingFlows, flow, name])
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
@@ -242,11 +232,6 @@ function EditFlowModal({
             />
           </label>
 
-          {duplicateName ? (
-            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              A flow with that name already exists for this company.
-            </div>
-          ) : null}
           {error ? (
             <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               {error}
@@ -262,11 +247,20 @@ function EditFlowModal({
           <div className="flex gap-2">
             <Button variant="outline" onClick={onClose}>Cancel</Button>
             <Button
-              disabled={saving || duplicateName}
+              disabled={saving}
               onClick={() => {
                 const trimmed = name.trim()
-                if (!trimmed) { setError("Flow name is required."); return }
-                if (duplicateName) { setError("A flow with that name already exists."); return }
+                if (!trimmed) {
+                  setError("Flow name is required.")
+                  return
+                }
+                const taken = existingFlows.some(
+                  (f) => f.id !== flow.id && f.name.trim().toLowerCase() === trimmed.toLowerCase(),
+                )
+                if (taken) {
+                  setError("A flow with that name already exists for this company.")
+                  return
+                }
                 onSave(trimmed, description.trim())
               }}
             >
@@ -344,9 +338,21 @@ export default function FlowsPage() {
 
   async function toggleFlow(flow: FlowResponse) {
     const token = await getToken()
-    if (!token) return
+    if (!token) {
+      setError("You must be signed in to update flows.")
+      return
+    }
+    const nextActive = !flow.is_active
+    if (flow.is_active) {
+      const ok = await confirm({
+        title: `Disable Flow - ${flow.name}`,
+        message: "Are you sure you want to disable this flow?",
+        confirmLabel: "Disable",
+      })
+      if (!ok) return
+    }
     try {
-      const updated = await updateSurveyFlow(token, flow.survey_id, flow.id, flowToPayload(flow, !flow.is_active))
+      const updated = await setSurveyFlowActive(token, flow.survey_id, flow.id, { is_active: nextActive })
       setFlows((current) => current.map((item) => (item.id === updated.id ? updated : item)))
     } catch (err) {
       setError(extractErrorMessage(err, "Failed to update flow"))
@@ -355,8 +361,8 @@ export default function FlowsPage() {
 
   async function deleteFlow(flow: FlowResponse) {
     const ok = await confirm({
-      title: "Delete flow",
-      message: `Delete "${flow.name}"?`,
+      title: `Delete Flow - ${flow.name}`,
+      message: `Are you sure you want to delete this flow? This cannot be undone.`,
       confirmLabel: "Delete",
       variant: "danger",
     })
@@ -374,7 +380,7 @@ export default function FlowsPage() {
   if (loading) {
     return (
       <div className="flex min-h-[220px] items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-violet-500" />
+        <LoadingSpinner size="lg" />
       </div>
     )
   }

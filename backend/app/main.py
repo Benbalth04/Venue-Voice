@@ -13,6 +13,7 @@ from .routes.survey_public import router as survey_public_router
 from .routes.analytics import router as analytics_router
 from .core.errors.app_error import AppError
 from .core.errors.handlers import app_error_handler, generic_exception_handler
+from .middleware.id_obfuscation import IDObfuscationMiddleware
 
 app = FastAPI()
 app.add_exception_handler(AppError, app_error_handler)
@@ -28,6 +29,8 @@ app.include_router(qr_public_router, prefix="/q", tags=["qr-redirect"])
 app.include_router(survey_public_router, prefix="/api/v1", tags=["survey-public"])
 app.include_router(analytics_router, prefix="/api/v1", tags=["analytics"])
 
+# Inner: transforms IDs; outer: CORS (runs first on the request).
+app.add_middleware(IDObfuscationMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[os.getenv("FRONTEND_ORIGIN")],

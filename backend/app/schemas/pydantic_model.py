@@ -136,7 +136,9 @@ class LocationSurveyResponse(BaseModel):
     is_active: bool
     start_date: str
     end_date: str | None
-    status: str
+    status: str = Field(
+        description="Assignment lifecycle: active, scheduled, inactive, or deleted (independent of QR codes).",
+    )
     created_at: str
     updated_at: str
 
@@ -154,6 +156,11 @@ class LocationNotificationGroupUpdate(BaseModel):
 class QRCodeCreate(BaseModel):
     title: str
     location_survey_id: uuid.UUID
+    redirect_url: str | None = Field(
+        default=None,
+        description="URL encoded in the QR image. If omitted, defaults to {FRONTEND_ORIGIN}/r/{id}.",
+    )
+    has_logo: bool = True
 
 
 class QRCodeUpdate(BaseModel):
@@ -162,21 +169,35 @@ class QRCodeUpdate(BaseModel):
     is_active: bool | None = None
 
 
+class QRCodeAssetUrls(BaseModel):
+    svg: str
+    png: str
+    jpeg: str
+
+
 class QRCodeResponse(BaseModel):
     id: uuid.UUID
     title: str
     location_survey_id: uuid.UUID
     survey_id: uuid.UUID
     survey_title: str | None
-    location_status: str | None = None
+    qr_status: str = Field(description="QR code only: active, inactive, or deleted.")
+    location_survey_status: str = Field(
+        description="Linked location–survey assignment: active, scheduled, inactive, or deleted.",
+    )
     location_id: uuid.UUID
     location_name: str | None
     start_date: str | None = None
     end_date: str | None = None
-    assignment_status: str | None = None
     is_active: bool
+    redirect_url: str | None = None
+    has_logo: bool = True
+    assets: QRCodeAssetUrls | None = None
     created_at: str
     updated_at: str
+    # Deprecated: use location_survey_status / qr_status instead
+    location_status: str | None = None
+    assignment_status: str | None = None
 
 
 class SurveySummaryResponse(BaseModel):
@@ -482,6 +503,7 @@ class FlowNodeType(str, PyEnum):
     rule = "rule"
     branch = "branch"
     action = "action"
+    terminate = "terminate"
 
 
 class FlowBranchType(str, PyEnum):
@@ -743,6 +765,13 @@ class FlowNodeCreate(BaseModel):
                     raise ValueError("branch nodes require config.negate to be a boolean")
             return self
 
+        if self.node_type == FlowNodeType.terminate:
+            if self.rule_id is not None:
+                raise ValueError("terminate nodes cannot define rule_id")
+            if self.action_type is not None:
+                raise ValueError("terminate nodes cannot define action_type")
+            return self
+
         if self.action_type is None:
             raise ValueError("action nodes require action_type")
         if self.rule_id is not None:
@@ -816,8 +845,16 @@ class CreateFlow(BaseModel):
             children = children_by_parent.get(node_id, [])
             if node.parent_id is None and node.branch_type is not None:
                 raise ValueError("root nodes cannot define branch_type")
-            if node.node_type == FlowNodeType.action and children:
-                raise ValueError("action nodes cannot have children")
+            if node.node_type == FlowNodeType.terminate:
+                if len(children) > 0:
+                    raise ValueError("terminate nodes cannot have children")
+            elif node.node_type == FlowNodeType.action:
+                if len(children) > 1:
+                    raise ValueError("action nodes can have at most one child")
+                if len(children) == 1:
+                    child_id, child = children[0]
+                    if child.node_type not in (FlowNodeType.action, FlowNodeType.terminate) or child.branch_type is not None:
+                        raise ValueError("action nodes may only chain to another action or terminate node")
             if node.node_type == FlowNodeType.rule:
                 if len(children) != 1:
                     raise ValueError("rule nodes must have exactly one child")
@@ -825,32 +862,121 @@ class CreateFlow(BaseModel):
                     raise ValueError("rule node children cannot define branch_type")
             elif node.node_type == FlowNodeType.branch:
                 if len(children) != 2:
+                    if len(children) > 2:
+                        raise ValueError(
+                            "branch nodes must have exactly two children (one TRUE, one FALSE); "
+                            "extra children often mean a step was inserted on an edge without preserving True/False"
+                        )
                     raise ValueError("branch nodes must define both TRUE and FALSE children")
                 branch_values = [child.branch_type for _, child in children]
                 if sorted(branch_values) != [FlowBranchType.FALSE, FlowBranchType.TRUE]:
-                    raise ValueError("branch nodes must define one TRUE and one FALSE child")
+                    raise ValueError(
+                        "branch children must set branch_type to TRUE or FALSE (one of each); "
+                        "steps directly under a branch cannot omit branch_type"
+                    )
             else:
                 for _, child in children:
                     if child.branch_type is not None:
                         raise ValueError("only branch node children can define branch_type")
 
+        def branch_condition_rule_uuids(branch_node: FlowNodeCreate) -> list[uuid.UUID]:
+            config = branch_node.config or {}
+            raw_conditions = config.get("rule_conditions")
+            out: list[uuid.UUID] = []
+            if isinstance(raw_conditions, list):
+                for rc in raw_conditions:
+                    if isinstance(rc, dict) and rc.get("rule_id") is not None:
+                        out.append(uuid.UUID(str(rc["rule_id"])))
+                return out
+            raw_rule_ids = config.get("rule_ids")
+            if isinstance(raw_rule_ids, list):
+                for x in raw_rule_ids:
+                    out.append(uuid.UUID(str(x)))
+            return out
+
+        seen_rule_bindings: dict[uuid.UUID, uuid.UUID] = {}
+        for map_node_id, map_node in node_key_map.items():
+            if map_node.node_type != FlowNodeType.rule or map_node.rule_id is None:
+                continue
+            if map_node.rule_id in seen_rule_bindings:
+                raise ValueError("each survey rule may only be referenced by one rule node per flow")
+            seen_rule_bindings[map_node.rule_id] = map_node_id
+
+        for _, branch_node in node_key_map.items():
+            if branch_node.node_type != FlowNodeType.branch:
+                continue
+            allowed_upstream: set[uuid.UUID] = set()
+            ancestor_id = branch_node.parent_id
+            while ancestor_id is not None:
+                ancestor = node_key_map[ancestor_id]
+                if ancestor.node_type == FlowNodeType.rule and ancestor.rule_id is not None:
+                    allowed_upstream.add(ancestor.rule_id)
+                ancestor_id = ancestor.parent_id
+            for cond_rule_id in branch_condition_rule_uuids(branch_node):
+                if cond_rule_id not in allowed_upstream:
+                    raise ValueError(
+                        "branch checks may only reference rules from rule nodes above the branch in the flow"
+                    )
+
+        def walk_redirect_limit(node_id: uuid.UUID, redirects_seen: int) -> None:
+            node = node_key_map[node_id]
+            if node.node_type == FlowNodeType.terminate:
+                return
+            if node.node_type == FlowNodeType.rule:
+                children = children_by_parent.get(node_id, [])
+                if len(children) != 1:
+                    return
+                walk_redirect_limit(children[0][0], redirects_seen)
+                return
+            if node.node_type == FlowNodeType.branch:
+                for child_id, _ in children_by_parent.get(node_id, []):
+                    walk_redirect_limit(child_id, redirects_seen)
+                return
+            if node.node_type == FlowNodeType.action:
+                next_count = redirects_seen + (
+                    1 if node.action_type == FlowActionType.redirect else 0
+                )
+                if next_count > 1:
+                    raise ValueError(
+                        "each path through the flow may include at most one webpage redirect action"
+                    )
+                children = children_by_parent.get(node_id, [])
+                if not children:
+                    return
+                walk_redirect_limit(children[0][0], next_count)
+                return
+
         def walk(node_id: uuid.UUID) -> None:
             node = node_key_map[node_id]
             children = children_by_parent.get(node_id, [])
+            if node.node_type == FlowNodeType.terminate:
+                return
             if node.node_type == FlowNodeType.action:
+                if not children:
+                    return
+                if len(children) != 1:
+                    raise ValueError("action chains must be linear")
+                walk(children[0][0])
                 return
             if not children:
-                raise ValueError("every flow path must end with an action node")
+                raise ValueError("every flow path must end with an action or terminate node")
             for child_id, _ in children:
                 walk(child_id)
 
         root_id = roots[0].id or uuid.uuid5(uuid.NAMESPACE_URL, "flow-root")
+        walk_redirect_limit(root_id, 0)
         walk(root_id)
         return self
 
 
 class UpdateFlow(CreateFlow):
     pass
+
+
+class SetFlowActive(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    is_active: bool
 
 
 class FlowNodeResponse(BaseModel):
@@ -897,6 +1023,7 @@ class FlowTestRequest(BaseModel):
 class FlowTestResponse(BaseModel):
     execution_trace: dict[str, Any]
     action: FlowActionResult | None = None
+    actions: list[FlowActionResult] = Field(default_factory=list)
 
 
 class FlowRunResponse(BaseModel):

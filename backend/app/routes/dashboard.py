@@ -169,7 +169,6 @@ def get_dashboard(
             QRCodeORM.company_id == company.id,
             QRCodeORM.is_active.is_(True),
             QRCodeORM.deleted_at.is_(None),
-            LocationSurveyORM.deleted_at.is_(None),
         )
         .all()
         if company
