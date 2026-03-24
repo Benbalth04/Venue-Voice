@@ -41,13 +41,18 @@ function QRPanel({
   const displayUrl = qr.redirect_url ?? qrUrl(qr.id)
   const assets = qr.assets
 
-  function downloadFromUrl(href: string, filename: string) {
+  async function downloadFromUrl(href: string, filename: string) {
+    const res = await fetch(href)
+    const blob = await res.blob()
+
+    const url = URL.createObjectURL(blob)
+
     const link = document.createElement("a")
+    link.href = url
     link.download = filename
-    link.href = href
-    link.rel = "noopener noreferrer"
-    link.target = "_blank"
     link.click()
+
+    URL.revokeObjectURL(url)
   }
 
   function downloadPNG() {

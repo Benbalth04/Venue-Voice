@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 # Tunables (future: logo_size_pct, colors — keep centralized)
 ERROR_CORRECTION = "h"
 QUIET_ZONE_MODULES = 4
-LOGO_FRACTION_MAX = 0.24
+LOGO_FRACTION_MAX = 0.2
 MAX_REDIRECT_URL_LEN = 2048
 LOGO_FETCH_TIMEOUT_S = 20
 
@@ -75,20 +75,21 @@ def _pick_scale(qr: segno.QRCode, target: int = 600) -> int:
 
 
 def _load_logo_raster(logo_url: str, max_px: int) -> Image.Image | None:
-    """Download logo, render to raster, convert to B&W RGB. Returns None on failure."""
+    """Download logo (SVG supported), convert coloured pixels to black, background to white."""
     try:
         resp = requests.get(logo_url, timeout=LOGO_FETCH_TIMEOUT_S)
         resp.raise_for_status()
         data = resp.content
-        ctype = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        ctype = (resp.headers.get("Content-Type") or "").lower()
 
-        im: Image.Image | None = None
-        if "svg" in ctype or data.strip()[:5] == b"<?xml" or data.strip()[:4] == b"<svg":
+        # --- Load image ---
+        if "svg" in ctype or data.strip().startswith(b"<svg"):
             try:
                 import cairosvg
             except ImportError:
                 logger.error("cairosvg is required to render SVG logos")
                 return None
+
             out = io.BytesIO()
             cairosvg.svg2png(bytestring=data, write_to=out, output_width=max_px)
             out.seek(0)
@@ -96,13 +97,23 @@ def _load_logo_raster(logo_url: str, max_px: int) -> Image.Image | None:
         else:
             im = Image.open(io.BytesIO(data)).convert("RGBA")
 
-        # Fit inside max_px box, preserve aspect
+        # Resize
         im.thumbnail((max_px, max_px), Image.Resampling.LANCZOS)
 
-        g = im.convert("L")
-        bw = g.point(lambda x: 0 if x < 140 else 255, "1")
-        rgb = bw.convert("RGB")
-        return rgb
+        # --- Key fix: use alpha channel ---
+        r, g, b, a = im.split()
+
+        # Create white background
+        white_bg = Image.new("RGB", im.size, (255, 255, 255))
+
+        # Create black foreground
+        black_fg = Image.new("RGB", im.size, (0, 0, 0))
+
+        # Use alpha as mask: only draw where logo exists
+        result = Image.composite(black_fg, white_bg, a)
+
+        return result
+
     except Exception as e:
         logger.exception("Logo processing failed", extra={"error": str(e), "logo_url": logo_url})
         return None
@@ -111,21 +122,50 @@ def _load_logo_raster(logo_url: str, max_px: int) -> Image.Image | None:
 def _compose_png_with_logo(qr_png_bytes: bytes, logo: Image.Image) -> bytes:
     qr_im = Image.open(io.BytesIO(qr_png_bytes)).convert("RGBA")
     w, h = qr_im.size
+
     box = int(min(w, h) * LOGO_FRACTION_MAX)
     box = max(box, 8)
+
+    # Resize logo
     logo_resized = logo.copy()
     logo_resized.thumbnail((box, box), Image.Resampling.LANCZOS)
 
+    padding = 0   # white space around logo
+    border = int(box * 0.05) # black border thickness
+
+    inner_size = box - 2 * (padding + border)
+    inner_size = max(inner_size, 1)
+
+    logo_resized.thumbnail((inner_size, inner_size), Image.Resampling.LANCZOS)
+
+    # --- Create layers ---
+    # Base white square
     pad = Image.new("RGB", (box, box), (255, 255, 255))
+
+    # Draw black border
+    for x in range(box):
+        for y in range(box):
+            if (
+                x < border
+                or x >= box - border
+                or y < border
+                or y >= box - border
+            ):
+                pad.putpixel((x, y), (0, 0, 0))
+
+    # Paste logo inside (centered)
     lx = (box - logo_resized.width) // 2
     ly = (box - logo_resized.height) // 2
     pad.paste(logo_resized, (lx, ly))
 
+    # --- Composite onto QR ---
     cx = (w - box) // 2
     cy = (h - box) // 2
+
     base = Image.new("RGBA", (w, h), (255, 255, 255, 255))
     base.paste(qr_im, (0, 0))
     base.paste(pad, (cx, cy))
+
     out = io.BytesIO()
     base.convert("RGB").save(out, format="PNG", optimize=True)
     return out.getvalue()
@@ -138,7 +178,7 @@ def generate_qr_bytes(
 ) -> QRGeneratedAssets:
     """
     Build svg, png, and jpeg bytes for a redirect URL.
-    Logo is loaded from QR_LOGO_SVG_URL when has_logo is True; failures fall back to QR without logo.
+    Logo is loaded from QR_LOGO_URL when has_logo is True; failures fall back to QR without logo.
     """
     validate_redirect_url(redirect_url)
     qr = segno.make(redirect_url, error=ERROR_CORRECTION, boost_error=True)
@@ -148,11 +188,11 @@ def generate_qr_bytes(
     qr.save(buf_png, kind="png", scale=scale, border=QUIET_ZONE_MODULES)
     png_bytes = buf_png.getvalue()
 
-    logo_url = os.getenv("QR_LOGO_SVG_URL", "").strip()
+    logo_url = os.getenv("QR_LOGO_URL", "").strip()
     applied_logo = False
     if has_logo and logo_url:
         w, _h = qr.symbol_size(scale=scale, border=QUIET_ZONE_MODULES)
-        max_logo = int(min(w, h) * LOGO_FRACTION_MAX)
+        max_logo = int(min(w, _h) * LOGO_FRACTION_MAX)
         logo_r = _load_logo_raster(logo_url, max_logo)
         if logo_r is not None:
             try:
@@ -169,7 +209,7 @@ def generate_qr_bytes(
                 extra={"has_logo": has_logo, "logo_configured": bool(logo_url)},
             )
     elif has_logo and not logo_url:
-        logger.warning("has_logo=True but QR_LOGO_SVG_URL is not set; generating QR without logo")
+        logger.warning("has_logo=True but QR_LOGO_URL is not set; generating QR without logo")
 
     # JPEG (white background)
     im = Image.open(io.BytesIO(png_bytes)).convert("RGB")

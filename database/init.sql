@@ -51,9 +51,6 @@ CREATE TABLE locations (
     UNIQUE(company_id, name)
 );
 
-CREATE INDEX idx_locations_company_id
-ON locations(company_id);
-
 --------------------------------------------------
 -- SURVEYS
 --------------------------------------------------
@@ -72,9 +69,6 @@ CREATE TABLE surveys (
     UNIQUE(company_id, name)
 );
 
-CREATE INDEX idx_surveys_company_id
-ON surveys(company_id);
-
 --------------------------------------------------
 -- SURVEY VERSIONS
 --------------------------------------------------
@@ -92,9 +86,6 @@ CREATE TABLE location_surveys (
     CONSTRAINT unique_location_survey UNIQUE (location_id, survey_id)
 );
 
-CREATE INDEX idx_location_surveys_location_id ON location_surveys(location_id);
-CREATE INDEX idx_location_surveys_survey_id ON location_surveys(survey_id);
-
 --------------------------------------------------
 -- SURVEY VERSIONS
 --------------------------------------------------
@@ -110,9 +101,6 @@ CREATE TABLE survey_versions (
     deleted_at TIMESTAMP NULL,
     UNIQUE(survey_id, version_number)
 );
-
-CREATE INDEX idx_survey_versions_survey_id
-ON survey_versions(survey_id);
 
 --------------------------------------------------
 -- QUESTION TYPES
@@ -143,8 +131,6 @@ CREATE TABLE IF NOT EXISTS question_type_settings (
     UNIQUE(question_type, setting_key)
 );
 
-CREATE INDEX idx_qts_question_type ON question_type_settings(question_type);
-
 --------------------------------------------------
 -- QUESTIONS
 --------------------------------------------------
@@ -160,13 +146,9 @@ CREATE TABLE questions (
     deleted_at TIMESTAMP NULL
 );
 
-CREATE INDEX idx_questions_survey_version
-ON questions(survey_version_id);
-
 --------------------------------------------------
 -- QR CODES
 --------------------------------------------------
-
 CREATE TABLE qr_codes (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
@@ -181,11 +163,10 @@ CREATE TABLE qr_codes (
     deleted_at TIMESTAMP NULL
 );
 
-CREATE INDEX idx_qr_codes_company_id ON qr_codes(company_id);
-CREATE INDEX idx_qr_codes_location_survey_id ON qr_codes(location_survey_id);
-CREATE INDEX idx_qr_codes_location_id ON qr_codes(location_id);
-CREATE INDEX idx_qr_codes_title ON qr_codes(title);
 
+--------------------------------------------------
+-- STATIC QR CODE ASSETS (metadata about QR codes stored in Supabase)
+--------------------------------------------------
 CREATE TABLE qr_code_assets (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     qr_code_id UUID NOT NULL REFERENCES qr_codes(id) ON DELETE CASCADE,
@@ -197,12 +178,9 @@ CREATE TABLE qr_code_assets (
     CONSTRAINT uq_qr_code_assets_qr_code_id_format UNIQUE (qr_code_id, format)
 );
 
-CREATE INDEX idx_qr_code_assets_qr_code_id ON qr_code_assets(qr_code_id);
-
 --------------------------------------------------
 -- LOCATION SNAPSHOTS
 --------------------------------------------------
-
 CREATE TABLE location_snapshots (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     location_id UUID REFERENCES locations(id) ON DELETE SET NULL,
@@ -212,8 +190,6 @@ CREATE TABLE location_snapshots (
     created_at TIMESTAMP DEFAULT NOW(),
     deleted_at TIMESTAMP NULL
 );
-
-CREATE INDEX idx_location_snapshots_location_id ON location_snapshots(location_id);
 
 --------------------------------------------------
 -- SCAN EVENTS
@@ -230,11 +206,6 @@ CREATE TABLE scan_events (
     session_id UUID,
     deleted_at TIMESTAMP NULL
 );
-
-CREATE INDEX idx_scan_events_qr_code_id ON scan_events(qr_code_id);
-CREATE INDEX idx_scan_events_scanned_at ON scan_events(scanned_at);
-CREATE INDEX idx_scan_events_company_id ON scan_events(company_id);
-CREATE INDEX idx_scan_events_session_id ON scan_events(session_id);
 
 --------------------------------------------------
 -- SURVEY SESSIONS
@@ -255,11 +226,6 @@ CREATE TABLE survey_sessions (
     hashed_ip_address TEXT,
     deleted_at TIMESTAMP NULL
 );
-
-CREATE INDEX idx_survey_sessions_scan_id ON survey_sessions(scan_id);
-CREATE INDEX idx_survey_sessions_survey_version_id ON survey_sessions(survey_version_id);
-CREATE INDEX idx_survey_sessions_qr_code_id ON survey_sessions(qr_code_id);
-CREATE INDEX idx_survey_sessions_company_id ON survey_sessions(company_id);
 
 --------------------------------------------------
 -- SURVEY REDIRECT IDEMPOTENCY (prevent duplicate sessions per scan)
@@ -291,10 +257,6 @@ CREATE TABLE survey_responses (
     deleted_at TIMESTAMP NULL
 );
 
-CREATE INDEX idx_survey_responses_session_id ON survey_responses(session_id);
-CREATE INDEX idx_survey_responses_survey_version_id ON survey_responses(survey_version_id);
-CREATE INDEX idx_survey_responses_qr_code_id ON survey_responses(qr_code_id);
-
 --------------------------------------------------
 -- SURVEY RESPONSE ANSWERS (normalized answers for public survey flow)
 --------------------------------------------------
@@ -312,12 +274,6 @@ CREATE TABLE survey_response_answers (
     )
 );
 
-CREATE INDEX idx_survey_response_answers_survey_response_id
-ON survey_response_answers(survey_response_id);
-
-CREATE INDEX idx_survey_response_answers_question_id
-ON survey_response_answers(question_id);
-
 --------------------------------------------------
 -- RESPONSE READS (track which responses each user has viewed)
 --------------------------------------------------
@@ -329,9 +285,6 @@ CREATE TABLE response_reads (
     deleted_at TIMESTAMP NULL,
     UNIQUE(user_id, response_id)
 );
-
-CREATE INDEX idx_response_reads_user_response
-ON response_reads(user_id, response_id);
 
 --------------------------------------------------
 -- RULES
@@ -348,12 +301,6 @@ CREATE TABLE rules (
     deleted_at TIMESTAMP NULL
 );
 
-CREATE INDEX idx_rules_company_id ON rules(company_id);
-CREATE INDEX idx_rules_survey_id ON rules(survey_id);
-CREATE UNIQUE INDEX uq_rules_survey_name_active
-ON rules(survey_id, LOWER(name))
-WHERE deleted_at IS NULL;
-
 --------------------------------------------------
 -- Rule Groups
 --------------------------------------------------
@@ -363,8 +310,6 @@ CREATE TABLE rule_groups (
     operator TEXT NOT NULL CHECK (operator IN ('AND', 'OR')),
     created_at TIMESTAMP DEFAULT NOW()
 );
-
-CREATE INDEX idx_rule_groups_rule_id ON rule_groups(rule_id);
 
 --------------------------------------------------
 -- RULE CONDITIONS
@@ -381,10 +326,6 @@ CREATE TABLE rule_conditions (
     deleted_at TIMESTAMP NULL
 );
 
-CREATE INDEX idx_rule_conditions_rule_id ON rule_conditions(rule_id);
-CREATE INDEX idx_rule_conditions_question_id ON rule_conditions(question_id);
-CREATE INDEX idx_rule_conditions_group_id ON rule_conditions(group_id);
-
 --------------------------------------------------
 -- NOTIFICATION GROUPS
 --------------------------------------------------
@@ -395,11 +336,6 @@ CREATE TABLE notification_groups (
     created_at TIMESTAMP DEFAULT NOW(),
     deleted_at TIMESTAMP NULL
 );
-
-CREATE INDEX idx_notification_groups_company_id ON notification_groups(company_id);
-CREATE UNIQUE INDEX uq_notification_groups_company_name_active
-ON notification_groups(company_id, LOWER(name))
-WHERE deleted_at IS NULL;
 
 --------------------------------------------------
 -- NOTIFCATION GROUP MEMBERS
@@ -413,8 +349,6 @@ CREATE TABLE notification_group_members (
     deleted_at TIMESTAMP NULL
 );
 
-CREATE INDEX idx_notification_group_members_group_id ON notification_group_members(group_id);
-
 --------------------------------------------------
 -- LOCATION NOTIFICATION GROUPS (i.e. mapping notificaton groups to locations)
 --------------------------------------------------
@@ -424,9 +358,6 @@ CREATE TABLE location_notification_groups (
     group_id UUID NOT NULL REFERENCES notification_groups(id) ON DELETE CASCADE,
     UNIQUE(location_id, group_id)
 );
-
-CREATE INDEX idx_location_notification_groups_location_id ON location_notification_groups(location_id);
-CREATE INDEX idx_location_notification_groups_group_id ON location_notification_groups(group_id);
 
 --------------------------------------------------
 -- FLOWS
@@ -443,12 +374,6 @@ CREATE TABLE flows (
     deleted_at TIMESTAMP NULL
 );
 
-CREATE INDEX idx_flows_company_id ON flows(company_id);
-CREATE INDEX idx_flows_survey_id ON flows(survey_id);
-CREATE UNIQUE INDEX uq_flows_company_name_active
-ON flows(company_id, LOWER(name))
-WHERE deleted_at IS NULL;
-
 --------------------------------------------------
 -- FLOW LOCATION SURVEYS (map flows to location surveys for execution)
 --------------------------------------------------
@@ -458,9 +383,6 @@ CREATE TABLE flow_location_surveys (
     location_survey_id UUID NOT NULL REFERENCES location_surveys(id) ON DELETE CASCADE,
     UNIQUE(flow_id, location_survey_id)
 );
-
-CREATE INDEX idx_flow_location_surveys_flow_id ON flow_location_surveys(flow_id);
-CREATE INDEX idx_flow_location_surveys_location_survey_id ON flow_location_surveys(location_survey_id);
 
 --------------------------------------------------
 -- FLOW NODES
@@ -478,10 +400,6 @@ CREATE TABLE flow_nodes (
     created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE INDEX idx_flow_nodes_flow_id ON flow_nodes(flow_id);
-CREATE INDEX idx_flow_nodes_parent_id ON flow_nodes(parent_id);
-CREATE INDEX idx_flow_nodes_rule_id ON flow_nodes(rule_id);
-
 --------------------------------------------------
 -- FLOW RUNS
 --------------------------------------------------
@@ -498,10 +416,6 @@ CREATE TABLE flow_runs (
     created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE INDEX idx_flow_runs_company_id ON flow_runs(company_id);
-CREATE INDEX idx_flow_runs_flow_id ON flow_runs(flow_id);
-CREATE INDEX idx_flow_runs_location_survey_id ON flow_runs(location_survey_id);
-
 --------------------------------------------------
 -- EMAIL EVENTS
 --------------------------------------------------
@@ -513,9 +427,6 @@ CREATE TABLE email_events (
     status TEXT,
     created_at TIMESTAMP DEFAULT NOW()
 );
-
-CREATE INDEX idx_email_events_company_id ON email_events(company_id);
-CREATE INDEX idx_email_events_flow_run_id ON email_events(flow_run_id);
 
 --------------------------------------------------
 -- AI ANALYSIS
@@ -556,8 +467,6 @@ CREATE TABLE ai_analysis (
     UNIQUE (survey_response_id, question_id)
 );
 
-CREATE INDEX idx_ai_analysis_survey_response_id ON ai_analysis(survey_response_id);
-CREATE INDEX idx_ai_analysis_company_id ON ai_analysis(company_id);
 
 --------------------------------------------------
 -- Seed Data
@@ -654,8 +563,14 @@ INSERT INTO surveys (id, company_id, name, status, latest_version, created_at, u
 INSERT INTO location_surveys (id, location_id, survey_id, is_active, start_date, end_date, created_at, updated_at, deleted_at) VALUES
 ('bf0c4580-ebee-4a2e-a7f0-14663d3316c0', '87ff1d9a-d62a-425f-a378-06bab8438eb7', 'a3be873f-0271-48e4-84a1-ba8b26f15d14', true, '2026-03-15 05:56:49.03126', NULL, '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126', NULL);
 
-INSERT INTO qr_codes (id, company_id, title, is_active, location_survey_id, location_id, created_at, updated_at, deleted_at) VALUES
-('c172ef94-9f1d-4308-aa11-715d668a8686', '02238978-8b23-408a-a5e4-a0399578229a', 'Default QR Code', true, 'bf0c4580-ebee-4a2e-a7f0-14663d3316c0', '87ff1d9a-d62a-425f-a378-06bab8438eb7', '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126', NULL);
+INSERT INTO qr_codes (id, company_id, title, is_active, location_survey_id, location_id, redirect_url, has_logo, created_at, updated_at, deleted_at) VALUES
+('372b0789-0df2-4086-9523-d6799fa5509b', '02238978-8b23-408a-a5e4-a0399578229a', 'Default QR Code', true, 'bf0c4580-ebee-4a2e-a7f0-14663d3316c0', '87ff1d9a-d62a-425f-a378-06bab8438eb7', 'http://localhost:3000/r/372b0789-0df2-4086-9523-d6799fa5509b', true, '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126', NULL);
+
+INSERT INTO qr_codes_assets (id, qr_code_id, format, storage_path, public_url, created_at) VALUES
+('0872ff7f-4853-464e-94d7-53ef1ca40d43', '372b0789-0df2-4086-9523-d6799fa5509b', 'svg', '372b0789-0df2-4086-9523-d6799fa5509b/qr.svg', 'https://hriennuneldnfctmvjbu.supabase.co/storage/v1/object/public/qr_codes/372b0789-0df2-4086-9523-d6799fa5509b/qr.svg', '2026-03-15 05:56:49.03126'),
+('98d669ad-2613-434c-b48e-ca36b993c0a5', '372b0789-0df2-4086-9523-d6799fa5509b', 'png', '372b0789-0df2-4086-9523-d6799fa5509b/qr.png', 'https://hriennuneldnfctmvjbu.supabase.co/storage/v1/object/public/qr_codes/372b0789-0df2-4086-9523-d6799fa5509b/qr.png', '2026-03-15 05:56:49.03126'),
+('2874ccd8-9b4b-4476-ba65-61bfebf54b9e', '372b0789-0df2-4086-9523-d6799fa5509b', 'jpeg', '372b0789-0df2-4086-9523-d6799fa5509b/qr.jpeg', 'https://hriennuneldnfctmvjbu.supabase.co/storage/v1/object/public/qr_codes/372b0789-0df2-4086-9523-d6799fa5509b/qr.jpeg', '2026-03-24 03:06:42.023949');
+
 
 INSERT INTO survey_versions (id, survey_id, version_number, schema_json, created_by, created_at, theme_settings) VALUES
 (

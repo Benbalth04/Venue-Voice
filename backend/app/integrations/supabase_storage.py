@@ -11,7 +11,7 @@ from ..core.errors.exceptions import ExternalAPIError
 
 logger = logging.getLogger(__name__)
 
-QR_CODES_BUCKET = "qr-codes"
+QR_CODES_BUCKET = "qr_codes"
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 
 MIME_BY_FORMAT: dict[str, str] = {
