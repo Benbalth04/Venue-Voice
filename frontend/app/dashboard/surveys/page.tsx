@@ -21,13 +21,14 @@ import { supabase } from "@/lib/supabase/client"
 import {
   fetchSurveysList,
   createSurvey,
+  extractErrorMessage,
+  isStaleObjectError,
   publishSurvey,
   archiveSurvey,
   unpublishSurvey,
   unarchiveSurvey,
   duplicateSurvey,
   updateSurveyMeta,
-  extractErrorMessage,
   type SurveyListItem,
 } from "@/lib/api/client"
 import { defaultSurvey } from "@/lib/survey/defaultSurvey"
@@ -252,29 +253,73 @@ export default function SurveysListPage() {
   async function handlePublish(id: string) {
     const token = await getToken()
     if (!token) return
-    const updated = await publishSurvey(token, id)
-    setSurveys((prev) => prev.map((s) => (s.id === id ? { ...s, ...updated } : s)))
+    const survey = surveys.find((s) => s.id === id)
+    if (!survey) return
+    try {
+      const updated = await publishSurvey(token, id, survey.updated_at)
+      setSurveys((prev) => prev.map((s) => (s.id === id ? { ...s, ...updated } : s)))
+    } catch (err) {
+      if (isStaleObjectError(err)) {
+        await load()
+        setError("This survey was updated. Please try again.")
+      } else {
+        setError(extractErrorMessage(err, "Failed to publish survey"))
+      }
+    }
   }
 
   async function handleArchive(id: string) {
     const token = await getToken()
     if (!token) return
-    const updated = await archiveSurvey(token, id)
-    setSurveys((prev) => prev.map((s) => (s.id === id ? { ...s, ...updated } : s)))
+    const survey = surveys.find((s) => s.id === id)
+    if (!survey) return
+    try {
+      const updated = await archiveSurvey(token, id, survey.updated_at)
+      setSurveys((prev) => prev.map((s) => (s.id === id ? { ...s, ...updated } : s)))
+    } catch (err) {
+      if (isStaleObjectError(err)) {
+        await load()
+        setError("This survey was updated. Please try again.")
+      } else {
+        setError(extractErrorMessage(err, "Failed to archive survey"))
+      }
+    }
   }
 
   async function handleUnpublish(id: string) {
     const token = await getToken()
     if (!token) return
-    const updated = await unpublishSurvey(token, id)
-    setSurveys((prev) => prev.map((s) => (s.id === id ? { ...s, ...updated } : s)))
+    const survey = surveys.find((s) => s.id === id)
+    if (!survey) return
+    try {
+      const updated = await unpublishSurvey(token, id, survey.updated_at)
+      setSurveys((prev) => prev.map((s) => (s.id === id ? { ...s, ...updated } : s)))
+    } catch (err) {
+      if (isStaleObjectError(err)) {
+        await load()
+        setError("This survey was updated. Please try again.")
+      } else {
+        setError(extractErrorMessage(err, "Failed to unpublish survey"))
+      }
+    }
   }
 
   async function handleUnarchive(id: string) {
     const token = await getToken()
     if (!token) return
-    const updated = await unarchiveSurvey(token, id)
-    setSurveys((prev) => prev.map((s) => (s.id === id ? { ...s, ...updated } : s)))
+    const survey = surveys.find((s) => s.id === id)
+    if (!survey) return
+    try {
+      const updated = await unarchiveSurvey(token, id, survey.updated_at)
+      setSurveys((prev) => prev.map((s) => (s.id === id ? { ...s, ...updated } : s)))
+    } catch (err) {
+      if (isStaleObjectError(err)) {
+        await load()
+        setError("This survey was updated. Please try again.")
+      } else {
+        setError(extractErrorMessage(err, "Failed to unarchive survey"))
+      }
+    }
   }
 
   async function handleConfirmArchive(id: string) {
@@ -334,11 +379,16 @@ export default function SurveysListPage() {
     setRenaming(true)
     setRenameError(null)
     try {
-      await updateSurveyMeta(token, editingSurvey.id, { title: nextTitle })
+      await updateSurveyMeta(token, editingSurvey.id, { title: nextTitle, updated_at: editingSurvey.updated_at })
       await load()
       setEditingSurvey(null)
     } catch (err) {
-      setRenameError(extractErrorMessage(err, "Failed to update title"))
+      if (isStaleObjectError(err)) {
+        setRenameError("This survey was updated. Please try again.")
+        await load()
+      } else {
+        setRenameError(extractErrorMessage(err, "Failed to update title"))
+      }
     } finally {
       setRenaming(false)
     }

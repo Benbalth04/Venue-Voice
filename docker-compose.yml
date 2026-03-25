@@ -1,4 +1,10 @@
 services:
+  redis:
+    image: redis:7-alpine
+    restart: always
+    networks:
+      - backend
+
   database:
     build: ./database
     ports: 
@@ -20,6 +26,7 @@ services:
       - "5000:5000"
     depends_on:
       - database
+      - redis
     environment:
       DATABASE_URL: ${DATABASE_URL}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
@@ -31,6 +38,7 @@ services:
       QR_LOGO_URL: ${QR_LOGO_URL:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       OPENAI_SENTIMENT_MODEL: ${OPENAI_SENTIMENT_MODEL}
+      REDIS_URL: redis://redis:6379/0
     networks:
       - backend
     healthcheck:

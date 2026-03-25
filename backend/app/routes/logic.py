@@ -13,6 +13,7 @@ from ..schemas.pydantic_model import (
     AssignNotificationGroupToLocation,
     CreateFlow,
     CreateRule,
+    DeleteRequest,
     FlowResponse,
     FlowRunResponse,
     FlowTestRequest,
@@ -52,6 +53,8 @@ from ..services.notification_group_service import (
 from ..services.rule_service import (
     create_rule as create_rule_service,
     delete_rule as delete_rule_service,
+    get_broken_rule_count,
+    get_company_broken_rule_count,
     get_rule_bundle,
     update_rule as update_rule_service,
 )
@@ -108,6 +111,26 @@ def list_rules(
     return get_rule_bundle(db, survey_uuid)
 
 
+@router.get("/rules/broken-summary")
+def get_company_broken_rules_summary(
+    current_user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    company = _get_company_for_user(db, current_user)
+    return {"broken_rule_count": get_company_broken_rule_count(db, company.id)}
+
+
+@router.get("/surveys/{survey_id}/rules/broken/summary")
+def get_broken_rules_summary(
+    survey_id: str,
+    current_user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
+    _ensure_survey_access(db, current_user, survey_uuid)
+    return {"broken_rule_count": get_broken_rule_count(db, survey_uuid)}
+
+
 @router.post("/surveys/{survey_id}/rules", response_model=RuleResponse, status_code=201)
 def create_rule(
     survey_id: str,
@@ -131,6 +154,7 @@ def update_rule(
     survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
     rule_uuid = _parse_uuid(rule_id, code="INVALID_RULE_ID", label="rule ID")
     _ensure_survey_access(db, current_user, survey_uuid)
+    print(f"Updating rule {rule_uuid} for survey {survey_uuid} with payload: {payload}")
     return update_rule_service(db, survey_uuid, rule_uuid, payload)
 
 
@@ -138,13 +162,14 @@ def update_rule(
 def delete_rule(
     survey_id: str,
     rule_id: str,
+    payload: DeleteRequest,
     current_user: UserORM = Depends(get_current_user),
     db: Session = Depends(get_db_connection),
 ):
     survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
     rule_uuid = _parse_uuid(rule_id, code="INVALID_RULE_ID", label="rule ID")
     _ensure_survey_access(db, current_user, survey_uuid)
-    delete_rule_service(db, survey_uuid, rule_uuid)
+    delete_rule_service(db, survey_uuid, rule_uuid, payload.updated_at)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -216,20 +241,21 @@ def set_flow_active_route(
     survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
     flow_uuid = _parse_uuid(flow_id, code="INVALID_FLOW_ID", label="flow ID")
     company = _ensure_survey_access(db, current_user, survey_uuid)
-    return set_flow_active(db, company.id, survey_uuid, flow_uuid, is_active=payload.is_active)
+    return set_flow_active(db, company.id, survey_uuid, flow_uuid, is_active=payload.is_active, updated_at=payload.updated_at)
 
 
 @router.delete("/surveys/{survey_id}/flows/{flow_id}", status_code=204)
 def delete_flow_route(
     survey_id: str,
     flow_id: str,
+    payload: DeleteRequest,
     current_user: UserORM = Depends(get_current_user),
     db: Session = Depends(get_db_connection),
 ):
     survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
     flow_uuid = _parse_uuid(flow_id, code="INVALID_FLOW_ID", label="flow ID")
     company = _ensure_survey_access(db, current_user, survey_uuid)
-    delete_flow(db, company.id, survey_uuid, flow_uuid)
+    delete_flow(db, company.id, survey_uuid, flow_uuid, payload.updated_at)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -305,6 +331,7 @@ def update_notification_group_route(
         group_uuid,
         name=payload.name,
         members=[{"name": member.name, "email": str(member.email)} for member in payload.members],
+        updated_at=payload.updated_at,
     )
 
 
@@ -345,12 +372,13 @@ def sync_location_notification_groups_route(
 @router.delete("/notification-groups/{group_id}", status_code=204)
 def delete_notification_group_route(
     group_id: str,
+    payload: DeleteRequest,
     current_user: UserORM = Depends(get_current_user),
     db: Session = Depends(get_db_connection),
 ):
     company = _get_company_for_user(db, current_user)
     group_uuid = _parse_uuid(group_id, code="INVALID_NOTIFICATION_GROUP_ID", label="notification group ID")
-    delete_notification_group(db, company.id, group_uuid)
+    delete_notification_group(db, company.id, group_uuid, payload.updated_at)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

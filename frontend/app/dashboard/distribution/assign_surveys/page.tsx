@@ -15,6 +15,7 @@ import {
   fetchLocationSurveys,
   fetchLocations,
   fetchSurveys,
+  isStaleObjectError,
   updateLocationSurvey,
   type LocationResponse,
   type LocationSurveyBulkAssignCreate,
@@ -328,13 +329,15 @@ export default function AssignSurveysPage() {
     setEditError(null)
     try {
       const updatedRows = await Promise.all(
-        ids.map((id) =>
-          updateLocationSurvey(token, id, {
+        ids.map((id) => {
+          const current = assignments.find((a) => a.id === id)
+          return updateLocationSurvey(token, id, {
             is_active: payload.is_active,
             start_date: new Date(payload.start_date).toISOString(),
             end_date: toIsoOrNull(payload.end_date),
-          }),
-        ),
+            updated_at: current?.updated_at ?? "",
+          })
+        }),
       )
       setAssignments((current) =>
         current.map((assignment) => {
@@ -346,7 +349,11 @@ export default function AssignSurveysPage() {
       setBulkEditOpen(false)
       setSelectedAssignmentIds([])
     } catch (err) {
-      setEditError(extractErrorMessage(err, "Failed to update assignment"))
+      if (isStaleObjectError(err)) {
+        setEditError("One or more assignments were updated. Please refresh.")
+      } else {
+        setEditError(extractErrorMessage(err, "Failed to update assignment"))
+      }
     } finally {
       setEditLoading(false)
     }
@@ -363,11 +370,15 @@ export default function AssignSurveysPage() {
     const token = await getToken()
     if (!token) return
     try {
-      await deleteLocationSurvey(token, assignment.id)
+      await deleteLocationSurvey(token, assignment.id, assignment.updated_at)
       setAssignments((current) => current.filter((item) => item.id !== assignment.id))
       setSelectedAssignmentIds((current) => current.filter((id) => id !== assignment.id))
     } catch (err) {
-      setError(extractErrorMessage(err, "Failed to delete assignment"))
+      if (isStaleObjectError(err)) {
+        setError("This assignment was updated. Please refresh.")
+      } else {
+        setError(extractErrorMessage(err, "Failed to delete assignment"))
+      }
     }
   }
 

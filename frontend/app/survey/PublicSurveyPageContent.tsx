@@ -22,12 +22,24 @@ function responsesToAnswers(responses: SurveyResponses): Record<string, unknown>
   const out: Record<string, unknown> = {}
   for (const [qId, r] of Object.entries(responses)) {
     if (!r) continue
+    // Photo files are sent as separate multipart form fields — exclude from JSON answers
+    if (r.type === "photo") continue
     if (r.type === "star" || r.type === "nps") out[qId] = r.value
     else if (r.type === "choice") out[qId] = r.value
     else if (r.type === "choices") out[qId] = r.value
     else if (r.type === "text") out[qId] = r.value
   }
   return out
+}
+
+function collectPhotoFiles(responses: SurveyResponses): Record<string, File> {
+  const files: Record<string, File> = {}
+  for (const [qId, r] of Object.entries(responses)) {
+    if (r?.type === "photo" && r.value instanceof File) {
+      files[qId] = r.value
+    }
+  }
+  return files
 }
 
 function loadDraft(sessionId: string, qrCodeId: string): SurveyResponses | null {
@@ -44,9 +56,14 @@ function loadDraft(sessionId: string, qrCodeId: string): SurveyResponses | null 
 function saveDraft(sessionId: string, qrCodeId: string, responses: SurveyResponses) {
   if (typeof window === "undefined") return
   try {
+    // Exclude photo responses — File objects cannot be serialized to JSON and
+    // cannot be meaningfully restored from localStorage.
+    const draftable: SurveyResponses = Object.fromEntries(
+      Object.entries(responses).filter(([, v]) => v?.type !== "photo"),
+    )
     localStorage.setItem(
       `${DRAFT_KEY_PREFIX}${sessionId}-${qrCodeId}`,
-      JSON.stringify(responses),
+      JSON.stringify(draftable),
     )
   } catch {
     // ignore
@@ -152,7 +169,8 @@ export default function PublicSurveyPageContent() {
     setBackendMissingIds([])
     try {
       const answers = responsesToAnswers(responsesRef.current)
-      const result = await submitSurvey(sessionId, qrCodeId, answers)
+      const photoFiles = collectPhotoFiles(responsesRef.current)
+      const result = await submitSurvey(sessionId, qrCodeId, answers, photoFiles)
       submittedRef.current = true
       clearDraft(sessionId, qrCodeId)
       window.location.href = result.redirect_url

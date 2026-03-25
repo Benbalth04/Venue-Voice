@@ -13,11 +13,13 @@ import {
   createLocation,
   fetchLocations,
   fetchNotificationGroups,
+  isStaleObjectError,
   syncLocationNotificationGroups,
   updateLocation,
   extractErrorMessage,
   type LocationCreate,
   type LocationResponse,
+  type LocationUpdate,
   type NotificationGroupResponse,
 } from "@/lib/api/client"
 
@@ -235,34 +237,41 @@ export default function LocationsPage() {
     setFormLoading(true)
     setFormError(null)
     try {
-      const payload: LocationCreate = {
+      const basePayload: LocationCreate = {
         name: form.name.trim(),
         state: form.state.trim() || null,
         country: form.country.trim() || null,
         google_business_url: form.google_business_url.trim() || null,
       }
       if (editTarget) {
+        const payload: LocationUpdate = { ...basePayload, updated_at: editTarget.updated_at }
         const updated = await updateLocation(token, editTarget.id, payload)
         await syncLocationNotificationGroups(token, editTarget.id, form.notification_group_ids)
         setLocations((prev) => prev.map((l) => (l.id === updated.id ? updated : l)))
         setNotificationGroups(await fetchNotificationGroups(token))
         setModalOpen(false)
       } else {
-        const created = await createLocation(token, payload)
+        const created = await createLocation(token, basePayload)
         await syncLocationNotificationGroups(token, created.id, form.notification_group_ids)
         setLocations((prev) => [created, ...prev])
         setNotificationGroups(await fetchNotificationGroups(token))
         setModalOpen(false)
       }
     } catch (err) {
-      const msg = extractErrorMessage(err, "Something went wrong")
-      if (msg.toLowerCase().includes("not found") || msg.includes("404")) {
+      if (isStaleObjectError(err)) {
         setModalOpen(false)
         await load()
-        setError("Location no longer exists. Data has been refreshed.")
-        setTimeout(() => setError(null), 1000)
+        setFormError("This location was updated. Please try again.")
       } else {
-        setFormError(msg)
+        const msg = extractErrorMessage(err, "Something went wrong")
+        if (msg.toLowerCase().includes("not found") || msg.includes("404")) {
+          setModalOpen(false)
+          await load()
+          setError("Location no longer exists. Data has been refreshed.")
+          setTimeout(() => setError(null), 1000)
+        } else {
+          setFormError(msg)
+        }
       }
     } finally {
       setFormLoading(false)
@@ -283,16 +292,21 @@ export default function LocationsPage() {
     const token = await getToken()
     if (!token) return
     try {
-      const updated = await updateLocation(token, loc.id, { is_active: !loc.is_active })
+      const updated = await updateLocation(token, loc.id, { is_active: !loc.is_active, updated_at: loc.updated_at })
       setLocations((prev) => prev.map((l) => (l.id === updated.id ? updated : l)))
     } catch (err) {
-      const msg = extractErrorMessage(err, "Something went wrong")
-      if (msg.toLowerCase().includes("not found") || msg.includes("404")) {
+      if (isStaleObjectError(err)) {
         await load()
-        setError("Location no longer exists. Data has been refreshed.")
-        setTimeout(() => setError(null), 4000)
+        setError("This location was updated. Please try again.")
       } else {
-        setError(msg)
+        const msg = extractErrorMessage(err, "Something went wrong")
+        if (msg.toLowerCase().includes("not found") || msg.includes("404")) {
+          await load()
+          setError("Location no longer exists. Data has been refreshed.")
+          setTimeout(() => setError(null), 4000)
+        } else {
+          setError(msg)
+        }
       }
     }
   }

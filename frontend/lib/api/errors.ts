@@ -108,3 +108,11 @@ export function extractErrorMessage(err: unknown, fallback = "Something went wro
   if (err instanceof Error) return err.message || fallback
   return fallback
 }
+
+/**
+ * Returns true when the error is a stale-object conflict (OCC failure).
+ * The backend returns code "STALE_OBJECT" with HTTP 409.
+ */
+export function isStaleObjectError(err: unknown): boolean {
+  return isNormalizedError(err) && err.code === "STALE_OBJECT"
+}

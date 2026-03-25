@@ -16,10 +16,12 @@ import {
   extractErrorMessage,
   fetchLocationSurveys,
   fetchQRCodes,
+  isStaleObjectError,
   updateQRCode,
   type LocationSurveyResponse,
   type QRCodeCreate,
   type QRCodeResponse,
+  type QRCodeUpdate,
 } from "@/lib/api/client"
 
 const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN
@@ -388,20 +390,25 @@ export default function DistributionPage() {
     setFormLoading(true)
     setFormError(null)
     try {
-      const payload: QRCodeCreate = {
+      const basePayload: QRCodeCreate = {
         title: form.title.trim(),
         location_survey_id: form.location_survey_id,
       }
       if (editTarget) {
-        const updated = await updateQRCode(token, editTarget.id, payload)
+        const updatePayload: QRCodeUpdate = { ...basePayload, updated_at: editTarget.updated_at }
+        const updated = await updateQRCode(token, editTarget.id, updatePayload)
         setQRCodes((prev) => prev.map((q) => (q.id === updated.id ? updated : q)))
       } else {
-        const created = await createQRCode(token, payload)
+        const created = await createQRCode(token, basePayload)
         setQRCodes((prev) => [created, ...prev])
       }
       setModalOpen(false)
     } catch (err) {
-      setFormError(extractErrorMessage(err, "Save failed"))
+      if (isStaleObjectError(err)) {
+        setFormError("This QR code was updated. Please try again.")
+      } else {
+        setFormError(extractErrorMessage(err, "Save failed"))
+      }
     } finally {
       setFormLoading(false)
     }
@@ -411,10 +418,14 @@ export default function DistributionPage() {
     const token = await getToken()
     if (!token) return
     try {
-      const updated = await updateQRCode(token, qr.id, { is_active: !qr.is_active })
+      const updated = await updateQRCode(token, qr.id, { is_active: !qr.is_active, updated_at: qr.updated_at })
       setQRCodes((prev) => prev.map((q) => (q.id === updated.id ? updated : q)))
-    } catch {
-      load()
+    } catch (err) {
+      if (isStaleObjectError(err)) {
+        setError("This QR code was updated. Please refresh.")
+      } else {
+        load()
+      }
     }
   }
 
@@ -429,10 +440,14 @@ export default function DistributionPage() {
     const token = await getToken()
     if (!token) return
     try {
-      await deleteQRCode(token, qr.id)
+      await deleteQRCode(token, qr.id, qr.updated_at)
       setQRCodes((prev) => prev.filter((q) => q.id !== qr.id))
     } catch (err) {
-      alert(extractErrorMessage(err, "Failed to delete QR code"))
+      if (isStaleObjectError(err)) {
+        setError("This QR code was updated. Please refresh.")
+      } else {
+        alert(extractErrorMessage(err, "Failed to delete QR code"))
+      }
     }
   }
 

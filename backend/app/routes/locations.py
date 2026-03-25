@@ -1,13 +1,15 @@
 import uuid
 import urllib.request
 import urllib.error
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
-from ..core.errors.exceptions import ConflictError, NotFoundError, ValidationError
+from ..core.errors.exceptions import ConflictError, NotFoundError, StaleObjectError, ValidationError
 
 from ..auth.jwt import get_current_user
 from ..db.postgres import get_db_connection
@@ -17,7 +19,14 @@ from ..models.postgres_model import (
     LocationSurvey as LocationSurveyORM,
     User as UserORM,
 )
-from ..schemas.pydantic_model import LocationCreate, LocationResponse, LocationUpdate
+from ..schemas.pydantic_model import DeleteRequest, LocationCreate, LocationResponse, LocationUpdate
+
+
+def _strip_tz(dt: datetime) -> datetime:
+    """Normalize a datetime for comparison with a naive TIMESTAMP column."""
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 router = APIRouter()
 
@@ -181,6 +190,8 @@ def update_location(
     company = _get_company(user, db)
     loc = _get_location_or_404(location_id, company.id, db)
 
+    update_values: dict = {"updated_at": func.now()}
+
     if payload.name is not None:
         name = payload.name.strip()
         if not name:
@@ -197,15 +208,25 @@ def update_location(
         )
         if existing:
             raise ConflictError(code="LOCATION_NAME_CONFLICT", message="A location with this name already exists")
-        loc.name = name
+        update_values["name"] = name
 
     if payload.google_business_url is not None and payload.google_business_url:
         _validate_google_business_url(payload.google_business_url)
 
-    update_data = payload.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        if field != "name":
-            setattr(loc, field, value)
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        if field not in ("name", "updated_at"):
+            update_values[field] = value
+
+    rowcount = (
+        db.query(LocationORM)
+        .filter(
+            LocationORM.id == loc.id,
+            LocationORM.updated_at == _strip_tz(payload.updated_at),
+        )
+        .update(update_values, synchronize_session=False)
+    )
+    if rowcount == 0:
+        raise StaleObjectError("Location", str(loc.id))
 
     if payload.is_active is False:
         (
@@ -229,12 +250,24 @@ def update_location(
 @router.delete("/locations/{location_id}", status_code=204)
 def deactivate_location(
     location_id: str,
+    payload: DeleteRequest,
     user: UserORM = Depends(get_current_user),
     db: Session = Depends(get_db_connection),
 ):
     company = _get_company(user, db)
     loc = _get_location_or_404(location_id, company.id, db)
-    loc.is_active = False
+
+    rowcount = (
+        db.query(LocationORM)
+        .filter(
+            LocationORM.id == loc.id,
+            LocationORM.updated_at == _strip_tz(payload.updated_at),
+        )
+        .update({"is_active": False, "updated_at": func.now()}, synchronize_session=False)
+    )
+    if rowcount == 0:
+        raise StaleObjectError("Location", str(loc.id))
+
     (
         db.query(LocationSurveyORM)
         .filter(

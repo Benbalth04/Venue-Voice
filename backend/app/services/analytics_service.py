@@ -23,6 +23,7 @@ from ..models.postgres_model import (
     Survey as SurveyORM,
     SurveyResponse as SurveyResponseORM,
     SurveyResponseAnswer as SurveyResponseAnswerORM,
+    SurveyResponsePhoto as SurveyResponsePhotoORM,
     SurveySession as SurveySessionORM,
     SurveyVersion as SurveyVersionORM,
 )
@@ -415,15 +416,43 @@ def get_response_detail(
         .all()
     )
 
+    # Fetch photo metadata so we can flag photo answers in the detail response
+    photo_rows = (
+        db.query(SurveyResponsePhotoORM)
+        .filter(
+            SurveyResponsePhotoORM.survey_response_id == response_id,
+        )
+        .all()
+    )
+    # Map of question_id (str) -> True for questions that have a photo
+    photo_question_ids: set[str] = {
+        str(p.question_id) for p in photo_rows if p.question_id is not None
+    }
+
     answer_details: list[AnalyticsAnswerDetail] = []
 
     if norm_answers:
         for a in norm_answers:
             q_text = "Unknown question"
-            if a.question_id and str(a.question_id) in q_by_id:
-                q_text = q_by_id[str(a.question_id)].question_text
-            val = str(a.text_value) if a.text_value is not None else str(a.numeric_value or "")
-            answer_details.append(AnalyticsAnswerDetail(question_text=q_text, answer_value=val))
+            q_id_str = str(a.question_id) if a.question_id else None
+            if q_id_str and q_id_str in q_by_id:
+                q_text = q_by_id[q_id_str].question_text
+
+            has_photo = q_id_str is not None and q_id_str in photo_question_ids
+            if has_photo:
+                # Don't expose the raw storage path — show a friendly placeholder
+                answer_value = "Photo uploaded"
+            else:
+                answer_value = str(a.text_value) if a.text_value is not None else str(a.numeric_value or "")
+
+            answer_details.append(
+                AnalyticsAnswerDetail(
+                    question_text=q_text,
+                    answer_value=answer_value,
+                    has_photo=has_photo,
+                    question_id=q_id_str,
+                )
+            )
     else:
         # Fall back to JSONB answers field keyed by question id/key
         raw_answers: dict = resp.answers or {}
@@ -434,7 +463,12 @@ def get_response_detail(
             elif q_key in q_by_id:
                 q_text = q_by_id[q_key].question_text
             answer_details.append(
-                AnalyticsAnswerDetail(question_text=q_text, answer_value=_format_answer(val))
+                AnalyticsAnswerDetail(
+                    question_text=q_text,
+                    answer_value=_format_answer(val),
+                    has_photo=False,
+                    question_id=None,
+                )
             )
 
     return AnalyticsResponseDetail(

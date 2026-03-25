@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass
 from decimal import Decimal
@@ -7,7 +8,9 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.orm import Session, joinedload
 
-from ..core.errors.exceptions import ConflictError, NotFoundError, ValidationError
+from datetime import timezone
+
+from ..core.errors.exceptions import ConflictError, NotFoundError, RuleValidationError, StaleObjectError, ValidationError
 from ..models.postgres_model import (
     AIAnalysis as AIAnalysisORM,
     Flow as FlowORM,
@@ -28,10 +31,21 @@ from ..schemas.pydantic_model import (
 )
 
 if TYPE_CHECKING:
-    from ..schemas.pydantic_model import CreateRule
+    from ..schemas.pydantic_model import CreateRule, UpdateRule
+
+
+def _strip_tz(dt) -> "datetime":
+    """Normalize a datetime for comparison with a naive TIMESTAMP column."""
+    from datetime import datetime
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 
 _TEXT_TYPES = {"text", "long_text"}
+_STAR_TYPES = {"star"}
+_NPS_TYPES = {"nps"}
+_CHOICE_TYPES = {"multiple_choice", "checkbox", "yes_no"}
 
 
 @dataclass(slots=True)
@@ -88,6 +102,40 @@ def _combine(results: list[bool], operator: str) -> bool:
     if not results:
         return False
     return any(results) if operator == "OR" else all(results)
+
+
+def _parse_value_list(value: str | None) -> list[str]:
+    """Deserialize a JSON-encoded list from a condition value TEXT column (used for checkbox)."""
+    if value is None:
+        return []
+    try:
+        parsed = json.loads(value)
+        if isinstance(parsed, list):
+            return [str(v).strip() for v in parsed if str(v).strip()]
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return [value.strip()] if value.strip() else []
+
+
+def _serialize_condition_value(value: str | list[str] | None) -> str | None:
+    """Serialize a condition value for storage in the TEXT column."""
+    if isinstance(value, list):
+        return json.dumps(value)
+    if isinstance(value, str):
+        return value.strip()
+    return value
+
+
+def _deserialize_condition_value(condition: RuleConditionORM) -> str | list[str] | None:
+    """Deserialize a stored condition value — returns a list for checkbox conditions."""
+    if condition.condition_type == RuleConditionType.checkbox.value and condition.value is not None:
+        try:
+            parsed = json.loads(condition.value)
+            if isinstance(parsed, list):
+                return [str(v) for v in parsed]
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return condition.value
 
 
 def _get_survey_or_404(db: Session, survey_id: uuid.UUID) -> SurveyORM:
@@ -158,6 +206,7 @@ def _get_latest_question_options(db: Session, survey: SurveyORM) -> list[dict[st
             "question_type": row.question_type,
             "is_numeric": row.is_numeric,
             "position": row.position,
+            "config": row.config,
         }
         for row in rows
     ]
@@ -196,25 +245,67 @@ def _validate_rule_payload(db: Session, survey_id: uuid.UUID, payload: "CreateRu
                 status_code=422,
             )
 
-        if condition.condition_type == RuleConditionType.rating:
-            if question is None or not question.is_numeric:
+        ct = condition.condition_type
+
+        if ct == RuleConditionType.rating:
+            if question is None or question.question_type not in _STAR_TYPES:
                 raise ValidationError(
-                    code="RULE_RATING_REQUIRES_NUMERIC_QUESTION",
-                    message="Rating conditions require a numeric question",
+                    code="RULE_RATING_REQUIRES_STAR_QUESTION",
+                    message="Rating conditions require a star-rating question",
                     status_code=422,
+                    details={"question_id": str(condition.question_id), "condition_type": ct.value},
                 )
-            if _to_float(condition.value) is None:
+            numeric_val = _to_float(condition.value)
+            if numeric_val is None:
                 raise ValidationError(
                     code="RULE_RATING_VALUE_INVALID",
                     message="Rating conditions require a numeric value",
                     status_code=422,
+                    details={"question_id": str(condition.question_id), "condition_type": ct.value, "value": condition.value},
                 )
-        elif condition.condition_type == RuleConditionType.sentiment:
+            config = question.config or {}
+            min_val, max_val = 1, int(config.get("starCount", 5))
+            if not (min_val <= numeric_val <= max_val):
+                raise ValidationError(
+                    code="RULE_RATING_VALUE_OUT_OF_RANGE",
+                    message=f"Rating value must be between {min_val} and {max_val}",
+                    status_code=422,
+                    details={"question_id": str(condition.question_id), "condition_type": ct.value, "value": condition.value, "min": min_val, "max": max_val},
+                )
+
+        elif ct == RuleConditionType.nps:
+            if question is None or question.question_type not in _NPS_TYPES:
+                raise ValidationError(
+                    code="RULE_NPS_REQUIRES_NPS_QUESTION",
+                    message="NPS conditions require a Net Promoter Score question",
+                    status_code=422,
+                    details={"question_id": str(condition.question_id), "condition_type": ct.value},
+                )
+            numeric_val = _to_float(condition.value)
+            if numeric_val is None:
+                raise ValidationError(
+                    code="RULE_NPS_VALUE_INVALID",
+                    message="NPS conditions require a numeric value",
+                    status_code=422,
+                    details={"question_id": str(condition.question_id), "condition_type": ct.value, "value": condition.value},
+                )
+            config = question.config or {}
+            min_val, max_val = 0, int(config.get("max_score", 10))
+            if not (min_val <= numeric_val <= max_val):
+                raise ValidationError(
+                    code="RULE_NPS_VALUE_OUT_OF_RANGE",
+                    message=f"NPS value must be between {min_val} and {max_val}",
+                    status_code=422,
+                    details={"question_id": str(condition.question_id), "condition_type": ct.value, "value": condition.value, "min": min_val, "max": max_val},
+                )
+
+        elif ct == RuleConditionType.sentiment:
             if question is None or question.question_type not in _TEXT_TYPES:
                 raise ValidationError(
                     code="RULE_SENTIMENT_REQUIRES_TEXT_QUESTION",
                     message="Sentiment conditions require a text or long text question",
                     status_code=422,
+                    details={"question_id": str(condition.question_id), "condition_type": ct.value},
                 )
             try:
                 SentimentValue(str(condition.value).strip().lower())
@@ -223,7 +314,76 @@ def _validate_rule_payload(db: Session, survey_id: uuid.UUID, payload: "CreateRu
                     code="RULE_SENTIMENT_VALUE_INVALID",
                     message="Sentiment conditions must target positive, neutral, or negative",
                     status_code=422,
+                    details={"question_id": str(condition.question_id), "condition_type": ct.value, "value": condition.value},
                 ) from exc
+
+        elif ct == RuleConditionType.multiple_choice:
+            if question is None or question.question_type != "multiple_choice":
+                raise ValidationError(
+                    code="RULE_MULTIPLE_CHOICE_REQUIRES_MC_QUESTION",
+                    message="Multiple-choice conditions require a multiple choice question",
+                    status_code=422,
+                    details={"question_id": str(condition.question_id), "condition_type": ct.value},
+                )
+            config = question.config or {}
+            valid_options: set[str] = set(config.get("options", []))
+            if not valid_options:
+                raise ValidationError(
+                    code="RULE_MULTIPLE_CHOICE_NO_OPTIONS",
+                    message="Multiple-choice question has no configured options",
+                    status_code=422,
+                    details={"question_id": str(condition.question_id), "condition_type": ct.value},
+                )
+            selected_option = str(condition.value or "").strip()
+            if selected_option not in valid_options:
+                raise ValidationError(
+                    code="RULE_MULTIPLE_CHOICE_INVALID_OPTION",
+                    message="Condition value is not a valid option for this question",
+                    status_code=422,
+                    details={"question_id": str(condition.question_id), "condition_type": ct.value, "value": condition.value, "valid_options": sorted(valid_options)},
+                )
+
+        elif ct == RuleConditionType.checkbox:
+            if question is None or question.question_type != "checkbox":
+                raise ValidationError(
+                    code="RULE_CHECKBOX_REQUIRES_CHECKBOX_QUESTION",
+                    message="Checkbox conditions require a checkbox question",
+                    status_code=422,
+                    details={"question_id": str(condition.question_id), "condition_type": ct.value},
+                )
+            if not isinstance(condition.value, list) or len(condition.value) == 0:
+                raise ValidationError(
+                    code="RULE_CHECKBOX_VALUE_INVALID",
+                    message="Checkbox conditions require a non-empty list of option values",
+                    status_code=422,
+                    details={"question_id": str(condition.question_id), "condition_type": ct.value},
+                )
+            config = question.config or {}
+            valid_options = set(config.get("options", []))
+            if not valid_options:
+                raise ValidationError(
+                    code="RULE_CHECKBOX_NO_OPTIONS",
+                    message="Checkbox question has no configured options",
+                    status_code=422,
+                    details={"question_id": str(condition.question_id), "condition_type": ct.value},
+                )
+            invalid = [v for v in condition.value if v not in valid_options]
+            if invalid:
+                raise ValidationError(
+                    code="RULE_CHECKBOX_INVALID_OPTIONS",
+                    message="One or more checkbox condition values are not valid options for this question",
+                    status_code=422,
+                    details={"question_id": str(condition.question_id), "condition_type": ct.value, "invalid_values": invalid, "valid_options": sorted(valid_options)},
+                )
+
+        elif ct == RuleConditionType.yes_no:
+            if question is None or question.question_type != "yes_no":
+                raise ValidationError(
+                    code="RULE_YES_NO_REQUIRES_YES_NO_QUESTION",
+                    message="Yes/No conditions require a Yes/No question",
+                    status_code=422,
+                    details={"question_id": str(condition.question_id), "condition_type": ct.value},
+                )
 
 
 def _ensure_unique_rule_name(
@@ -262,6 +422,8 @@ def _rule_to_response(rule: RuleORM) -> dict[str, Any]:
         "name": rule.name,
         "description": rule.description,
         "operator": rule.operator,
+        "status": rule.status if rule.status else "active",
+        "broken_reasons": rule.broken_reasons if rule.broken_reasons else [],
         "groups": [
             {
                 "id": group.id,
@@ -276,7 +438,7 @@ def _rule_to_response(rule: RuleORM) -> dict[str, Any]:
                 "condition_type": condition.condition_type,
                 "question_id": condition.question_id,
                 "operator": condition.operator,
-                "value": condition.value,
+                "value": _deserialize_condition_value(condition),
                 "group_id": condition.group_id,
                 "created_at": condition.created_at,
             }
@@ -311,6 +473,8 @@ def get_rule_bundle(db: Session, survey_id: uuid.UUID) -> dict[str, Any]:
 
 
 def create_rule(db: Session, survey_id: uuid.UUID, payload: "CreateRule") -> dict[str, Any]:
+    from .rule_validator import validate_rule as _validate_rule_status
+
     survey = _get_survey_or_404(db, survey_id)
     _validate_rule_payload(db, survey_id, payload)
     _ensure_unique_rule_name(db, survey_id, payload.name)
@@ -321,6 +485,8 @@ def create_rule(db: Session, survey_id: uuid.UUID, payload: "CreateRule") -> dic
         name=payload.name.strip(),
         description=payload.description.strip() if payload.description and payload.description.strip() else None,
         operator=payload.operator.value,
+        status="active",
+        broken_reasons=[],
     )
     db.add(rule)
     db.flush()
@@ -343,23 +509,48 @@ def create_rule(db: Session, survey_id: uuid.UUID, payload: "CreateRule") -> dic
                 condition_type=condition.condition_type.value,
                 question_id=condition.question_id,
                 operator=condition.operator.value if condition.operator else None,
-                value=condition.value.strip() if isinstance(condition.value, str) else condition.value,
+                value=_serialize_condition_value(condition.value),
                 group_id=group_id_map.get(condition.group_id, condition.group_id),
             )
         )
+
+    db.flush()
+
+    # Validate rule against current survey version before committing
+    status, broken_reasons = _validate_rule_status(rule.id, db)
+    if status == "broken":
+        db.rollback()
+        raise RuleValidationError(broken_reasons)
 
     db.commit()
     db.refresh(rule)
     return _rule_to_response(_get_rule_or_404(db, survey_id, rule.id))
 
 
-def update_rule(db: Session, survey_id: uuid.UUID, rule_id: uuid.UUID, payload: "CreateRule") -> dict[str, Any]:
+def update_rule(db: Session, survey_id: uuid.UUID, rule_id: uuid.UUID, payload: "UpdateRule") -> dict[str, Any]:
+    from .rule_validator import validate_rule as _validate_rule_status
+
     _validate_rule_payload(db, survey_id, payload)
     rule = _get_rule_or_404(db, survey_id, rule_id)
     _ensure_unique_rule_name(db, survey_id, payload.name, exclude_rule_id=rule.id)
-    rule.name = payload.name.strip()
-    rule.description = payload.description.strip() if payload.description and payload.description.strip() else None
-    rule.operator = payload.operator.value
+
+    rowcount = (
+        db.query(RuleORM)
+        .filter(
+            RuleORM.id == rule.id,
+            RuleORM.updated_at == _strip_tz(payload.updated_at),
+        )
+        .update(
+            {
+                "name": payload.name.strip(),
+                "description": payload.description.strip() if payload.description and payload.description.strip() else None,
+                "operator": payload.operator.value,
+            },
+            synchronize_session="fetch",
+        )
+    )
+    if rowcount == 0:
+        raise StaleObjectError("Rule", str(rule.id))
 
     db.query(RuleConditionORM).filter(RuleConditionORM.rule_id == rule.id).delete(synchronize_session=False)
     db.query(RuleGroupORM).filter(RuleGroupORM.rule_id == rule.id).delete(synchronize_session=False)
@@ -383,10 +574,24 @@ def update_rule(db: Session, survey_id: uuid.UUID, rule_id: uuid.UUID, payload: 
                 condition_type=condition.condition_type.value,
                 question_id=condition.question_id,
                 operator=condition.operator.value if condition.operator else None,
-                value=condition.value.strip() if isinstance(condition.value, str) else condition.value,
+                value=_serialize_condition_value(condition.value),
                 group_id=group_id_map.get(condition.group_id, condition.group_id),
             )
         )
+
+    db.flush()
+
+    # Expire the rule so that validate_rule re-queries fresh conditions from DB.
+    # The bulk deletes above used synchronize_session=False, leaving stale condition
+    # objects in the session identity map. Without this, joinedload in validate_rule
+    # can return the old (deleted) conditions instead of the newly written ones.
+    db.expire(rule)
+
+    # Validate updated rule against current survey version before committing
+    status, broken_reasons = _validate_rule_status(rule.id, db)
+    if status == "broken":
+        db.rollback()
+        raise RuleValidationError(broken_reasons)
 
     db.commit()
     return _rule_to_response(_get_rule_or_404(db, survey_id, rule.id))
@@ -414,7 +619,7 @@ def _rule_id_in_flow_branch_config(config: dict | None, rule_id: uuid.UUID) -> b
     return False
 
 
-def delete_rule(db: Session, survey_id: uuid.UUID, rule_id: uuid.UUID) -> None:
+def delete_rule(db: Session, survey_id: uuid.UUID, rule_id: uuid.UUID, updated_at) -> None:
     rule = _get_rule_or_404(db, survey_id, rule_id)
     flow_nodes = (
         db.query(FlowNodeORM)
@@ -437,11 +642,50 @@ def delete_rule(db: Session, survey_id: uuid.UUID, rule_id: uuid.UUID) -> None:
                 message="Cannot delete a rule that is being used by a flow",
             )
 
-    rule.deleted_at = rule.updated_at
+    from datetime import datetime
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    rowcount = (
+        db.query(RuleORM)
+        .filter(
+            RuleORM.id == rule.id,
+            RuleORM.updated_at == _strip_tz(updated_at),
+        )
+        .update({"deleted_at": now}, synchronize_session="fetch")
+    )
+    if rowcount == 0:
+        raise StaleObjectError("Rule", str(rule.id))
+
+    db.refresh(rule)
     for condition in rule.conditions:
         if condition.deleted_at is None:
-            condition.deleted_at = rule.updated_at
+            condition.deleted_at = now
     db.commit()
+
+
+def get_broken_rule_count(db: Session, survey_id: uuid.UUID) -> int:
+    """Return the number of broken (non-deleted) rules for a survey."""
+    return (
+        db.query(RuleORM)
+        .filter(
+            RuleORM.survey_id == survey_id,
+            RuleORM.deleted_at.is_(None),
+            RuleORM.status == "broken",
+        )
+        .count()
+    )
+
+
+def get_company_broken_rule_count(db: Session, company_id: uuid.UUID) -> int:
+    """Return the total number of broken rules across all surveys for a company."""
+    return (
+        db.query(RuleORM)
+        .filter(
+            RuleORM.company_id == company_id,
+            RuleORM.deleted_at.is_(None),
+            RuleORM.status == "broken",
+        )
+        .count()
+    )
 
 
 def build_response_contexts_for_response(
@@ -591,19 +835,40 @@ def _evaluate_condition(
     if context is None:
         return False
 
-    if condition.condition_type == RuleConditionType.not_empty.value:
+    ct = condition.condition_type
+
+    if ct == RuleConditionType.not_empty.value:
         return not _is_blank_value(context.raw_value)
 
-    if condition.condition_type == RuleConditionType.sentiment.value:
+    if ct == RuleConditionType.sentiment.value:
         if condition.operator != RuleOperator.is_.value:
             return False
         return (context.sentiment or "").lower() == str(condition.value or "").strip().lower()
 
-    if condition.condition_type == RuleConditionType.rating.value:
+    if ct in {RuleConditionType.rating.value, RuleConditionType.nps.value}:
         return _compare_numeric(
             context.numeric_value,
             str(condition.operator),
             _to_float(condition.value),
         )
+
+    if ct == RuleConditionType.multiple_choice.value:
+        selected = str(context.raw_value or "").strip()
+        expected = str(condition.value or "").strip()
+        return bool(selected and selected == expected)
+
+    if ct == RuleConditionType.yes_no.value:
+        answer = str(context.raw_value or "").strip().lower()
+        expected = str(condition.value or "").strip().lower()
+        return bool(answer and answer == expected)
+
+    if ct == RuleConditionType.checkbox.value:
+        if not isinstance(context.raw_value, list):
+            return False
+        required = _parse_value_list(condition.value)
+        if not required:
+            return False
+        selected_set = {str(v).strip() for v in context.raw_value}
+        return all(opt in selected_set for opt in required)
 
     return False

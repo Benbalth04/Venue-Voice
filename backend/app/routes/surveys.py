@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.core.errors.exceptions import ConflictError, NotFoundError, PermissionError, ValidationError
+from app.core.errors.exceptions import ConflictError, NotFoundError, PermissionError, StaleObjectError, ValidationError
 
 from app.auth.jwt import get_current_user
 from app.db.postgres import get_db_connection
@@ -23,12 +23,21 @@ from app.schemas.pydantic_model import (
     SurveyCreate,
     SurveyListItem,
     SurveySaveVersion,
+    SurveyStatusTransition,
     SurveyUpdateMeta,
     SurveyWithSchema,
 )
 from app.services.survey_validation import validate_survey_schema as validate_survey_schema_service
 
 router = APIRouter()
+
+
+def _strip_tz(dt: datetime) -> datetime:
+    """Normalize a datetime for comparison with a naive TIMESTAMP column."""
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
 
 # ------------------------------------------------------------------
 # Question types helpers (from question_types table)
@@ -487,6 +496,11 @@ def save_survey_version(
     db.refresh(survey)
     db.refresh(sv)
 
+    # Revalidate all rules for this survey against the new version
+    from ..services.rule_validator import revalidate_rules_for_survey
+    revalidate_rules_for_survey(db, survey.id)
+    db.commit()
+
     return _to_survey_with_schema(survey, sv, str(current_user.id))
 
 
@@ -502,6 +516,8 @@ def update_survey_meta(
 ):
     survey = _get_survey_or_404(survey_id, current_user, db)
     company = _get_user_company(current_user, db)
+
+    update_values: dict = {"updated_at": datetime.now(timezone.utc)}
 
     if payload.title is not None:
         new_title = payload.title.strip()
@@ -519,12 +535,22 @@ def update_survey_meta(
         )
         if conflict:
             raise ConflictError(code="SURVEY_TITLE_CONFLICT", message=f"A survey named '{new_title}' already exists")
-        survey.name = new_title
+        update_values["name"] = new_title
 
     if payload.status is not None:
-        survey.status = SurveyStatus(payload.status)
+        update_values["status"] = SurveyStatus(payload.status)
 
-    survey.updated_at = datetime.now(timezone.utc)
+    rowcount = (
+        db.query(SurveyORM)
+        .filter(
+            SurveyORM.id == survey.id,
+            SurveyORM.updated_at == _strip_tz(payload.updated_at),
+        )
+        .update(update_values, synchronize_session=False)
+    )
+    if rowcount == 0:
+        raise StaleObjectError("Survey", str(survey.id))
+
     db.commit()
     db.refresh(survey)
     last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)
@@ -537,6 +563,7 @@ def update_survey_meta(
 @router.patch("/surveys/{survey_id}/publish", response_model=SurveyListItem)
 def publish_survey(
     survey_id: str,
+    payload: SurveyStatusTransition,
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db_connection),
 ):
@@ -545,8 +572,15 @@ def publish_survey(
     valid, errors = validate_survey_schema(sv.schema_json, db)
     if not valid:
         raise ValidationError(code="INVALID_SURVEY_SCHEMA", message="Survey schema validation failed", details={"schema_errors": errors}, status_code=422)
-    survey.status = SurveyStatus.active
-    survey.updated_at = datetime.now(timezone.utc)
+
+    rowcount = (
+        db.query(SurveyORM)
+        .filter(SurveyORM.id == survey.id, SurveyORM.updated_at == _strip_tz(payload.updated_at))
+        .update({"status": SurveyStatus.active, "updated_at": datetime.now(timezone.utc)}, synchronize_session=False)
+    )
+    if rowcount == 0:
+        raise StaleObjectError("Survey", str(survey.id))
+
     db.commit()
     db.refresh(survey)
     last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)
@@ -559,12 +593,20 @@ def publish_survey(
 @router.patch("/surveys/{survey_id}/archive", response_model=SurveyListItem)
 def archive_survey(
     survey_id: str,
+    payload: SurveyStatusTransition,
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db_connection),
 ):
     survey = _get_survey_or_404(survey_id, current_user, db)
-    survey.status = SurveyStatus.archived
-    survey.updated_at = datetime.now(timezone.utc)
+
+    rowcount = (
+        db.query(SurveyORM)
+        .filter(SurveyORM.id == survey.id, SurveyORM.updated_at == _strip_tz(payload.updated_at))
+        .update({"status": SurveyStatus.archived, "updated_at": datetime.now(timezone.utc)}, synchronize_session=False)
+    )
+    if rowcount == 0:
+        raise StaleObjectError("Survey", str(survey.id))
+
     db.commit()
     db.refresh(survey)
     last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)
@@ -577,6 +619,7 @@ def archive_survey(
 @router.patch("/surveys/{survey_id}/unpublish", response_model=SurveyListItem)
 def unpublish_survey(
     survey_id: str,
+    payload: SurveyStatusTransition,
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db_connection),
 ):
@@ -587,7 +630,15 @@ def unpublish_survey(
             message="Only active surveys can be unpublished",
             status_code=422,
         )
-    survey.status = SurveyStatus.draft
+
+    rowcount = (
+        db.query(SurveyORM)
+        .filter(SurveyORM.id == survey.id, SurveyORM.updated_at == _strip_tz(payload.updated_at))
+        .update({"status": SurveyStatus.draft, "updated_at": datetime.now(timezone.utc)}, synchronize_session=False)
+    )
+    if rowcount == 0:
+        raise StaleObjectError("Survey", str(survey.id))
+
     (
         db.query(LocationSurveyORM)
         .filter(
@@ -596,7 +647,6 @@ def unpublish_survey(
         )
         .update({"is_active": False}, synchronize_session=False)
     )
-    survey.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(survey)
     last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)
@@ -609,6 +659,7 @@ def unpublish_survey(
 @router.patch("/surveys/{survey_id}/unarchive", response_model=SurveyListItem)
 def unarchive_survey(
     survey_id: str,
+    payload: SurveyStatusTransition,
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db_connection),
 ):
@@ -619,8 +670,15 @@ def unarchive_survey(
             message="Only archived surveys can be unarchived",
             status_code=422,
         )
-    survey.status = SurveyStatus.draft
-    survey.updated_at = datetime.now(timezone.utc)
+
+    rowcount = (
+        db.query(SurveyORM)
+        .filter(SurveyORM.id == survey.id, SurveyORM.updated_at == _strip_tz(payload.updated_at))
+        .update({"status": SurveyStatus.draft, "updated_at": datetime.now(timezone.utc)}, synchronize_session=False)
+    )
+    if rowcount == 0:
+        raise StaleObjectError("Survey", str(survey.id))
+
     db.commit()
     db.refresh(survey)
     last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)

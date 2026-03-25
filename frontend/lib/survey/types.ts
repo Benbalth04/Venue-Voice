@@ -48,6 +48,7 @@ export type QuestionType =
   | "yes_no"
   | "email"
   | "phone"
+  | "photo"
 
 export type Question = {
   /** UUID – unique within the survey schema */
@@ -74,6 +75,7 @@ export type QuestionSettings =
   | YesNoSettings
   | EmailQuestionSettings
   | PhoneQuestionSettings
+  | PhotoQuestionSettings
 
 export type StarQuestionSettings = {
   starCount: number
@@ -120,3 +122,5 @@ export type EmailQuestionSettings = {
 export type PhoneQuestionSettings = {
   placeholder?: string
 }
+
+export type PhotoQuestionSettings = Record<string, never>

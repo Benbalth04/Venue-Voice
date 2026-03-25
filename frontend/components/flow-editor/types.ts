@@ -9,6 +9,7 @@ export type DraftNode = Omit<FlowNodePayload, "id"> & { id: string }
 
 export type FlowDraft = {
   id?: string
+  updated_at?: string
   survey_id: string
   name: string
   description: string

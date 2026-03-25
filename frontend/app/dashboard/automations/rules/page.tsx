@@ -17,124 +17,64 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
-import {
-  Bell,
-  ChevronDown,
-  GripVertical,
-  Loader2,
-  Pencil,
-  Plus,
-  Save,
-  Trash2,
-} from "lucide-react"
+import { AlertTriangle, Bell, ChevronDown, GripVertical, Loader2, Pencil, Plus, Save, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner"
 import { Card } from "@/components/ui/card"
 import { useConfirm } from "@/components/ui/ConfirmDialog"
 import { SingleSelectDropdown } from "@/components/ui/DropdownSelect"
-import { supabase } from "@/lib/supabase/client"
 import {
-  createSurveyLogicRule,
+  RuleConditionCard,
+  conditionTypesForQuestionType,
+  defaultConditionTypeForQuestion,
+  defaultOperatorForConditionType,
+  type ConditionDraft,
+} from "@/components/rules/RuleConditionCard"
+import { supabase } from "@/lib/supabase/client"
+import { useBrokenRules } from "@/components/layout/BrokenRulesContext"
+import {
+  createRuleDirect,
   deleteSurveyLogicRule,
   extractErrorMessage,
-  fetchSurveyLogicRules,
+  fetchRuleBundleDirect,
   fetchSurveys,
-  updateSurveyLogicRule,
-  type LogicActionType,
-  type LogicConditionPayload,
-  type LogicConditionResponse,
-  type LogicConnector,
-  type LogicOperator,
+  isStaleObjectError,
+  updateRuleDirect,
   type LogicQuestionOption,
-  type LogicRulePayload,
-  type LogicRuleResponse,
+  type RuleBundleData,
+  type RuleConditionType,
+  type RuleCreatePayload,
+  type RuleData,
+  type RuleOperatorApi,
+  type RuleUpdatePayload,
   type SurveySummary,
 } from "@/lib/api/client"
 
-const MAX_RULE_DESCRIPTION_LENGTH = 240
-const GROUP_OPERATOR: LogicOperator = "group"
+// -----------------------------------------------------------------------
+// Draft model
+// -----------------------------------------------------------------------
 
-type LeafOperator = Exclude<LogicOperator, "group">
-
-type LeafConditionDraft = {
-  kind: "condition"
-  localId: string
-  id?: string
-  question_id: string
-  question_text?: string | null
-  question_type?: string | null
-  operator: LeafOperator
-  threshold_value: number | null
-  logical_connector: LogicConnector
-}
-
-type ConditionGroupDraft = {
+type GroupDraft = {
   kind: "group"
   localId: string
-  id?: string
-  logical_connector: LogicConnector
-  conditions: LeafConditionDraft[]
+  id?: string | null
+  groupOperator: "AND" | "OR"
+  conditions: ConditionDraft[]
 }
 
-type RuleItemDraft = LeafConditionDraft | ConditionGroupDraft
+type TopLevelItem = ({ kind: "condition" } & ConditionDraft) | GroupDraft
 
 type RuleDraft = {
   id?: string
+  updated_at?: string
   name: string
   description: string
-  action_type: LogicActionType
-  conditions: RuleItemDraft[]
+  topOperator: "AND" | "OR"
+  items: TopLevelItem[]
 }
 
 function uid() {
   return crypto.randomUUID()
-}
-
-function isSupportedQuestion(question: Pick<LogicQuestionOption, "question_type" | "is_numeric">) {
-  return (
-    question.is_numeric ||
-    question.question_type === "text" ||
-    question.question_type === "long_text" ||
-    question.question_type === "email" ||
-    question.question_type === "phone"
-  )
-}
-
-function operatorOptionsForQuestion(
-  question: Pick<LogicQuestionOption, "question_type" | "is_numeric"> | null | undefined,
-): Array<{ value: LeafOperator; label: string }> {
-  if (!question) return []
-  if (question.is_numeric) {
-    return [
-      { value: ">", label: "greater than" },
-      { value: ">=", label: "greater than or equal to" },
-      { value: "<", label: "less than" },
-      { value: "<=", label: "less than or equal to" },
-    ]
-  }
-  if (question.question_type === "text" || question.question_type === "long_text") {
-    return [
-      { value: "sentiment_positive", label: "sentiment is positive" },
-      { value: "sentiment_negative", label: "sentiment is negative" },
-      { value: "=", label: "score is equal to" },
-      { value: ">", label: "sentiment score is greater than" },
-      { value: ">=", label: "sentiment score is greater than or equal to" },
-      { value: "<", label: "sentiment score is less than" },
-      { value: "<=", label: "sentiment score is less than or equal to" },
-      { value: "not_blank", label: "is not blank" },
-    ]
-  }
-  return [
-    { value: "not_blank", label: "is not blank" },
-  ]
-}
-
-function requiresThreshold(operator: LeafOperator) {
-  return operator === ">" || operator === ">=" || operator === "<" || operator === "<=" || operator === "="
-}
-
-function defaultOperatorForQuestion(question: Pick<LogicQuestionOption, "question_type" | "is_numeric">) {
-  return operatorOptionsForQuestion(question)[0]?.value ?? "not_blank"
 }
 
 function truncateDescription(value: string, maxLength = 96) {
@@ -142,202 +82,181 @@ function truncateDescription(value: string, maxLength = 96) {
   return `${value.slice(0, maxLength).trimEnd()}…`
 }
 
-function makeLeafCondition(question: LogicQuestionOption): LeafConditionDraft {
+// -----------------------------------------------------------------------
+// Draft builders
+// -----------------------------------------------------------------------
+
+function makeConditionDraft(question: LogicQuestionOption): ConditionDraft {
+  const conditionType = defaultConditionTypeForQuestion(question.question_type)
+  const operator = defaultOperatorForConditionType(conditionType)
   return {
-    kind: "condition",
     localId: uid(),
     question_id: question.id,
-    question_text: question.question_text,
-    question_type: question.question_type,
-    operator: defaultOperatorForQuestion(question),
-    threshold_value: question.is_numeric ? 0 : null,
-    logical_connector: "AND",
+    condition_type: conditionType,
+    operator,
+    value: null,
   }
 }
 
-function makeConditionGroup(question: LogicQuestionOption): ConditionGroupDraft {
-  return {
-    kind: "group",
-    localId: uid(),
-    logical_connector: "AND",
-    conditions: [makeLeafCondition(question)],
-  }
-}
+function draftFromRule(rule: RuleData): RuleDraft {
+  // Map group id → conditions
+  const groupConditions = new Map<string, ConditionDraft[]>()
+  const topLevel: ConditionDraft[] = []
 
-function normalizeTopLevel(items: RuleItemDraft[]) {
-  const connector = items[1]?.logical_connector ?? "AND"
-  return items.map((item, index) => ({
-    ...item,
-    logical_connector: index === 0 ? "AND" : connector,
-  }))
-}
-
-function normalizeGroupConditions(items: LeafConditionDraft[]) {
-  const connector = items[1]?.logical_connector ?? "AND"
-  return items.map((item, index) => ({
-    ...item,
-    logical_connector: index === 0 ? "AND" : connector,
-  }))
-}
-
-function topLevelConnector(items: RuleItemDraft[]) {
-  return items[1]?.logical_connector ?? "AND"
-}
-
-function groupConnector(group: ConditionGroupDraft) {
-  return group.conditions[1]?.logical_connector ?? "AND"
-}
-
-function validateLeafCondition(
-  condition: LeafConditionDraft,
-  questionMap: Map<string, LogicQuestionOption>,
-) {
-  const question = questionMap.get(condition.question_id) ?? (
-    condition.question_type
-      ? {
-          id: condition.question_id,
-          question_key: "",
-          question_text: condition.question_text ?? "Unknown question",
-          question_type: condition.question_type,
-          is_numeric: condition.question_type === "nps" || condition.question_type === "star",
-          position: 0,
-        }
-      : null
-  )
-
-  if (!question) return "Each condition needs a valid question."
-  if (!isSupportedQuestion(question)) return `${question.question_text} does not support logic rules yet.`
-
-  const validOperators = operatorOptionsForQuestion(question).map((option) => option.value)
-  if (!validOperators.includes(condition.operator)) {
-    return `Operator ${condition.operator} is not valid for ${question.question_text}.`
-  }
-  if (
-    requiresThreshold(condition.operator) &&
-    (condition.threshold_value == null || Number.isNaN(condition.threshold_value))
-  ) {
-    return `A numeric threshold is required for ${question.question_text}.`
-  }
-  if (!requiresThreshold(condition.operator) && condition.threshold_value != null) {
-    return `${question.question_text} does not use a threshold for that operator.`
-  }
-  return null
-}
-
-function validateDraft(draft: RuleDraft, questionMap: Map<string, LogicQuestionOption>) {
-  if (!draft.name.trim()) return "Rule name is required."
-  if (draft.description.trim().length > MAX_RULE_DESCRIPTION_LENGTH) {
-    return `Rule description must be ${MAX_RULE_DESCRIPTION_LENGTH} characters or fewer.`
-  }
-  if (draft.conditions.length === 0) return "Add at least one condition or condition group."
-
-  for (const item of draft.conditions) {
-    if (item.kind === "group") {
-      if (item.conditions.length === 0) return "Condition groups must contain at least one condition."
-      for (const condition of item.conditions) {
-        const error = validateLeafCondition(condition, questionMap)
-        if (error) return error
-      }
+  for (const cond of rule.conditions) {
+    const draft: ConditionDraft = {
+      localId: uid(),
+      id: cond.id ?? null,
+      condition_type: cond.condition_type as RuleConditionType,
+      question_id: cond.question_id ?? "",
+      operator: cond.operator as RuleOperatorApi | null,
+      value: cond.value,
+    }
+    if (cond.group_id) {
+      const list = groupConditions.get(cond.group_id) ?? []
+      list.push(draft)
+      groupConditions.set(cond.group_id, list)
     } else {
-      const error = validateLeafCondition(item, questionMap)
-      if (error) return error
+      topLevel.push(draft)
     }
   }
 
-  return null
-}
-
-function draftFromRule(rule: LogicRuleResponse): RuleDraft {
-  const mapNode = (node: LogicConditionResponse): RuleItemDraft => {
-    if (node.operator === GROUP_OPERATOR) {
-      return {
+  const items: TopLevelItem[] = [
+    ...topLevel.map((c) => ({ kind: "condition" as const, ...c })),
+    ...rule.groups.map(
+      (g): GroupDraft => ({
         kind: "group",
         localId: uid(),
-        id: node.id,
-        logical_connector: node.logical_connector,
-        conditions: node.children.map((child) => ({
-          kind: "condition",
-          localId: uid(),
-          id: child.id,
-          question_id: child.question_id ?? "",
-          question_text: child.question_text,
-          question_type: child.question_type,
-          operator: child.operator as LeafOperator,
-          threshold_value: child.threshold_value,
-          logical_connector: child.logical_connector,
-        })),
-      }
-    }
-
-    return {
-      kind: "condition",
-      localId: uid(),
-      id: node.id,
-      question_id: node.question_id ?? "",
-      question_text: node.question_text,
-      question_type: node.question_type,
-      operator: node.operator as LeafOperator,
-      threshold_value: node.threshold_value,
-      logical_connector: node.logical_connector,
-    }
-  }
+        id: g.id,
+        groupOperator: g.operator,
+        conditions: groupConditions.get(g.id) ?? [],
+      }),
+    ),
+  ]
 
   return {
     id: rule.id,
+    updated_at: rule.updated_at,
     name: rule.name,
     description: rule.description ?? "",
-    action_type: rule.action_type,
-    conditions: rule.conditions.map(mapNode),
+    topOperator: rule.operator,
+    items,
   }
 }
 
-function payloadFromDraft(draft: RuleDraft): LogicRulePayload {
-  const mapLeaf = (condition: LeafConditionDraft): LogicConditionPayload => ({
-    id: condition.id ?? null,
-    question_id: condition.question_id,
-    operator: condition.operator,
-    threshold_value: requiresThreshold(condition.operator) ? condition.threshold_value : null,
-    logical_connector: condition.logical_connector,
-    children: [],
-  })
+function payloadFromDraft(draft: RuleDraft): RuleCreatePayload {
+  const groups: RuleCreatePayload["groups"] = []
+  const conditions: RuleCreatePayload["conditions"] = []
+
+  for (const item of draft.items) {
+    if (item.kind === "group") {
+      const groupId = item.id ?? uid()
+      groups.push({ id: groupId, operator: item.groupOperator })
+      for (const cond of item.conditions) {
+        conditions.push({
+          id: cond.id ?? null,
+          condition_type: cond.condition_type,
+          question_id: cond.question_id,
+          operator: cond.operator,
+          value: cond.value,
+          group_id: groupId,
+        })
+      }
+    } else {
+      conditions.push({
+        id: item.id ?? null,
+        condition_type: item.condition_type,
+        question_id: item.question_id,
+        operator: item.operator,
+        value: item.value,
+        group_id: null,
+      })
+    }
+  }
 
   return {
     name: draft.name.trim(),
     description: draft.description.trim() || null,
-    enabled: true,
-    action_type: draft.action_type,
-    conditions: draft.conditions.map((item) =>
-      item.kind === "group"
-        ? {
-            id: item.id ?? null,
-            question_id: null,
-            operator: GROUP_OPERATOR,
-            threshold_value: null,
-            logical_connector: item.logical_connector,
-            children: item.conditions.map(mapLeaf),
-          }
-        : mapLeaf(item),
-    ),
+    operator: draft.topOperator,
+    groups,
+    conditions,
   }
 }
 
-function serializeRuleDraft(draft: RuleDraft) {
+function serializeDraft(draft: RuleDraft) {
   return JSON.stringify(payloadFromDraft(draft))
 }
 
-function LevelConnectorPill({
+// -----------------------------------------------------------------------
+// Validation
+// -----------------------------------------------------------------------
+
+function validateCondition(cond: ConditionDraft, questionMap: Map<string, LogicQuestionOption>): string | null {
+  const question = questionMap.get(cond.question_id)
+  if (!question) return "Each condition must reference a valid question."
+
+  const allowed = conditionTypesForQuestionType(question.question_type)
+  if (!allowed.includes(cond.condition_type)) {
+    return `"${cond.condition_type}" is not valid for "${question.question_text}".`
+  }
+
+  if (cond.condition_type === "not_empty") return null
+
+  // Numeric types
+  if (cond.condition_type === "rating" || cond.condition_type === "nps") {
+    if (!cond.operator) return `Select an operator for "${question.question_text}".`
+    if (!cond.value || typeof cond.value !== "string") {
+      return `Select a value for "${question.question_text}".`
+    }
+    return null
+  }
+
+  // Choice / sentiment
+  if (!cond.value || (Array.isArray(cond.value) && cond.value.length === 0)) {
+    return `Select a value for "${question.question_text}".`
+  }
+
+  return null
+}
+
+function validateDraft(draft: RuleDraft, questionMap: Map<string, LogicQuestionOption>): string | null {
+  if (!draft.name.trim()) return "Rule name is required."
+  if (draft.description.trim().length > 240) return "Description must be 240 characters or fewer."
+  if (draft.items.length === 0) return "Add at least one condition."
+
+  for (const item of draft.items) {
+    if (item.kind === "group") {
+      if (item.conditions.length === 0) return "Condition groups must contain at least one condition."
+      for (const cond of item.conditions) {
+        const err = validateCondition(cond, questionMap)
+        if (err) return err
+      }
+    } else {
+      const err = validateCondition(item, questionMap)
+      if (err) return err
+    }
+  }
+
+  return null
+}
+
+// -----------------------------------------------------------------------
+// AND / OR Connector Pill
+// -----------------------------------------------------------------------
+
+function ConnectorPill({
   value,
   onChange,
 }: {
-  value: LogicConnector
-  onChange: (next: LogicConnector) => void
+  value: "AND" | "OR"
+  onChange: (next: "AND" | "OR") => void
 }) {
   return (
     <div className="flex justify-center">
       <label className="relative inline-flex items-center">
         <select
           value={value}
-          onChange={(event) => onChange(event.target.value as LogicConnector)}
+          onChange={(e) => onChange(e.target.value as "AND" | "OR")}
           className="appearance-none rounded-full border border-violet-200 bg-violet-50 px-4 py-1.5 pr-9 text-xs font-semibold uppercase tracking-wide text-violet-700 outline-none transition-colors hover:border-violet-300 focus:ring-2 focus:ring-violet-500"
         >
           <option value="AND">AND</option>
@@ -349,145 +268,51 @@ function LevelConnectorPill({
   )
 }
 
-function SortableLeafConditionCard({
-  title,
+// -----------------------------------------------------------------------
+// Sortable leaf condition (DnD wrapper)
+// -----------------------------------------------------------------------
+
+function SortableLeafCondition({
+  label,
   condition,
   questions,
   onUpdate,
   onDelete,
+  brokenMessage,
 }: {
-  title: string
-  condition: LeafConditionDraft
+  label: string
+  condition: ConditionDraft
   questions: LogicQuestionOption[]
-  onUpdate: (next: LeafConditionDraft) => void
+  onUpdate: (next: ConditionDraft) => void
   onDelete: () => void
+  brokenMessage?: string | null
 }) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
     id: condition.localId,
   })
 
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  }
-
-  const questionMap = useMemo(
-    () => new Map(questions.map((question) => [question.id, question])),
-    [questions],
-  )
-  const selectedQuestion = questionMap.get(condition.question_id)
-  const fallbackQuestion = condition.question_type
-    ? {
-        question_type: condition.question_type,
-        is_numeric: condition.question_type === "nps" || condition.question_type === "star",
-      }
-    : null
-  const operatorOptions = operatorOptionsForQuestion(selectedQuestion ?? fallbackQuestion)
-
   return (
-    <div ref={setNodeRef} style={style}>
-      <Card className="border-zinc-200">
-        <div className="space-y-4">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-sm font-semibold text-zinc-900">{title}</p>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                className="rounded-lg border border-zinc-200 bg-white p-2 text-zinc-400 hover:text-zinc-700"
-                aria-label={`Drag ${title}`}
-                {...attributes}
-                {...listeners}
-              >
-                <GripVertical className="h-4 w-4" />
-              </button>
-              <button
-                type="button"
-                className="rounded-lg border border-zinc-200 bg-white p-2 text-zinc-400 hover:bg-red-50 hover:text-red-600"
-                onClick={onDelete}
-                aria-label={`Delete ${title}`}
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-
-          <label className="block">
-            <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-              Question
-            </span>
-            <select
-              className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
-              value={condition.question_id}
-              onChange={(event) => {
-                const question = questions.find((item) => item.id === event.target.value)
-                if (!question) return
-                onUpdate({
-                  ...condition,
-                  question_id: question.id,
-                  question_text: question.question_text,
-                  question_type: question.question_type,
-                  operator: defaultOperatorForQuestion(question),
-                  threshold_value: question.is_numeric ? 0 : null,
-                })
-              }}
-            >
-              {questions.map((question) => (
-                <option key={question.id} value={question.id}>
-                  {question.question_text}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <div className="grid gap-3 md:grid-cols-2">
-            <label className="block">
-              <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                Operator
-              </span>
-              <select
-                className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
-                value={condition.operator}
-                onChange={(event) => {
-                  const operator = event.target.value as LeafOperator
-                  onUpdate({
-                    ...condition,
-                    operator,
-                    threshold_value: requiresThreshold(operator) ? (condition.threshold_value ?? 0) : null,
-                  })
-                }}
-              >
-                {operatorOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="block">
-              <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                Threshold
-              </span>
-              <input
-                type="number"
-                step="0.1"
-                disabled={!requiresThreshold(condition.operator)}
-                className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 disabled:bg-zinc-50 disabled:text-zinc-400"
-                value={condition.threshold_value ?? ""}
-                onChange={(event) =>
-                  onUpdate({
-                    ...condition,
-                    threshold_value: event.target.value === "" ? null : Number(event.target.value),
-                  })
-                }
-              />
-            </label>
-          </div>
-        </div>
-      </Card>
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+    >
+      <RuleConditionCard
+        label={label}
+        condition={condition}
+        questions={questions}
+        onUpdate={onUpdate}
+        onDelete={onDelete}
+        dragAttributes={attributes}
+        dragListeners={listeners}
+        brokenMessage={brokenMessage}
+      />
     </div>
   )
 }
+
+// -----------------------------------------------------------------------
+// Condition Group Card
+// -----------------------------------------------------------------------
 
 function ConditionGroupCard({
   groupIndex,
@@ -496,13 +321,15 @@ function ConditionGroupCard({
   onUpdateGroup,
   onDeleteGroup,
   onDeleteSubCondition,
+  brokenConditionMap,
 }: {
   groupIndex: number
-  group: ConditionGroupDraft
+  group: GroupDraft
   questions: LogicQuestionOption[]
-  onUpdateGroup: (next: ConditionGroupDraft) => void
+  onUpdateGroup: (next: GroupDraft) => void
   onDeleteGroup: () => void
-  onDeleteSubCondition: (condition: LeafConditionDraft, title: string) => void
+  onDeleteSubCondition: (localId: string) => void
+  brokenConditionMap: Map<string, string>
 }) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
     id: group.localId,
@@ -512,13 +339,11 @@ function ConditionGroupCard({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
 
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  }
-
   return (
-    <div ref={setNodeRef} style={style}>
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+    >
       <Card className="border-violet-200 bg-violet-50/30">
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-3">
@@ -528,14 +353,11 @@ function ConditionGroupCard({
                 type="button"
                 variant="outline"
                 onClick={() => {
-                  const fallbackQuestion = questions[0]
-                  if (!fallbackQuestion) return
+                  const fallback = questions[0]
+                  if (!fallback) return
                   onUpdateGroup({
                     ...group,
-                    conditions: normalizeGroupConditions([
-                      ...group.conditions,
-                      makeLeafCondition(fallbackQuestion),
-                    ]),
+                    conditions: [...group.conditions, makeConditionDraft(fallback)],
                   })
                 }}
               >
@@ -545,7 +367,7 @@ function ConditionGroupCard({
               <button
                 type="button"
                 className="rounded-lg border border-zinc-200 bg-white p-2 text-zinc-400 hover:text-zinc-700"
-                aria-label={`Drag condition group ${groupIndex + 1}`}
+                aria-label={`Drag group ${groupIndex + 1}`}
                 {...attributes}
                 {...listeners}
               >
@@ -555,7 +377,7 @@ function ConditionGroupCard({
                 type="button"
                 className="rounded-lg border border-zinc-200 bg-white p-2 text-zinc-400 hover:bg-red-50 hover:text-red-600"
                 onClick={onDeleteGroup}
-                aria-label={`Delete condition group ${groupIndex + 1}`}
+                aria-label={`Delete group ${groupIndex + 1}`}
               >
                 <Trash2 className="h-4 w-4" />
               </button>
@@ -567,54 +389,37 @@ function ConditionGroupCard({
             collisionDetection={closestCenter}
             onDragEnd={({ active, over }) => {
               if (!over || active.id === over.id) return
-              const oldIndex = group.conditions.findIndex((item) => item.localId === String(active.id))
-              const newIndex = group.conditions.findIndex((item) => item.localId === String(over.id))
-              if (oldIndex === -1 || newIndex === -1) return
-              onUpdateGroup({
-                ...group,
-                conditions: normalizeGroupConditions(arrayMove(group.conditions, oldIndex, newIndex)),
-              })
+              const oldIdx = group.conditions.findIndex((c) => c.localId === String(active.id))
+              const newIdx = group.conditions.findIndex((c) => c.localId === String(over.id))
+              if (oldIdx === -1 || newIdx === -1) return
+              onUpdateGroup({ ...group, conditions: arrayMove(group.conditions, oldIdx, newIdx) })
             }}
           >
             <SortableContext
-              items={group.conditions.map((item) => item.localId)}
+              items={group.conditions.map((c) => c.localId)}
               strategy={verticalListSortingStrategy}
             >
               <div className="space-y-3">
-                {group.conditions.map((condition, index) => (
-                  <div key={condition.localId} className="space-y-3">
-                    <SortableLeafConditionCard
-                      title={`Condition ${groupIndex + 1}.${index + 1}`}
-                      condition={condition}
+                {group.conditions.map((cond, idx) => (
+                  <div key={cond.localId} className="space-y-3">
+                    <SortableLeafCondition
+                      label={`Condition ${groupIndex + 1}.${idx + 1}`}
+                      condition={cond}
                       questions={questions}
-                      onUpdate={(nextCondition) => {
-                        const nextConditions = [...group.conditions]
-                        nextConditions[index] = nextCondition
-                        onUpdateGroup({
-                          ...group,
-                          conditions: nextConditions,
-                        })
+                      onUpdate={(next) => {
+                        const next_ = [...group.conditions]
+                        next_[idx] = next
+                        onUpdateGroup({ ...group, conditions: next_ })
                       }}
-                      onDelete={() =>
-                        onDeleteSubCondition(condition, `condition ${groupIndex + 1}.${index + 1}`)
-                      }
+                      onDelete={() => onDeleteSubCondition(cond.localId)}
+                      brokenMessage={cond.id ? brokenConditionMap.get(cond.id) : undefined}
                     />
-                    {index < group.conditions.length - 1 ? (
-                      <LevelConnectorPill
-                        value={groupConnector(group)}
-                        onChange={(nextConnector) =>
-                          onUpdateGroup({
-                            ...group,
-                            conditions: normalizeGroupConditions(
-                              group.conditions.map((item, itemIndex) => ({
-                                ...item,
-                                logical_connector: itemIndex === 0 ? "AND" : nextConnector,
-                              })),
-                            ),
-                          })
-                        }
+                    {idx < group.conditions.length - 1 && (
+                      <ConnectorPill
+                        value={group.groupOperator}
+                        onChange={(next) => onUpdateGroup({ ...group, groupOperator: next })}
                       />
-                    ) : null}
+                    )}
                   </div>
                 ))}
               </div>
@@ -626,6 +431,49 @@ function ConditionGroupCard({
   )
 }
 
+// -----------------------------------------------------------------------
+// Sortable top-level leaf (DnD wrapper for standalone conditions)
+// -----------------------------------------------------------------------
+
+function SortableTopLevelLeaf({
+  item,
+  index,
+  questions,
+  onUpdateItem,
+  onDeleteItem,
+  brokenConditionMap,
+}: {
+  item: ConditionDraft & { kind: "condition" }
+  index: number
+  questions: LogicQuestionOption[]
+  onUpdateItem: (next: TopLevelItem) => void
+  onDeleteItem: () => void
+  brokenConditionMap: Map<string, string>
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: item.localId })
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+    >
+      <RuleConditionCard
+        label={`Condition ${index + 1}`}
+        condition={item}
+        questions={questions}
+        onUpdate={(next) => onUpdateItem({ kind: "condition", ...next })}
+        onDelete={onDeleteItem}
+        dragAttributes={attributes}
+        dragListeners={listeners}
+        brokenMessage={item.id ? brokenConditionMap.get(item.id) : undefined}
+      />
+    </div>
+  )
+}
+
+// -----------------------------------------------------------------------
+// Top-level item dispatcher (no hooks — dispatches to typed subcomponents)
+// -----------------------------------------------------------------------
+
 function SortableTopLevelItem({
   item,
   index,
@@ -633,13 +481,15 @@ function SortableTopLevelItem({
   onUpdateItem,
   onDeleteItem,
   onDeleteSubCondition,
+  brokenConditionMap,
 }: {
-  item: RuleItemDraft
+  item: TopLevelItem
   index: number
   questions: LogicQuestionOption[]
-  onUpdateItem: (next: RuleItemDraft) => void
-  onDeleteItem: (label: string) => void
-  onDeleteSubCondition: (condition: LeafConditionDraft, title: string) => void
+  onUpdateItem: (next: TopLevelItem) => void
+  onDeleteItem: () => void
+  onDeleteSubCondition: (groupLocalId: string, condLocalId: string) => void
+  brokenConditionMap: Map<string, string>
 }) {
   if (item.kind === "group") {
     return (
@@ -647,30 +497,38 @@ function SortableTopLevelItem({
         groupIndex={index}
         group={item}
         questions={questions}
-        onUpdateGroup={onUpdateItem}
-        onDeleteGroup={() => onDeleteItem(`condition ${index + 1}`)}
-        onDeleteSubCondition={onDeleteSubCondition}
+        onUpdateGroup={(next) => onUpdateItem(next)}
+        onDeleteGroup={onDeleteItem}
+        onDeleteSubCondition={(condLocalId) => onDeleteSubCondition(item.localId, condLocalId)}
+        brokenConditionMap={brokenConditionMap}
       />
     )
   }
 
   return (
-    <SortableLeafConditionCard
-      title={`Condition ${index + 1}`}
-      condition={item}
+    <SortableTopLevelLeaf
+      item={item}
+      index={index}
       questions={questions}
-      onUpdate={onUpdateItem}
-      onDelete={() => onDeleteItem(`condition ${index + 1}`)}
+      onUpdateItem={onUpdateItem}
+      onDeleteItem={onDeleteItem}
+      brokenConditionMap={brokenConditionMap}
     />
   )
 }
 
+// -----------------------------------------------------------------------
+// Page
+// -----------------------------------------------------------------------
+
 export default function RulesPage() {
   const { confirm, ConfirmDialogRender } = useConfirm()
+  const { refreshBrokenRuleCount } = useBrokenRules()
+
   const [surveys, setSurveys] = useState<SurveySummary[]>([])
   const [selectedSurveyId, setSelectedSurveyId] = useState("")
   const [questions, setQuestions] = useState<LogicQuestionOption[]>([])
-  const [rules, setRules] = useState<LogicRuleResponse[]>([])
+  const [rules, setRules] = useState<RuleData[]>([])
   const [draft, setDraft] = useState<RuleDraft | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -685,29 +543,42 @@ export default function RulesPage() {
   )
 
   async function getToken() {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession()
+    const { data: { session } } = await supabase.auth.getSession()
     return session?.access_token ?? null
   }
 
   const questionMap = useMemo(
-    () => new Map(questions.map((question) => [question.id, question])),
+    () => new Map(questions.map((q) => [q.id, q])),
     [questions],
   )
+
+  const brokenConditionMap = useMemo((): Map<string, string> => {
+    if (!draft?.id) return new Map()
+    const rule = rules.find((r) => r.id === draft.id)
+    if (!rule || rule.status !== "broken") return new Map()
+    return new Map(rule.broken_reasons.map((r) => [r.condition_id, r.message]))
+  }, [draft?.id, rules])
+
+  const isOpenRuleBroken = useMemo(
+    () => !!draft?.id && rules.find((r) => r.id === draft.id)?.status === "broken",
+    [draft?.id, rules],
+  )
+
+  // All question types are now supported
   const supportedQuestions = useMemo(
-    () => questions.filter((question) => isSupportedQuestion(question)),
+    () => questions.filter((q) => conditionTypesForQuestionType(q.question_type).length > 0),
     [questions],
   )
+
   const hasUnsavedChanges = useMemo(
-    () => (draft ? (!draft.id || serializeRuleDraft(draft) !== draftSnapshot) : false),
+    () => draft ? (!draft.id || serializeDraft(draft) !== draftSnapshot) : false,
     [draft, draftSnapshot],
   )
 
   const loadBundle = useCallback(async (surveyId: string) => {
     const token = await getToken()
     if (!token || !surveyId) return
-    const bundle = await fetchSurveyLogicRules(token, surveyId)
+    const bundle: RuleBundleData = await fetchRuleBundleDirect(token, surveyId)
     setQuestions(bundle.questions)
     setRules(bundle.rules)
     setDraft(null)
@@ -716,10 +587,10 @@ export default function RulesPage() {
     setError(null)
   }, [])
 
-  async function confirmDiscardChanges() {
+  async function confirmDiscard() {
     if (!hasUnsavedChanges) return true
     return confirm({
-      title: "You have unsaved changes",
+      title: "Unsaved changes",
       message: "Discard the current rule changes?",
       confirmLabel: "Discard",
       cancelLabel: "Keep editing",
@@ -734,15 +605,12 @@ export default function RulesPage() {
       try {
         const surveyRows = await fetchSurveys(token)
         setSurveys(surveyRows)
-        const initialSurveyId = surveyRows[0]?.id ?? ""
-        setSelectedSurveyId(initialSurveyId)
-        if (initialSurveyId) {
-          const bundle = await fetchSurveyLogicRules(token, initialSurveyId)
+        const initialId = surveyRows[0]?.id ?? ""
+        setSelectedSurveyId(initialId)
+        if (initialId) {
+          const bundle = await fetchRuleBundleDirect(token, initialId)
           setQuestions(bundle.questions)
           setRules(bundle.rules)
-        } else {
-          setQuestions([])
-          setRules([])
         }
       } catch (err) {
         setError(extractErrorMessage(err, "Failed to load rules"))
@@ -753,97 +621,34 @@ export default function RulesPage() {
     load()
   }, [])
 
-  // Error timeouts
+  // Auto-dismiss error banners
   useEffect(() => {
     if (!draftError) return
-
-    const timer = setTimeout(() => {
-      setDraftError(null)
-    }, 5000)
-
-    return () => clearTimeout(timer)
+    const t = setTimeout(() => setDraftError(null), 6000)
+    return () => clearTimeout(t)
   }, [draftError])
 
   useEffect(() => {
     if (!deleteError) return
-
-    const timer = setTimeout(() => {
-      setDeleteError(null)
-    }, 5000)
-
-    return () => clearTimeout(timer)
+    const t = setTimeout(() => setDeleteError(null), 6000)
+    return () => clearTimeout(t)
   }, [deleteError])
 
+  // ---- Rule CRUD --------------------------------------------------------
+
   async function startNewRule() {
-    const proceed = await confirmDiscardChanges()
-    if (!proceed) return
-    setDraft({
-      name: "New rule",
-      description: "",
-      action_type: "none",
-      conditions: [],
-    })
+    if (!(await confirmDiscard())) return
+    setDraft({ name: "New rule", description: "", topOperator: "AND", items: [] })
     setDraftSnapshot(null)
     setDraftError(null)
   }
 
-  async function openRule(rule: LogicRuleResponse) {
-    const proceed = await confirmDiscardChanges()
-    if (!proceed) return
-    const nextDraft = draftFromRule(rule)
-    setDraft(nextDraft)
-    setDraftSnapshot(serializeRuleDraft(nextDraft))
+  async function openRule(rule: RuleData) {
+    if (!(await confirmDiscard())) return
+    const next = draftFromRule(rule)
+    setDraft(next)
+    setDraftSnapshot(serializeDraft(next))
     setDraftError(null)
-  }
-
-  async function requestDeleteTopLevelItem(label: string, localId: string) {
-    const ok = await confirm({
-      title: `Delete Condition`,
-      message: `Are you sure you want to delete this condition. This cannot be undone.`,
-      confirmLabel: "Delete",
-      variant: "danger",
-    })
-    if (!ok) return
-
-    setDraft((current) =>
-      current
-        ? {
-            ...current,
-            conditions: normalizeTopLevel(
-              current.conditions.filter((item) => item.localId !== localId),
-            ),
-          }
-        : current,
-    )
-  }
-
-  async function requestDeleteSubCondition(condition: LeafConditionDraft, title: string) {
-    const questionLabel =
-      questionMap.get(condition.question_id)?.question_text ?? condition.question_text ?? title
-    const ok = await confirm({
-      title: "Delete condition",
-      message: `Delete ${title} based on "${questionLabel}"?`,
-      confirmLabel: "Delete",
-      variant: "danger",
-    })
-    if (!ok) return
-
-    setDraft((current) => {
-      if (!current) return current
-      return {
-        ...current,
-        conditions: current.conditions.map((item) =>
-          item.kind === "group"
-            ? {
-                ...item,
-                conditions: normalizeGroupConditions(
-                  item.conditions.filter((subCondition) => subCondition.localId !== condition.localId),
-                ),
-              }
-            : item,
-        ),
-      }
-    })
   }
 
   async function saveDraft() {
@@ -853,7 +658,6 @@ export default function RulesPage() {
       setDraftError(validationError)
       return
     }
-
     const token = await getToken()
     if (!token) return
     setSaving(true)
@@ -861,46 +665,96 @@ export default function RulesPage() {
     try {
       const payload = payloadFromDraft(draft)
       const saved = draft.id
-        ? await updateSurveyLogicRule(token, selectedSurveyId, draft.id, payload)
-        : await createSurveyLogicRule(token, selectedSurveyId, payload)
+        ? await updateRuleDirect(token, selectedSurveyId, draft.id, { ...payload, updated_at: draft.updated_at ?? "" } as RuleUpdatePayload)
+        : await createRuleDirect(token, selectedSurveyId, payload)
 
       setRules((current) => {
-        const exists = current.some((rule) => rule.id === saved.id)
-        return exists
-          ? current.map((rule) => (rule.id === saved.id ? saved : rule))
-          : [saved, ...current]
+        const exists = current.some((r) => r.id === saved.id)
+        return exists ? current.map((r) => (r.id === saved.id ? saved : r)) : [saved, ...current]
       })
       const nextDraft = draftFromRule(saved)
       setDraft(nextDraft)
-      setDraftSnapshot(serializeRuleDraft(nextDraft))
+      setDraftSnapshot(serializeDraft(nextDraft))
+      void refreshBrokenRuleCount()
     } catch (err) {
-      setDraftError(extractErrorMessage(err, "Failed to save rule"))
+      if (isStaleObjectError(err)) {
+        setDraftError("This rule was updated elsewhere. Please refresh.")
+      } else {
+        setDraftError(extractErrorMessage(err, "Failed to save rule"))
+      }
     } finally {
       setSaving(false)
     }
   }
 
-  async function deleteRule(rule: LogicRuleResponse) {
+  async function deleteRule(rule: RuleData) {
     const ok = await confirm({
-      title: `Delete rule - ${rule.name}`,
-      message: `Are you sure you want to delete this rule. This cannot be undone.`,
+      title: `Delete rule — ${rule.name}`,
+      message: "Are you sure you want to delete this rule? This cannot be undone.",
       confirmLabel: "Delete",
       variant: "danger",
     })
     if (!ok) return
-
     const token = await getToken()
     if (!token || !selectedSurveyId) return
-
     try {
-      await deleteSurveyLogicRule(token, selectedSurveyId, rule.id)
-      setRules((current) => current.filter((item) => item.id !== rule.id))
+      await deleteSurveyLogicRule(token, selectedSurveyId, rule.id, rule.updated_at)
+      setRules((current) => current.filter((r) => r.id !== rule.id))
       setDraft((current) => (current?.id === rule.id ? null : current))
       setDraftSnapshot((current) => (draft?.id === rule.id ? null : current))
+      void refreshBrokenRuleCount()
     } catch (err) {
-      setDeleteError(extractErrorMessage(err, "Failed to delete rule"))
+      if (isStaleObjectError(err)) {
+        setDeleteError("This rule was updated. Please refresh.")
+      } else {
+        setDeleteError(extractErrorMessage(err, "Failed to delete rule"))
+      }
     }
   }
+
+  // ---- Draft mutations --------------------------------------------------
+
+  function updateItem(index: number, next: TopLevelItem) {
+    setDraft((cur) =>
+      cur ? { ...cur, items: cur.items.map((item, i) => (i === index ? next : item)) } : cur,
+    )
+  }
+
+  async function deleteTopLevelItem(index: number) {
+    const ok = await confirm({
+      title: "Delete condition",
+      message: "Are you sure you want to delete this condition?",
+      confirmLabel: "Delete",
+      variant: "danger",
+    })
+    if (!ok) return
+    setDraft((cur) =>
+      cur ? { ...cur, items: cur.items.filter((_, i) => i !== index) } : cur,
+    )
+  }
+
+  async function deleteSubCondition(groupLocalId: string, condLocalId: string) {
+    const ok = await confirm({
+      title: "Delete condition",
+      message: "Are you sure you want to delete this condition?",
+      confirmLabel: "Delete",
+      variant: "danger",
+    })
+    if (!ok) return
+    setDraft((cur) => {
+      if (!cur) return cur
+      return {
+        ...cur,
+        items: cur.items.map((item) =>
+          item.kind === "group" && item.localId === groupLocalId
+            ? { ...item, conditions: item.conditions.filter((c) => c.localId !== condLocalId) }
+            : item,
+        ),
+      }
+    })
+  }
+
+  // ---- Loading / error states -------------------------------------------
 
   if (loading) {
     return (
@@ -927,31 +781,39 @@ export default function RulesPage() {
     )
   }
 
+  // ---- Render -----------------------------------------------------------
+
   return (
     <div className="space-y-6">
       {ConfirmDialogRender}
 
+      {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className={!draft && rules.length === 0 ? "h-full" : undefined}>
+        <div>
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-950">Rules</h1>
           <p className="mt-1 text-sm text-zinc-500">
             Create logic rules to automate actions based on survey responses.
           </p>
         </div>
-              <Button onClick={() => void startNewRule()} disabled={!selectedSurveyId || supportedQuestions.length === 0}>
+        <Button
+          onClick={() => void startNewRule()}
+          disabled={!selectedSurveyId || supportedQuestions.length === 0}
+        >
           <Plus className="mr-1.5 h-4 w-4" />
           New rule
         </Button>
       </div>
 
-      {deleteError ? (
+      {deleteError && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {deleteError}
         </div>
-      ) : null}
+      )}
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,430px)_minmax(0,1fr)]">
+        {/* Left panel */}
         <div className="space-y-4">
+          {/* Survey selector */}
           <Card>
             <div className="space-y-4">
               <div>
@@ -960,22 +822,20 @@ export default function RulesPage() {
                   Choose the survey you want to configure rules for.
                 </p>
               </div>
-
-              <label className="block">
+              <div>
                 <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
                   Survey
                 </span>
                 <div className="mt-1">
                   <SingleSelectDropdown
-                    options={surveys.map((survey) => ({ value: survey.id, label: survey.name }))}
+                    options={surveys.map((s) => ({ value: s.id, label: s.name }))}
                     value={selectedSurveyId}
-                    onChange={async (nextSurveyId) => {
-                      const proceed = await confirmDiscardChanges()
-                      if (!proceed) return
-                      setSelectedSurveyId(nextSurveyId)
+                    onChange={async (nextId) => {
+                      if (!(await confirmDiscard())) return
+                      setSelectedSurveyId(nextId)
                       setLoading(true)
                       try {
-                        await loadBundle(nextSurveyId)
+                        await loadBundle(nextId)
                       } catch (err) {
                         setError(extractErrorMessage(err, "Failed to load survey rules"))
                       } finally {
@@ -984,10 +844,11 @@ export default function RulesPage() {
                     }}
                   />
                 </div>
-              </label>
+              </div>
             </div>
           </Card>
 
+          {/* Saved rules list */}
           <Card>
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-base font-semibold text-zinc-900">Saved rules</h2>
@@ -1006,9 +867,9 @@ export default function RulesPage() {
                     role="button"
                     tabIndex={0}
                     onClick={() => void openRule(rule)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault()
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault()
                         void openRule(rule)
                       }
                     }}
@@ -1016,28 +877,36 @@ export default function RulesPage() {
                       "rounded-2xl border px-4 py-3 transition-colors",
                       draft?.id === rule.id
                         ? "border-violet-300 bg-violet-50"
-                        : "border-zinc-200 bg-white hover:border-violet-200 hover:bg-violet-50/40",
+                        : rule.status === "broken"
+                          ? "border-red-200 bg-white hover:border-red-300"
+                          : "border-zinc-200 bg-white hover:border-violet-200 hover:bg-violet-50/40",
                     ].join(" ")}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="truncate font-medium text-zinc-900">{rule.name}</p>
-                        </div>
+                        <p className="truncate font-medium text-zinc-900">{rule.name}</p>
                         {rule.description ? (
-                          <p className="mt-1 text-sm text-zinc-600">{truncateDescription(rule.description)}</p>
+                          <p className="mt-1 text-sm text-zinc-600">
+                            {truncateDescription(rule.description)}
+                          </p>
                         ) : (
                           <p className="mt-1 text-sm text-zinc-400">No description</p>
+                        )}
+                        <p className="mt-1.5 text-xs text-zinc-400">
+                          {rule.conditions.length} condition{rule.conditions.length !== 1 ? "s" : ""}
+                        </p>
+                        {rule.status === "broken" && (
+                          <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-600">
+                            <AlertTriangle className="h-3 w-3" />
+                            Broken
+                          </span>
                         )}
                       </div>
                       <div className="flex items-center gap-1">
                         <button
                           type="button"
                           className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            void openRule(rule)
-                          }}
+                          onClick={(e) => { e.stopPropagation(); void openRule(rule) }}
                           aria-label={`Edit ${rule.name}`}
                         >
                           <Pencil className="h-4 w-4" />
@@ -1045,10 +914,7 @@ export default function RulesPage() {
                         <button
                           type="button"
                           className="rounded-lg p-2 text-zinc-400 hover:bg-red-50 hover:text-red-600"
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            void deleteRule(rule)
-                          }}
+                          onClick={(e) => { e.stopPropagation(); void deleteRule(rule) }}
                           aria-label={`Delete ${rule.name}`}
                         >
                           <Trash2 className="h-4 w-4" />
@@ -1062,25 +928,25 @@ export default function RulesPage() {
           </Card>
         </div>
 
+        {/* Right panel — editor */}
         <div>
           {draft ? (
             <Card>
+              {/* Editor header */}
               <div className="mb-4 flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <h2 className="text-base font-semibold text-zinc-900">
                     {draft.id ? "Edit rule" : "Create rule"}
                   </h2>
                   <p className="mt-1 text-sm text-zinc-500">
-                    Build your rule using standalone conditions and condition groups.
+                    Build conditions using any question from this survey.
                   </p>
                 </div>
-
-                <div className="flex flex-shrink-0 gap-2">
+                <div className="flex shrink-0 gap-2">
                   <Button
                     variant="ghost"
                     onClick={async () => {
-                      const proceed = await confirmDiscardChanges()
-                      if (!proceed) return
+                      if (!(await confirmDiscard())) return
                       setDraft(null)
                       setDraftSnapshot(null)
                     }}
@@ -1088,7 +954,7 @@ export default function RulesPage() {
                   >
                     Cancel
                   </Button>
-                  <Button onClick={saveDraft} disabled={saving}>
+                  <Button onClick={() => void saveDraft()} disabled={saving}>
                     {saving ? (
                       <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
                     ) : (
@@ -1099,6 +965,15 @@ export default function RulesPage() {
                 </div>
               </div>
 
+              {/* Broken rule banner */}
+              {isOpenRuleBroken && (
+                <div className="mb-2 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>This rule is broken and cannot run until fixed. Update the highlighted conditions below.</span>
+                </div>
+              )}
+
+              {/* Rule name */}
               <label className="block">
                 <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
                   Rule name
@@ -1106,151 +981,148 @@ export default function RulesPage() {
                 <input
                   className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
                   value={draft.name}
-                  onChange={(event) =>
-                    setDraft((current) =>
-                      current ? { ...current, name: event.target.value } : current,
-                    )
+                  onChange={(e) =>
+                    setDraft((cur) => (cur ? { ...cur, name: e.target.value } : cur))
                   }
                 />
               </label>
 
-              {draftError ? (
+              {/* Rule description */}
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                  Description{" "}
+                  <span className="font-normal normal-case text-zinc-400">(optional)</span>
+                </span>
+                <textarea
+                  className="mt-1 w-full resize-none rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
+                  rows={2}
+                  maxLength={240}
+                  placeholder="Describe when this rule should fire…"
+                  value={draft.description}
+                  onChange={(e) =>
+                    setDraft((cur) => (cur ? { ...cur, description: e.target.value } : cur))
+                  }
+                />
+              </label>
+
+              {/* Error banner */}
+              {draftError && (
                 <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                   {draftError}
                 </div>
-              ) : null}
+              )}
 
-              <label className="mt-4 block">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                    Description
-                  </span>
-                  <span className="text-xs text-zinc-400">
-                    {draft.description.length}/{MAX_RULE_DESCRIPTION_LENGTH}
-                  </span>
-                </div>
-                <textarea
-                  maxLength={MAX_RULE_DESCRIPTION_LENGTH}
-                  rows={3}
-                  className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
-                  value={draft.description}
-                  onChange={(event) =>
-                    setDraft((current) =>
-                      current ? { ...current, description: event.target.value } : current,
-                    )
-                  }
-                  placeholder="Add a short description for this rule."
-                />
-              </label>
-
-              <div className="mt-6">
-                <DndContext
-                  sensors={sensors}
-                  collisionDetection={closestCenter}
-                  onDragEnd={({ active, over }) => {
-                    if (!over || active.id === over.id || !draft) return
-                    const oldIndex = draft.conditions.findIndex((item) => item.localId === String(active.id))
-                    const newIndex = draft.conditions.findIndex((item) => item.localId === String(over.id))
-                    if (oldIndex === -1 || newIndex === -1) return
-                    setDraft({
-                      ...draft,
-                      conditions: normalizeTopLevel(arrayMove(draft.conditions, oldIndex, newIndex)),
-                    })
-                  }}
-                >
-                  <SortableContext
-                    items={draft.conditions.map((item) => item.localId)}
-                    strategy={verticalListSortingStrategy}
-                  >
-                    <div className="space-y-3">
-                      {draft.conditions.map((item, index) => (
-                        <div key={item.localId} className="space-y-3">
-                          <SortableTopLevelItem
-                            item={item}
-                            index={index}
-                            questions={supportedQuestions}
-                            onUpdateItem={(nextItem) =>
-                              setDraft((current) => {
-                                if (!current) return current
-                                const nextItems = [...current.conditions]
-                                nextItems[index] = nextItem
-                                return { ...current, conditions: nextItems }
-                              })
-                            }
-                            onDeleteItem={(label) => {
-                              void requestDeleteTopLevelItem(label, item.localId)
-                            }}
-                            onDeleteSubCondition={(condition, title) => {
-                              void requestDeleteSubCondition(condition, title)
-                            }}
-                          />
-                          {index < draft.conditions.length - 1 ? (
-                            <LevelConnectorPill
-                              value={topLevelConnector(draft.conditions)}
-                              onChange={(nextConnector) =>
-                                setDraft((current) =>
-                                  current
-                                    ? {
-                                        ...current,
-                                        conditions: normalizeTopLevel(
-                                          current.conditions.map((ruleItem, ruleIndex) => ({
-                                            ...ruleItem,
-                                            logical_connector:
-                                              ruleIndex === 0 ? "AND" : nextConnector,
-                                          })),
-                                        ),
-                                      }
-                                    : current,
-                                )
-                              }
-                            />
-                          ) : null}
-                        </div>
-                      ))}
+              {/* Conditions */}
+              <div className="mt-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-zinc-700">Conditions</h3>
+                  {draft.items.length > 1 && (
+                    <div className="flex items-center gap-2 text-xs text-zinc-500">
+                      <span>Match</span>
+                      <label className="relative inline-flex items-center">
+                        <select
+                          value={draft.topOperator}
+                          onChange={(e) =>
+                            setDraft((cur) =>
+                              cur ? { ...cur, topOperator: e.target.value as "AND" | "OR" } : cur,
+                            )
+                          }
+                          className="appearance-none rounded-full border border-violet-200 bg-violet-50 px-3 py-1 pr-7 text-xs font-semibold uppercase tracking-wide text-violet-700 outline-none hover:border-violet-300 focus:ring-2 focus:ring-violet-500"
+                        >
+                          <option value="AND">all</option>
+                          <option value="OR">any</option>
+                        </select>
+                        <ChevronDown className="pointer-events-none absolute right-2 h-3 w-3 text-violet-600" />
+                      </label>
+                      <span>conditions</span>
                     </div>
-                  </SortableContext>
-                </DndContext>
+                  )}
+                </div>
 
-                <div className="mt-4 flex flex-wrap gap-2">
+                {draft.items.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-zinc-200 bg-zinc-50 px-4 py-8 text-center text-sm text-zinc-500">
+                    Add a condition below.
+                  </div>
+                ) : (
+                  <DndContext
+                    sensors={sensors}
+                    collisionDetection={closestCenter}
+                    onDragEnd={({ active, over }) => {
+                      if (!over || active.id === over.id) return
+                      const oldIdx = draft.items.findIndex((item) => item.localId === String(active.id))
+                      const newIdx = draft.items.findIndex((item) => item.localId === String(over.id))
+                      if (oldIdx === -1 || newIdx === -1) return
+                      setDraft((cur) =>
+                        cur ? { ...cur, items: arrayMove(cur.items, oldIdx, newIdx) } : cur,
+                      )
+                    }}
+                  >
+                    <SortableContext
+                      items={draft.items.map((item) => item.localId)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      <div className="space-y-3">
+                        {draft.items.map((item, index) => (
+                          <div key={item.localId} className="space-y-3">
+                            <SortableTopLevelItem
+                              item={item}
+                              index={index}
+                              questions={supportedQuestions}
+                              onUpdateItem={(next) => updateItem(index, next)}
+                              onDeleteItem={() => void deleteTopLevelItem(index)}
+                              onDeleteSubCondition={deleteSubCondition}
+                              brokenConditionMap={brokenConditionMap}
+                            />
+                            {index < draft.items.length - 1 && (
+                              <ConnectorPill
+                                value={draft.topOperator}
+                                onChange={(next) =>
+                                  setDraft((cur) => (cur ? { ...cur, topOperator: next } : cur))
+                                }
+                              />
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </SortableContext>
+                  </DndContext>
+                )}
+
+                {/* Add buttons */}
+                <div className="flex flex-wrap gap-2 pt-1">
                   <Button
-                    type="button"
                     variant="outline"
+                    disabled={supportedQuestions.length === 0}
                     onClick={() => {
-                      const fallbackQuestion = supportedQuestions[0]
-                      if (!fallbackQuestion) return
-                      setDraft((current) =>
-                        current
+                      const q = supportedQuestions[0]
+                      if (!q) return
+                      setDraft((cur) =>
+                        cur
                           ? {
-                              ...current,
-                              conditions: normalizeTopLevel([
-                                ...current.conditions,
-                                makeLeafCondition(fallbackQuestion),
-                              ]),
+                              ...cur,
+                              items: [...cur.items, { kind: "condition", ...makeConditionDraft(q) }],
                             }
-                          : current,
+                          : cur,
                       )
                     }}
                   >
                     <Plus className="mr-1.5 h-4 w-4" />
                     Add condition
                   </Button>
-
                   <Button
-                    type="button"
                     variant="outline"
+                    disabled={supportedQuestions.length === 0}
                     onClick={() => {
-                      const fallbackQuestion = supportedQuestions[0]
-                      if (!fallbackQuestion) return
-                      setDraft((current) =>
-                        current
-                          ? {
-                              ...current,
-                              conditions: normalizeTopLevel([
-                                ...current.conditions,
-                                makeConditionGroup(fallbackQuestion),
-                              ]),
-                            }
-                          : current,
+                      const q = supportedQuestions[0]
+                      if (!q) return
+                      const group: GroupDraft = {
+                        kind: "group",
+                        localId: uid(),
+                        groupOperator: "AND",
+                        conditions: [makeConditionDraft(q)],
+                      }
+                      setDraft((cur) =>
+                        cur ? { ...cur, items: [...cur.items, group] } : cur,
                       )
                     }}
                   >
@@ -1261,11 +1133,10 @@ export default function RulesPage() {
               </div>
             </Card>
           ) : (
-            <Card className="flex h-full min-h-[320px] flex-col items-center justify-center gap-3">
+            <Card className="flex flex-col items-center gap-3 py-16">
               <Bell className="h-8 w-8 text-zinc-300" />
-              <p className="text-sm font-medium text-zinc-700">Select a rule to edit or create a new one.</p>
-              <p className="max-w-md text-center text-sm text-zinc-500">
-                Rules can be added to one or more flows to be evaluated after each survey submission.
+              <p className="text-sm font-medium text-zinc-500">
+                Select a rule to edit or create a new one.
               </p>
             </Card>
           )}

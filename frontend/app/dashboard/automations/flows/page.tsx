@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
-import { ArrowRight, Loader2, Pencil, Plus, Save, ToggleLeft, ToggleRight, Trash2, X } from "lucide-react"
+import { AlertTriangle, ArrowRight, Loader2, Pencil, Plus, Save, ToggleLeft, ToggleRight, Trash2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner"
 import { Card } from "@/components/ui/card"
@@ -16,12 +16,16 @@ import {
   extractErrorMessage,
   fetchFlowRuns,
   fetchFlows,
+  fetchRuleBundleDirect,
   fetchSurveys,
+  isStaleObjectError,
   setSurveyFlowActive,
   updateSurveyFlow,
   type FlowPayload,
   type FlowResponse,
   type FlowRunResponse,
+  type FlowUpdatePayload,
+  type RuleBundleData,
   type SurveySummary,
 } from "@/lib/api/client"
 
@@ -33,6 +37,12 @@ function truncateDescription(value: string | null, maxLength = 120) {
 
 function plural(n: number, singular: string, pluralForm?: string) {
   return `${n} ${n === 1 ? singular : (pluralForm ?? `${singular}s`)}`
+}
+
+function flowHasBrokenRule(flow: FlowResponse, brokenIds: Set<string>): boolean {
+  return flow.nodes.some(
+    (n) => n.node_type === "rule" && n.rule_id !== null && brokenIds.has(n.rule_id),
+  )
 }
 
 function flowCounts(flow: FlowResponse) {
@@ -282,6 +292,7 @@ export default function FlowsPage() {
   const [flowRuns, setFlowRuns] = useState<FlowRunResponse[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [brokenRuleIds, setBrokenRuleIds] = useState<Set<string>>(new Set())
   const [createOpen, setCreateOpen] = useState(false)
   const [editFlow, setEditFlow] = useState<FlowResponse | null>(null)
   const [editSaving, setEditSaving] = useState(false)
@@ -306,6 +317,21 @@ export default function FlowsPage() {
         setSurveys(surveyRows)
         setFlows(flowRows)
         setFlowRuns(flowRunRows)
+
+        // Fetch rule bundles for each unique survey to find broken rules
+        const uniqueSurveyIds = [...new Set(flowRows.map((f) => f.survey_id))]
+        const results = await Promise.allSettled(
+          uniqueSurveyIds.map((sid) => fetchRuleBundleDirect(token, sid) as Promise<RuleBundleData>),
+        )
+        const broken = new Set<string>()
+        for (const r of results) {
+          if (r.status === "fulfilled") {
+            for (const rule of r.value.rules) {
+              if (rule.status === "broken") broken.add(rule.id)
+            }
+          }
+        }
+        setBrokenRuleIds(broken)
       } catch (err) {
         setError(extractErrorMessage(err, "Failed to load flows"))
       } finally {
@@ -321,16 +347,21 @@ export default function FlowsPage() {
     if (!token) return
     setEditSaving(true)
     try {
-      const updated = await updateSurveyFlow(
-        token,
-        editFlow.survey_id,
-        editFlow.id,
-        { ...flowToPayload(editFlow, editFlow.is_active), name, description: description || null },
-      )
+      const payload: FlowUpdatePayload = {
+        ...flowToPayload(editFlow, editFlow.is_active),
+        name,
+        description: description || null,
+        updated_at: editFlow.updated_at,
+      }
+      const updated = await updateSurveyFlow(token, editFlow.survey_id, editFlow.id, payload)
       setFlows((current) => current.map((f) => (f.id === updated.id ? updated : f)))
       setEditFlow(null)
     } catch (err) {
-      setError(extractErrorMessage(err, "Failed to update flow"))
+      if (isStaleObjectError(err)) {
+        setError("This flow was updated elsewhere. Please refresh.")
+      } else {
+        setError(extractErrorMessage(err, "Failed to update flow"))
+      }
     } finally {
       setEditSaving(false)
     }
@@ -352,10 +383,14 @@ export default function FlowsPage() {
       if (!ok) return
     }
     try {
-      const updated = await setSurveyFlowActive(token, flow.survey_id, flow.id, { is_active: nextActive })
+      const updated = await setSurveyFlowActive(token, flow.survey_id, flow.id, { is_active: nextActive, updated_at: flow.updated_at })
       setFlows((current) => current.map((item) => (item.id === updated.id ? updated : item)))
     } catch (err) {
-      setError(extractErrorMessage(err, "Failed to update flow"))
+      if (isStaleObjectError(err)) {
+        setError("This flow was updated elsewhere. Please refresh.")
+      } else {
+        setError(extractErrorMessage(err, "Failed to update flow"))
+      }
     }
   }
 
@@ -370,10 +405,14 @@ export default function FlowsPage() {
     const token = await getToken()
     if (!token) return
     try {
-      await deleteSurveyFlow(token, flow.survey_id, flow.id)
+      await deleteSurveyFlow(token, flow.survey_id, flow.id, flow.updated_at)
       setFlows((current) => current.filter((item) => item.id !== flow.id))
     } catch (err) {
-      setError(extractErrorMessage(err, "Failed to delete flow"))
+      if (isStaleObjectError(err)) {
+        setError("This flow was updated. Please refresh.")
+      } else {
+        setError(extractErrorMessage(err, "Failed to delete flow"))
+      }
     }
   }
 
@@ -465,6 +504,12 @@ export default function FlowsPage() {
                           <span className="rounded-full bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700">
                             {flow.survey_name}
                           </span>
+                          {flowHasBrokenRule(flow, brokenRuleIds) && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-600">
+                              <AlertTriangle className="h-3 w-3" />
+                              Contains broken rules
+                            </span>
+                          )}
                         </div>
                         {truncateDescription(flow.description) ? (
                           <p className="mt-1 text-sm text-zinc-600">{truncateDescription(flow.description)}</p>

@@ -1,13 +1,16 @@
 import logging
 import os
 import uuid
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import RedirectResponse
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from ..auth.jwt import get_current_user
-from ..core.errors.exceptions import ConflictError, ExternalAPIError, NotFoundError, ValidationError
+from ..core.errors.exceptions import ConflictError, ExternalAPIError, NotFoundError, RateLimitExceededError, StaleObjectError, ValidationError
+from ..core.rate_limit import check_rate_limit, check_qr_rate_limit
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import (
     Company as CompanyORM,
@@ -19,6 +22,7 @@ from ..models.postgres_model import (
     User as UserORM,
 )
 from ..schemas.pydantic_model import (
+    DeleteRequest,
     QRCodeAssetUrls,
     QRCodeCreate,
     QRCodeResponse,
@@ -41,6 +45,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 public_router = APIRouter()
+
+
+def _strip_tz(dt: datetime) -> datetime:
+    """Normalize a datetime for comparison with a naive TIMESTAMP column."""
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 
 def _get_company(user: UserORM, db: Session) -> CompanyORM:
@@ -310,6 +321,8 @@ def update_qr_code(
     company = _get_company(user, db)
     qr = _get_qr_or_404(qr_id, company.id, db)
 
+    update_values: dict = {"updated_at": func.now()}
+
     if payload.title is not None:
         title = payload.title.strip()
         if not title:
@@ -325,38 +338,64 @@ def update_qr_code(
         )
         if existing:
             raise ConflictError(code="QR_TITLE_CONFLICT", message="Title is already in use")
-        qr.title = title
+        update_values["title"] = title
 
     if payload.location_survey_id is not None:
         location_survey = _get_location_survey_for_company(payload.location_survey_id, company.id, db)
-        qr.location_survey_id = location_survey.id
-        qr.location_id = location_survey.location_id
+        update_values["location_survey_id"] = location_survey.id
+        update_values["location_id"] = location_survey.location_id
 
     if payload.is_active is not None:
-        qr.is_active = payload.is_active
+        update_values["is_active"] = payload.is_active
+
+    rowcount = (
+        db.query(QRCodeORM)
+        .filter(
+            QRCodeORM.id == qr.id,
+            QRCodeORM.updated_at == _strip_tz(payload.updated_at),
+        )
+        .update(update_values, synchronize_session=False)
+    )
+    if rowcount == 0:
+        raise StaleObjectError("QRCode", str(qr.id))
 
     db.commit()
-    db.refresh(qr)
     return _to_response(_get_qr_or_404(str(qr.id), company.id, db))
 
 
 @router.delete("/qr-codes/{qr_id}", status_code=204)
 def delete_qr_code(
     qr_id: str,
+    payload: DeleteRequest,
     user: UserORM = Depends(get_current_user),
     db: Session = Depends(get_db_connection),
 ):
     company = _get_company(user, db)
     qr = _get_qr_or_404(qr_id, company.id, db)
-    qr.deleted_at = utc_now()
+
+    rowcount = (
+        db.query(QRCodeORM)
+        .filter(
+            QRCodeORM.id == qr.id,
+            QRCodeORM.updated_at == _strip_tz(payload.updated_at),
+        )
+        .update({"deleted_at": utc_now(), "updated_at": func.now()}, synchronize_session=False)
+    )
+    if rowcount == 0:
+        raise StaleObjectError("QRCode", str(qr.id))
+
     db.commit()
 
 
 @public_router.get("/{title}")
 def resolve_qr(
     title: str,
+    request: Request,
     db: Session = Depends(get_db_connection),
 ):
+    # Rate limit: 30 requests / minute / IP (global) + 10 / minute / QR / IP
+    check_rate_limit(request, "qr_redirect", limit=30, window=60)
+
     qr = (
         db.query(QRCodeORM)
         .filter(
@@ -367,6 +406,8 @@ def resolve_qr(
     )
     if not qr:
         raise NotFoundError(code="QR_CODE_NOT_FOUND", message="QR code not found")
+
+    check_qr_rate_limit(request, str(qr.id))
 
     frontend_origin = os.getenv("FRONTEND_ORIGIN")
     redirect_url = f"{frontend_origin}/r/{qr.id}"

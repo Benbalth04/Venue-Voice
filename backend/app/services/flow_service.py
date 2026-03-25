@@ -9,7 +9,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session, joinedload
 
-from ..core.errors.exceptions import ConflictError, NotFoundError, ValidationError
+from ..core.errors.exceptions import ConflictError, NotFoundError, StaleObjectError, ValidationError
 from ..db.postgres import SessionLocal
 from ..models.postgres_model import (
     Flow as FlowORM,
@@ -62,6 +62,13 @@ class FlowEvaluationResult:
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _strip_tz(dt: datetime) -> datetime:
+    """Normalize a datetime for comparison with a naive TIMESTAMP column."""
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 
 def _get_survey_or_404(db: Session, company_id: uuid.UUID, survey_id: uuid.UUID) -> SurveyORM:
@@ -453,9 +460,21 @@ def set_flow_active(
     flow_id: uuid.UUID,
     *,
     is_active: bool,
+    updated_at,
 ) -> dict[str, Any]:
     flow = _get_flow_or_404(db, company_id, survey_id, flow_id)
-    flow.is_active = is_active
+
+    rowcount = (
+        db.query(FlowORM)
+        .filter(
+            FlowORM.id == flow.id,
+            FlowORM.updated_at == _strip_tz(updated_at),
+        )
+        .update({"is_active": is_active, "updated_at": _now()}, synchronize_session=False)
+    )
+    if rowcount == 0:
+        raise StaleObjectError("Flow", str(flow.id))
+
     db.commit()
     return _flow_to_response(_get_flow_or_404(db, company_id, survey_id, flow_id))
 
@@ -472,9 +491,25 @@ def update_flow(db: Session, company_id: uuid.UUID, survey_id: uuid.UUID, flow_i
     )
     _validate_nodes(db, company_id, survey_id, payload.nodes)
 
-    flow.name = payload.name.strip()
-    flow.description = payload.description.strip() if payload.description and payload.description.strip() else None
-    flow.is_active = payload.is_active
+    rowcount = (
+        db.query(FlowORM)
+        .filter(
+            FlowORM.id == flow.id,
+            FlowORM.updated_at == _strip_tz(payload.updated_at),
+        )
+        .update(
+            {
+                "name": payload.name.strip(),
+                "description": payload.description.strip() if payload.description and payload.description.strip() else None,
+                "is_active": payload.is_active,
+                "updated_at": _now(),
+            },
+            synchronize_session="fetch",
+        )
+    )
+    if rowcount == 0:
+        raise StaleObjectError("Flow", str(flow.id))
+
     db.query(FlowLocationSurveyORM).filter(FlowLocationSurveyORM.flow_id == flow.id).delete(synchronize_session=False)
     # Use 'fetch' so deleted FlowNodeORM rows are removed from the session identity map.
     # With synchronize_session=False, stale instances can remain keyed by the same PKs; re-adding
@@ -504,9 +539,20 @@ def update_flow(db: Session, company_id: uuid.UUID, survey_id: uuid.UUID, flow_i
     return _flow_to_response(_get_flow_or_404(db, company_id, survey_id, flow.id))
 
 
-def delete_flow(db: Session, company_id: uuid.UUID, survey_id: uuid.UUID, flow_id: uuid.UUID) -> None:
+def delete_flow(db: Session, company_id: uuid.UUID, survey_id: uuid.UUID, flow_id: uuid.UUID, updated_at) -> None:
     flow = _get_flow_or_404(db, company_id, survey_id, flow_id)
-    flow.deleted_at = _now()
+
+    rowcount = (
+        db.query(FlowORM)
+        .filter(
+            FlowORM.id == flow.id,
+            FlowORM.updated_at == _strip_tz(updated_at),
+        )
+        .update({"deleted_at": _now(), "updated_at": _now()}, synchronize_session=False)
+    )
+    if rowcount == 0:
+        raise StaleObjectError("Flow", str(flow.id))
+
     db.commit()
 
 
@@ -637,6 +683,9 @@ def _evaluate_flow_node(
                 message="Flow references a missing rule",
                 status_code=422,
             )
+        if getattr(rule, "status", "active") == "broken":
+            from ..core.errors.exceptions import RuleBrokenError
+            raise RuleBrokenError()
         result = evaluate_rule(rule, contexts)
         trace_nodes.append(
             {

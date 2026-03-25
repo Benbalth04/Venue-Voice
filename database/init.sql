@@ -275,6 +275,20 @@ CREATE TABLE survey_response_answers (
 );
 
 --------------------------------------------------
+-- SURVEY RESPONSE PHOTOS (metadata for uploaded photos in survey responses)
+--------------------------------------------------
+CREATE TABLE survey_response_photos (
+    id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    survey_response_id  UUID NOT NULL REFERENCES survey_responses(id) ON DELETE CASCADE,
+    question_id         UUID REFERENCES questions(id) ON DELETE SET NULL,
+    storage_path        TEXT NOT NULL,
+    mime_type           TEXT NOT NULL,
+    file_size_bytes     INTEGER NOT NULL,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_survey_response_photos_response_id ON survey_response_photos(survey_response_id);
+
+--------------------------------------------------
 -- RESPONSE READS (track which responses each user has viewed)
 --------------------------------------------------
 CREATE TABLE response_reads (
@@ -296,6 +310,8 @@ CREATE TABLE rules (
     description VARCHAR(240),
     operator TEXT NOT NULL DEFAULT 'AND' CHECK (operator IN ('AND', 'OR')),
     survey_id UUID NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'broken')),
+    broken_reasons JSONB DEFAULT '[]'::jsonb,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
     deleted_at TIMESTAMP NULL
@@ -308,7 +324,8 @@ CREATE TABLE rule_groups (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     rule_id UUID NOT NULL REFERENCES rules(id) ON DELETE CASCADE,
     operator TEXT NOT NULL CHECK (operator IN ('AND', 'OR')),
-    created_at TIMESTAMP DEFAULT NOW()
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
 );
 
 --------------------------------------------------
@@ -317,12 +334,13 @@ CREATE TABLE rule_groups (
 CREATE TABLE rule_conditions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     rule_id UUID NOT NULL REFERENCES rules(id) ON DELETE CASCADE,
-    condition_type TEXT NOT NULL CHECK (condition_type IN ('rating', 'sentiment', 'not_empty')),
+    condition_type TEXT NOT NULL CHECK (condition_type IN ('rating', 'nps', 'sentiment', 'not_empty', 'checkbox', 'multiple_choice', 'yes_no')),
     question_id UUID NULL REFERENCES questions(id) ON DELETE SET NULL,
     operator TEXT NULL CHECK (operator IS NULL OR operator IN ('lt', 'lte', 'eq', 'gte', 'gt', 'is')),
     value TEXT NULL,
     group_id UUID NULL REFERENCES rule_groups(id) ON DELETE SET NULL,
     created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
     deleted_at TIMESTAMP NULL
 );
 
@@ -334,6 +352,7 @@ CREATE TABLE notification_groups (
     company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
     deleted_at TIMESTAMP NULL
 );
 
@@ -480,7 +499,8 @@ INSERT INTO question_types (type, category, label, is_numeric, analyse_with_ai) 
 ('checkbox', 'choice', 'Checkboxes', FALSE, FALSE),
 ('yes_no', 'choice', 'Yes / No', FALSE, FALSE),
 ('email', 'customer_details', 'Email', FALSE, FALSE),
-('phone', 'customer_details', 'Phone', FALSE, FALSE);
+('phone', 'customer_details', 'Phone', FALSE, FALSE),
+('photo', 'media', 'Photo Upload', FALSE, FALSE);
 
 INSERT INTO question_type_settings (question_type, setting_key, setting_label, setting_type, required, default_value, allowed_values, validation_rules) VALUES
 ('star', 'optional', 'Optional question', 'boolean', FALSE, 'false', NULL, NULL),
@@ -545,7 +565,12 @@ INSERT INTO question_type_settings (question_type, setting_key, setting_label, s
 ('phone', 'title_alignment', 'Title alignment', 'select', FALSE, 'inherit', '["left","center","right","inherit"]'::jsonb, NULL),
 ('phone', 'action_alignment', 'Action alignment', 'select', FALSE, 'left', '["left","center","right","inherit"]'::jsonb, NULL),
 ('phone', 'text_size', 'Text size', 'select', FALSE, 'medium', '["small","medium","large","extra_large"]'::jsonb, NULL),
-('phone', 'placeholder', 'Placeholder', 'string', FALSE, '+61 400 000 000', NULL, NULL)
+('phone', 'placeholder', 'Placeholder', 'string', FALSE, '+61 400 000 000', NULL, NULL),
+
+('photo', 'optional', 'Optional question', 'boolean', TRUE, 'false', NULL, NULL),
+('photo', 'title_alignment', 'Title alignment', 'select', FALSE, 'inherit', '["left","center","right","inherit"]'::jsonb, NULL),
+('photo', 'action_alignment', 'Action alignment', 'select', FALSE, 'left', '["left","center","right","inherit"]'::jsonb, NULL),
+('photo', 'text_size', 'Text size', 'select', FALSE, 'medium', '["small","medium","large","extra_large"]'::jsonb, NULL)
 ON CONFLICT (question_type, setting_key) DO NOTHING;
 
 INSERT INTO users (id, email, first_name, last_name, onboarding_complete, created_at, deleted_at) VALUES
@@ -566,7 +591,7 @@ INSERT INTO location_surveys (id, location_id, survey_id, is_active, start_date,
 INSERT INTO qr_codes (id, company_id, title, is_active, location_survey_id, location_id, redirect_url, has_logo, created_at, updated_at, deleted_at) VALUES
 ('372b0789-0df2-4086-9523-d6799fa5509b', '02238978-8b23-408a-a5e4-a0399578229a', 'Default QR Code', true, 'bf0c4580-ebee-4a2e-a7f0-14663d3316c0', '87ff1d9a-d62a-425f-a378-06bab8438eb7', 'http://localhost:3000/r/372b0789-0df2-4086-9523-d6799fa5509b', true, '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126', NULL);
 
-INSERT INTO qr_codes_assets (id, qr_code_id, format, storage_path, public_url, created_at) VALUES
+INSERT INTO qr_code_assets (id, qr_code_id, format, storage_path, public_url, created_at) VALUES
 ('0872ff7f-4853-464e-94d7-53ef1ca40d43', '372b0789-0df2-4086-9523-d6799fa5509b', 'svg', '372b0789-0df2-4086-9523-d6799fa5509b/qr.svg', 'https://hriennuneldnfctmvjbu.supabase.co/storage/v1/object/public/qr_codes/372b0789-0df2-4086-9523-d6799fa5509b/qr.svg', '2026-03-15 05:56:49.03126'),
 ('98d669ad-2613-434c-b48e-ca36b993c0a5', '372b0789-0df2-4086-9523-d6799fa5509b', 'png', '372b0789-0df2-4086-9523-d6799fa5509b/qr.png', 'https://hriennuneldnfctmvjbu.supabase.co/storage/v1/object/public/qr_codes/372b0789-0df2-4086-9523-d6799fa5509b/qr.png', '2026-03-15 05:56:49.03126'),
 ('2874ccd8-9b4b-4476-ba65-61bfebf54b9e', '372b0789-0df2-4086-9523-d6799fa5509b', 'jpeg', '372b0789-0df2-4086-9523-d6799fa5509b/qr.jpeg', 'https://hriennuneldnfctmvjbu.supabase.co/storage/v1/object/public/qr_codes/372b0789-0df2-4086-9523-d6799fa5509b/qr.jpeg', '2026-03-24 03:06:42.023949');

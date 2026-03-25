@@ -12,6 +12,7 @@ import {
   deleteNotificationGroup,
   extractErrorMessage,
   fetchNotificationGroups,
+  isStaleObjectError,
   type NotificationGroupResponse,
   updateNotificationGroup,
 } from "@/lib/api/client"
@@ -25,6 +26,7 @@ type MemberDraft = {
 
 type GroupDraft = {
   id?: string
+  updated_at?: string
   name: string
   members: MemberDraft[]
 }
@@ -41,6 +43,7 @@ function createMemberDraft(member?: NotificationGroupResponse["members"][number]
 function draftFromGroup(group: NotificationGroupResponse): GroupDraft {
   return {
     id: group.id,
+    updated_at: group.updated_at,
     name: group.name,
     members: group.members.map((member) => createMemberDraft(member)),
   }
@@ -177,6 +180,7 @@ export default function NotificationGroupsPage() {
         const updated = await updateNotificationGroup(token, draft.id, {
           name: trimmedName,
           members,
+          updated_at: draft.updated_at ?? "",
         })
         setGroups((current) => current.map((group) => (group.id === updated.id ? updated : group)))
         const nextDraft = draftFromGroup(updated)
@@ -187,6 +191,7 @@ export default function NotificationGroupsPage() {
         const saved = await updateNotificationGroup(token, created.id, {
           name: trimmedName,
           members,
+          updated_at: created.updated_at,
         })
         setGroups((current) => [saved, ...current])
         const nextDraft = draftFromGroup(saved)
@@ -195,7 +200,11 @@ export default function NotificationGroupsPage() {
       }
       setError(null)
     } catch (err) {
-      setError(extractErrorMessage(err, "Failed to save notification group"))
+      if (isStaleObjectError(err)) {
+        setError("This group was updated elsewhere. Please refresh.")
+      } else {
+        setError(extractErrorMessage(err, "Failed to save notification group"))
+      }
     } finally {
       setSaving(false)
     }
@@ -237,12 +246,16 @@ export default function NotificationGroupsPage() {
     if (!token) return
     setSaving(true)
     try {
-      await deleteNotificationGroup(token, group.id)
+      await deleteNotificationGroup(token, group.id, group.updated_at)
       setGroups((current) => current.filter((item) => item.id !== group.id))
       setDraft((current) => (current?.id === group.id ? null : current))
       setDraftSnapshot((current) => (draft?.id === group.id ? null : current))
     } catch (err) {
-      setError(extractErrorMessage(err, "Failed to delete notification group"))
+      if (isStaleObjectError(err)) {
+        setError("This group was updated. Please refresh.")
+      } else {
+        setError(extractErrorMessage(err, "Failed to delete notification group"))
+      }
     } finally {
       setSaving(false)
     }

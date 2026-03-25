@@ -13,3 +13,5 @@ Pillow
 requests
 cairosvg
 alembic
+python-multipart
+redis

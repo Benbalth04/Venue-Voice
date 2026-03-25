@@ -18,6 +18,7 @@ from ..schemas.pydantic_model import (
     AnalyticsFiltersResponse,
     AnalyticsResponseDetail,
     AnalyticsResponseList,
+    PhotoSignedUrlResponse,
 )
 from ..services.analytics_service import (
     build_csv_bytes,
@@ -28,7 +29,14 @@ from ..services.analytics_service import (
 )
 from ..core.errors.app_error import AppError
 from ..core.errors.error_category import ErrorCategory
-from ..core.errors.exceptions import ValidationError
+from ..core.errors.exceptions import NotFoundError, PermissionError, ValidationError
+from ..integrations.supabase_storage import generate_photo_signed_url, get_supabase_service_client
+from ..models.postgres_model import (
+    Company as CompanyORM,
+    SurveyResponse as SurveyResponseORM,
+    SurveyResponsePhoto as SurveyResponsePhotoORM,
+    SurveySession as SurveySessionORM,
+)
 
 router = APIRouter()
 
@@ -165,6 +173,89 @@ def analytics_response_detail(
             message="Failed to load response detail",
             status_code=500,
         )
+
+
+# ------------------------------------------------------------------
+# GET /analytics/response/{response_id}/photo/{question_id}
+# Returns a short-lived signed URL for a private survey photo.
+# ------------------------------------------------------------------
+@router.get(
+    "/analytics/response/{response_id}/photo/{question_id}",
+    response_model=PhotoSignedUrlResponse,
+)
+def analytics_response_photo_signed_url(
+    response_id: str,
+    question_id: str,
+    current_user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    """Return a short-lived Supabase signed URL for a survey response photo."""
+    try:
+        rid = uuid.UUID(response_id)
+    except ValueError:
+        raise ValidationError(code="INVALID_RESPONSE_ID", message="Invalid response_id UUID")
+
+    try:
+        qid = uuid.UUID(question_id)
+    except ValueError:
+        raise ValidationError(code="INVALID_QUESTION_ID", message="Invalid question_id UUID")
+
+    # Verify the response belongs to the current user's company
+    company = (
+        db.query(CompanyORM)
+        .filter(
+            CompanyORM.owner_user_id == current_user.id,
+            CompanyORM.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if not company:
+        raise PermissionError(code="NO_COMPANY_FOR_USER", message="No company associated with this user")
+
+    resp = (
+        db.query(SurveyResponseORM)
+        .join(SurveySessionORM, SurveySessionORM.id == SurveyResponseORM.session_id)
+        .filter(
+            SurveyResponseORM.id == rid,
+            SurveySessionORM.company_id == company.id,
+            SurveyResponseORM.deleted_at.is_(None),
+            SurveySessionORM.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if not resp:
+        raise NotFoundError(code="RESPONSE_NOT_FOUND", message="Response not found")
+
+    photo = (
+        db.query(SurveyResponsePhotoORM)
+        .filter(
+            SurveyResponsePhotoORM.survey_response_id == rid,
+            SurveyResponsePhotoORM.question_id == qid,
+        )
+        .first()
+    )
+    if not photo:
+        raise NotFoundError(code="PHOTO_NOT_FOUND", message="No photo found for this response and question")
+
+    try:
+        supabase_client = get_supabase_service_client()
+        expires_in = 3600  # 1 hour
+        signed_url = generate_photo_signed_url(
+            client=supabase_client,
+            storage_path=photo.storage_path,
+            expires_in=expires_in,
+        )
+    except AppError:
+        raise
+    except Exception:
+        raise AppError(
+            category=ErrorCategory.EXTERNAL,
+            code="PHOTO_SIGNED_URL_FAILED",
+            message="Failed to generate photo URL",
+            status_code=502,
+        )
+
+    return PhotoSignedUrlResponse(signed_url=signed_url, expires_in_seconds=expires_in)
 
 
 # ------------------------------------------------------------------

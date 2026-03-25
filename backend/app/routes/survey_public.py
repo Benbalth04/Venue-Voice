@@ -3,15 +3,18 @@ Public survey completion flow - no auth required.
 QR code URL: /r/{qrCodeId}
 """
 import hashlib
+import json
 import logging
 import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Form, Request, UploadFile
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
-from ..core.errors.exceptions import ConflictError, NotFoundError, ValidationError
+from ..core.errors.exceptions import ConflictError, NotFoundError, SessionExpiredError, SuspiciousSubmissionError, ValidationError
+from ..core.rate_limit import check_rate_limit
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload
 
@@ -31,8 +34,14 @@ from ..models.postgres_model import (
     Survey as SurveyORM,
     SurveyResponse as SurveyResponseORM,
     SurveyResponseAnswer as SurveyResponseAnswerORM,
+    SurveyResponsePhoto as SurveyResponsePhotoORM,
     SurveySession as SurveySessionORM,
     SurveyVersion as SurveyVersionORM,
+)
+from ..integrations.supabase_storage import (
+    delete_survey_photos_best_effort,
+    get_supabase_service_client,
+    upload_survey_photo,
 )
 from ..services.location_survey_service import utc_now, validate_qr_scan_access
 
@@ -229,6 +238,9 @@ def survey_redirect(
     Query param: r = qr_code_id (UUID)
     Header: Idempotency-Key (optional) - if present and seen before, return cached response.
     """
+    # Rate limit: 10 requests / minute / IP
+    check_rate_limit(request, "survey_start", limit=10, window=60)
+
     idempotency_key = request.headers.get("Idempotency-Key")
     if idempotency_key and len(idempotency_key) <= 128:
         from sqlalchemy import text
@@ -401,12 +413,6 @@ def get_survey_for_session(
     }
 
 
-class SurveySubmitBody(BaseModel):
-    session_id: uuid.UUID
-    qr_code_id: uuid.UUID
-    answers: dict[str, Any] = {}
-
-
 class AbandonBody(BaseModel):
     session_id: uuid.UUID
     qr_code_id: uuid.UUID
@@ -426,20 +432,91 @@ def _is_answer_empty(val: Any) -> bool:
 
 
 # --------------------------------------------------
-# POST /survey/submit - Submit survey responses
+# POST /survey/submit - Submit survey responses (multipart/form-data)
+#
+# Form fields:
+#   session_id   : UUID
+#   qr_code_id   : UUID
+#   answers_json : JSON string — answers keyed by question_id (photo questions excluded)
+#   photo_<question_id> : File (optional, one per photo question)
 # --------------------------------------------------
 @router.post("/survey/submit")
-def submit_survey(
-    body: SurveySubmitBody,
+async def submit_survey(
     request: Request,
+    session_id: uuid.UUID = Form(...),
+    qr_code_id: uuid.UUID = Form(...),
+    answers_json: str = Form(default="{}"),
+    company_name: str = Form(default=""),
     db: Session = Depends(get_db_connection),
 ):
     """
-    Accept submission. Body: { session_id, qr_code_id, answers }
+    Accept survey submission as multipart/form-data.
+    Photo files are sent as separate form fields named photo_<question_id>.
     """
-    session_uid = body.session_id
-    qr_uid = body.qr_code_id
-    answers = body.answers or {}
+    # 1. Rate limit: 5 requests / minute / IP
+    check_rate_limit(request, "survey_submit", limit=5, window=60)
+
+    # 2. Honeypot: reject any submission that fills the hidden field
+    if company_name:
+        raise SuspiciousSubmissionError()
+
+    # Parse JSON answers field
+    try:
+        answers: dict[str, Any] = json.loads(answers_json) if answers_json else {}
+    except json.JSONDecodeError as exc:
+        raise ValidationError(
+            code="INVALID_ANSWERS_JSON",
+            message="answers_json is not valid JSON",
+            status_code=422,
+        ) from exc
+
+    session_uid = session_id
+    qr_uid = qr_code_id
+
+    # Extract and validate photo files from form before any DB work
+    form = await request.form()
+    # Map of question_id_str -> (UploadFile, bytes)
+    photo_files_validated: dict[str, tuple[UploadFile, bytes]] = {}
+    for field_name, field_value in form.multi_items():
+        if not field_name.startswith("photo_"):
+            continue
+        if not isinstance(field_value, (UploadFile, StarletteUploadFile)):
+            continue
+        q_id_str = field_name[len("photo_"):]
+
+        # Validate UUID
+        try:
+            uuid.UUID(q_id_str)
+        except ValueError:
+            raise ValidationError(
+                code="INVALID_PHOTO_FIELD_NAME",
+                message=f"Photo field '{field_name}' does not contain a valid question UUID.",
+                status_code=422,
+            )
+
+        content_type = field_value.content_type or ""
+        allowed_types = {"image/jpeg", "image/png", "image/webp", "image/heic"}
+        if content_type not in allowed_types:
+            raise ValidationError(
+                code="INVALID_PHOTO_TYPE",
+                message=(
+                    f"Photo for question {q_id_str} has unsupported type '{content_type}'. "
+                    "Allowed: image/jpeg, image/png, image/webp, image/heic."
+                ),
+                status_code=422,
+            )
+
+        data = await field_value.read()
+        max_bytes = 10 * 1024 * 1024  # 10 MB
+        if len(data) > max_bytes:
+            raise ValidationError(
+                code="PHOTO_TOO_LARGE",
+                message=f"Photo for question {q_id_str} exceeds the 10 MB size limit.",
+                details={"size_bytes": len(data), "max_bytes": max_bytes},
+                status_code=422,
+            )
+
+        photo_files_validated[q_id_str] = (field_value, data)
 
     sess = (
         db.query(SurveySessionORM)
@@ -453,6 +530,20 @@ def submit_survey(
     if not sess:
         raise NotFoundError(code="SESSION_NOT_FOUND", message="Session not found")
 
+    # 4. Session expiry: reject if older than 15 minutes
+    now_utc = datetime.now(timezone.utc)
+    start_time_tz = sess.start_time
+    if start_time_tz.tzinfo is None:
+        start_time_tz = start_time_tz.replace(tzinfo=timezone.utc)
+    session_age_seconds = (now_utc - start_time_tz).total_seconds()
+    if session_age_seconds > 900:
+        raise SessionExpiredError()
+
+    # 5. Minimum completion time: reject if submitted in under 2 seconds (bot detection)
+    if session_age_seconds < 2:
+        raise SuspiciousSubmissionError()
+
+    # 6. Duplicate submission check
     existing = (
         db.query(SurveyResponseORM)
         .filter(
@@ -480,12 +571,24 @@ def submit_survey(
         raise NotFoundError(code="SURVEY_VERSION_NOT_FOUND", message="Survey version not found")
 
     schema = sv.schema_json or {}
-    questions = schema.get("questions") or []
-    required_ids = [str(q.get("id")) for q in questions if not q.get("optional")]
-    missing_required = [
-        qid for qid in required_ids
-        if _is_answer_empty(answers.get(qid))
-    ]
+    schema_questions = schema.get("questions") or []
+
+    # Build a map of question_id -> question_type from the schema for required checks
+    question_type_map: dict[str, str] = {
+        str(q.get("id")): str(q.get("type", "")) for q in schema_questions
+    }
+
+    required_ids = [str(q.get("id")) for q in schema_questions if not q.get("optional")]
+    missing_required: list[str] = []
+    for qid in required_ids:
+        q_type = question_type_map.get(qid, "")
+        if q_type == "photo":
+            # Photo questions are answered when a file is uploaded
+            if qid not in photo_files_validated:
+                missing_required.append(qid)
+        elif _is_answer_empty(answers.get(qid)):
+            missing_required.append(qid)
+
     if missing_required:
         raise ValidationError(
             code="MISSING_REQUIRED_ANSWERS",
@@ -505,7 +608,7 @@ def submit_survey(
         .all()
     }
 
-    # Validate and convert answers for normalized storage
+    # Validate and convert non-photo answers for normalized storage
     def _to_text(v: Any) -> str | None:
         if v is None:
             return None
@@ -527,6 +630,9 @@ def submit_survey(
         if raw_value is None or (isinstance(raw_value, str) and not raw_value.strip()) or raw_value == []:
             continue
         q_orm = questions_by_key.get(q_key)
+        # Skip photo questions — they are handled separately via Supabase upload
+        if q_orm and q_orm.question_type == "photo":
+            continue
         if q_orm and q_orm.is_numeric:
             num_val = _to_numeric(raw_value)
             if num_val is not None:
@@ -537,11 +643,8 @@ def submit_survey(
                 qid = q_orm.id if q_orm else None
                 normalized_answers.append((qid, text_val, None))
 
-    end_time = datetime.now(timezone.utc)
-    start_time = sess.start_time
-    if start_time.tzinfo is None:
-        start_time = start_time.replace(tzinfo=timezone.utc)
-    time_taken = int((end_time - start_time).total_seconds()) if start_time else None
+    end_time = now_utc
+    time_taken = int(session_age_seconds) if sess.start_time else None
 
     ip = request.client.host if request.client else None
     ua = request.headers.get("user-agent")
@@ -577,6 +680,69 @@ def submit_survey(
     sess.abandoned = False
     response_id = resp.id
     db.commit()
+
+    # Upload photos to Supabase and persist metadata.
+    # Done after the main commit so the survey_response row exists in the DB.
+    # If an upload fails the error is logged and the response is still returned
+    # (the DB row exists; we just won't have the photo).
+    uploaded_paths: list[str] = []
+    if photo_files_validated:
+        try:
+            supabase_client = get_supabase_service_client()
+            for q_id_str, (upload_file, data) in photo_files_validated.items():
+                filename = upload_file.filename or ""
+                ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "jpg"
+                # Sanitise extension to a safe set
+                if ext not in {"jpg", "jpeg", "png", "webp", "heic"}:
+                    ext = "jpg"
+                storage_path = f"{response_id}/{q_id_str}.{ext}"
+                upload_survey_photo(
+                    client=supabase_client,
+                    storage_path=storage_path,
+                    data=data,
+                    mime_type=upload_file.content_type or "image/jpeg",
+                )
+                uploaded_paths.append(storage_path)
+
+                # Look up the Question ORM row so we can store the FK
+                q_orm = questions_by_key.get(q_id_str)
+                question_db_id: uuid.UUID | None = q_orm.id if q_orm else None
+
+                # Persist photo metadata
+                db.add(
+                    SurveyResponsePhotoORM(
+                        survey_response_id=resp.id,
+                        question_id=question_db_id,
+                        storage_path=storage_path,
+                        mime_type=upload_file.content_type or "image/jpeg",
+                        file_size_bytes=len(data),
+                    )
+                )
+
+                # Also write a normalized answer row so analytics knows this
+                # question was answered (text_value stores the storage path)
+                db.add(
+                    SurveyResponseAnswerORM(
+                        survey_response_id=resp.id,
+                        question_id=question_db_id,
+                        text_value=storage_path,
+                    )
+                )
+
+            db.commit()
+        except Exception:
+            logger.exception(
+                "Photo upload failed after survey submit (response_id=%s); "
+                "attempting best-effort storage cleanup",
+                response_id,
+            )
+            # Best-effort cleanup of any already-uploaded objects
+            if uploaded_paths:
+                try:
+                    supabase_client = get_supabase_service_client()
+                    delete_survey_photos_best_effort(supabase_client, uploaded_paths)
+                except Exception:
+                    logger.exception("Failed to clean up partial photo uploads")
 
     from ..services.ai_analysis_service import run_ai_analysis_for_response
     from ..services.flow_service import (

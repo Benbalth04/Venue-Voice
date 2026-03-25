@@ -20,10 +20,12 @@ import {
   fetchNotificationGroups,
   fetchSurveyLogicRules,
   fetchSurveys,
+  isStaleObjectError,
   updateSurveyFlow,
   type FlowBranchType,
   type FlowPayload,
   type FlowResponse,
+  type FlowUpdatePayload,
   type LocationSurveyResponse,
   type NotificationGroupResponse,
   type SurveySummary,
@@ -381,7 +383,7 @@ export function FlowEditor() {
     setValidationHighlightNodeId(null)
     setSaveBanner(null)
     try {
-      const payload: FlowPayload = {
+      const basePayload: FlowPayload = {
         name: draft.name.trim(),
         description: draft.description.trim() || null,
         is_active: draft.is_active,
@@ -389,8 +391,8 @@ export function FlowEditor() {
         nodes: preorderDraftNodesWithPositions(draft.nodes),
       }
       const saved = draft.id
-        ? await updateSurveyFlow(token, draft.survey_id, draft.id, payload)
-        : await createSurveyFlow(token, draft.survey_id, payload)
+        ? await updateSurveyFlow(token, draft.survey_id, draft.id, { ...basePayload, updated_at: draft.updated_at ?? "" } as FlowUpdatePayload)
+        : await createSurveyFlow(token, draft.survey_id, basePayload)
       const nextDraft = draftFromFlow(saved)
       setDraft(nextDraft)
       setSavedSnapshot(serializeDraft(nextDraft))
@@ -399,7 +401,11 @@ export function FlowEditor() {
       router.replace(`/dashboard/automations/flows/${saved.id}`)
       setSaveBanner("Changes saved.")
     } catch (err) {
-      setError(extractErrorMessage(err, "Failed to save flow"))
+      if (isStaleObjectError(err)) {
+        setError("This flow was updated elsewhere. Please refresh.")
+      } else {
+        setError(extractErrorMessage(err, "Failed to save flow"))
+      }
     } finally {
       setSaving(false)
     }

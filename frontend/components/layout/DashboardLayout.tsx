@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation"
 import { Sidebar } from "@/components/layout/Sidebar"
 import { Topbar } from "@/components/layout/Topbar"
 import { UnreadResponsesProvider } from "@/components/layout/UnreadResponsesContext"
+import { BrokenRulesProvider } from "@/components/layout/BrokenRulesContext"
 
 export function DashboardLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname()
@@ -13,6 +14,7 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
 
   return (
     <UnreadResponsesProvider>
+      <BrokenRulesProvider>
       <div className="flex min-h-screen bg-zinc-50">
         <Sidebar />
         <div className="flex min-h-screen min-w-0 flex-1 flex-col">
@@ -28,6 +30,7 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
           </main>
         </div>
       </div>
+      </BrokenRulesProvider>
     </UnreadResponsesProvider>
   )
 }

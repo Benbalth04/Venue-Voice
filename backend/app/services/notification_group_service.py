@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session, joinedload
 
-from ..core.errors.exceptions import ConflictError, NotFoundError, ValidationError
+from ..core.errors.exceptions import ConflictError, NotFoundError, StaleObjectError, ValidationError
 from ..models.postgres_model import (
     FlowNode as FlowNodeORM,
     Location as LocationORM,
@@ -15,8 +15,15 @@ from ..models.postgres_model import (
 )
 
 
-def _now():
+def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _strip_tz(dt: datetime) -> datetime:
+    """Normalize a datetime for comparison with a naive TIMESTAMP column."""
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 
 def _get_notification_group_or_404(
@@ -48,6 +55,7 @@ def _to_response(group: NotificationGroupORM) -> dict:
         "company_id": group.company_id,
         "name": group.name,
         "created_at": group.created_at,
+        "updated_at": group.updated_at,
         "members": [
             {
                 "id": member.id,
@@ -120,6 +128,7 @@ def update_notification_group(
     *,
     name: str,
     members: list[dict[str, str]],
+    updated_at,
 ) -> dict:
     group = _get_notification_group_or_404(db, company_id, group_id)
     normalized_name = name.strip()
@@ -150,7 +159,18 @@ def update_notification_group(
             status_code=422,
         )
 
-    group.name = normalized_name
+    rowcount = (
+        db.query(NotificationGroupORM)
+        .filter(
+            NotificationGroupORM.id == group.id,
+            NotificationGroupORM.updated_at == _strip_tz(updated_at),
+        )
+        .update({"name": normalized_name, "updated_at": _now()}, synchronize_session="fetch")
+    )
+    if rowcount == 0:
+        raise StaleObjectError("NotificationGroup", str(group.id))
+
+    db.refresh(group)
     deleted_at = _now()
     for member in group.members:
         if member.deleted_at is None:
@@ -284,7 +304,7 @@ def sync_location_notification_groups(
     return list_notification_groups(db, company_id)
 
 
-def delete_notification_group(db: Session, company_id: uuid.UUID, group_id: uuid.UUID) -> None:
+def delete_notification_group(db: Session, company_id: uuid.UUID, group_id: uuid.UUID, updated_at) -> None:
     group = _get_notification_group_or_404(db, company_id, group_id)
 
     assigned_to_location = (
@@ -316,8 +336,20 @@ def delete_notification_group(db: Session, company_id: uuid.UUID, group_id: uuid
             details={"Assigned flow_node_ids": [str(node_id) for node_id in in_flow]},
         )
 
-    group.deleted_at = _now()
+    now = _now()
+    rowcount = (
+        db.query(NotificationGroupORM)
+        .filter(
+            NotificationGroupORM.id == group.id,
+            NotificationGroupORM.updated_at == _strip_tz(updated_at),
+        )
+        .update({"deleted_at": now, "updated_at": now}, synchronize_session="fetch")
+    )
+    if rowcount == 0:
+        raise StaleObjectError("NotificationGroup", str(group.id))
+
+    db.refresh(group)
     for member in group.members:
         if member.deleted_at is None:
-            member.deleted_at = group.deleted_at
+            member.deleted_at = now
     db.commit()

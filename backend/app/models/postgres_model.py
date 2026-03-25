@@ -633,6 +633,35 @@ class SurveyResponseAnswer(SoftDeleteMixin, Base):
 
 
 # --------------------------------------------------
+# SURVEY RESPONSE PHOTOS (metadata for uploaded photos)
+# --------------------------------------------------
+class SurveyResponsePhoto(Base):
+    __tablename__ = "survey_response_photos"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.uuid_generate_v4(),
+    )
+    survey_response_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("survey_responses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    question_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("questions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    storage_path: Mapped[str] = mapped_column(Text, nullable=False)
+    mime_type: Mapped[str] = mapped_column(Text, nullable=False)
+    file_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# --------------------------------------------------
 # AI ANALYSIS (sentiment per survey answer)
 # --------------------------------------------------
 class AIAnalysis(SoftDeleteMixin, Base):
@@ -717,6 +746,8 @@ class Rule(SoftDeleteMixin, Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str | None] = mapped_column(String(240), nullable=True)
     operator: Mapped[str] = mapped_column(String, nullable=False, default="AND", server_default="AND")
+    status: Mapped[str] = mapped_column(String, nullable=False, default="active", server_default="active")
+    broken_reasons: Mapped[list] = mapped_column(JSONB, nullable=True, default=list, server_default="[]")
     company_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("companies.id", ondelete="CASCADE"),
@@ -758,6 +789,9 @@ class RuleGroup(Base):
     )
     operator: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
 
     rule = relationship("Rule", back_populates="groups")
     conditions = relationship("RuleCondition", back_populates="group")
@@ -793,6 +827,9 @@ class RuleCondition(SoftDeleteMixin, Base):
         index=True,
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
 
     rule = relationship("Rule", back_populates="conditions")
     group = relationship("RuleGroup", back_populates="conditions")
@@ -815,6 +852,9 @@ class NotificationGroup(SoftDeleteMixin, Base):
     )
     name: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
 
     members = relationship(
         "NotificationGroupMember",

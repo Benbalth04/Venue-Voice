@@ -193,6 +193,7 @@ export function draftFromFlow(flow: FlowResponse): FlowDraft {
   )
   return {
     id: flow.id,
+    updated_at: flow.updated_at,
     survey_id: flow.survey_id,
     name: flow.name,
     description: flow.description ?? "",

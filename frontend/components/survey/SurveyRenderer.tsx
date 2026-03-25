@@ -15,6 +15,7 @@ import type {
 } from "@/lib/survey/types"
 import { StarQuestion } from "@/components/survey/StarQuestion"
 import { TextQuestion } from "@/components/survey/TextQuestion"
+import { PhotoQuestion } from "@/components/survey/PhotoQuestion"
 
 export type SurveyResponseValue =
   | { type: "star"; value: number | null }
@@ -22,6 +23,7 @@ export type SurveyResponseValue =
   | { type: "nps"; value: number | null }
   | { type: "choice"; value: string }
   | { type: "choices"; value: string[] }
+  | { type: "photo"; value: File | null }
 
 export type SurveyResponses = Record<string, SurveyResponseValue | undefined>
 
@@ -34,6 +36,7 @@ export function isQuestionAnswered(
   if (response.type === "star" || response.type === "nps") return response.value !== null
   if (response.type === "choices") return response.value.length > 0
   if (response.type === "choice") return response.value.length > 0
+  if (response.type === "photo") return response.value instanceof File
   return String(response.value).trim().length > 0
 }
 
@@ -244,6 +247,14 @@ function QuestionRenderer({
           surveyPrimaryColor={survey.theme.primaryColor}
           value={response?.type === "choice" ? response.value : null}
           onChange={(v) => onResponseChange(question.id, { type: "choice", value: v })}
+        />
+      )}
+
+      {question.type === "photo" && (
+        <PhotoQuestion
+          value={response?.type === "photo" ? response.value : null}
+          align={align}
+          onChange={(file) => onResponseChange(question.id, { type: "photo", value: file })}
         />
       )}
     </div>

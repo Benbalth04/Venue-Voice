@@ -7,8 +7,10 @@ from datetime import timezone
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session, joinedload
 
+from sqlalchemy import func
+
 from ..auth.jwt import get_current_user
-from ..core.errors.exceptions import ConflictError, NotFoundError, ValidationError
+from ..core.errors.exceptions import ConflictError, NotFoundError, StaleObjectError, ValidationError
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import (
     Company as CompanyORM,
@@ -19,6 +21,7 @@ from ..models.postgres_model import (
     User as UserORM,
 )
 from ..schemas.pydantic_model import (
+    DeleteRequest,
     LocationSurveyBulkAssignCreate,
     LocationSurveyResponse,
     LocationSurveyUpdate,
@@ -30,6 +33,13 @@ from ..services.location_survey_service import (
 )
 
 router = APIRouter()
+
+
+def _strip_tz(dt: datetime) -> datetime:
+    """Normalize a datetime for comparison with a naive TIMESTAMP column."""
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 
 def _get_company(user: UserORM, db: Session) -> CompanyORM:
@@ -222,12 +232,24 @@ def update_location_survey(
             status_code=422,
         )
 
+    update_values: dict = {"updated_at": func.now()}
     if payload.is_active is not None:
-        location_survey.is_active = payload.is_active
+        update_values["is_active"] = payload.is_active
     if payload.start_date is not None:
-        location_survey.start_date = payload.start_date
+        update_values["start_date"] = payload.start_date
     if payload.end_date is not None or "end_date" in payload.model_dump(exclude_unset=True):
-        location_survey.end_date = payload.end_date
+        update_values["end_date"] = payload.end_date
+
+    rowcount = (
+        db.query(LocationSurveyORM)
+        .filter(
+            LocationSurveyORM.id == location_survey.id,
+            LocationSurveyORM.updated_at == _strip_tz(payload.updated_at),
+        )
+        .update(update_values, synchronize_session=False)
+    )
+    if rowcount == 0:
+        raise StaleObjectError("LocationSurvey", str(location_survey.id))
 
     db.commit()
     db.refresh(location_survey)
@@ -278,10 +300,22 @@ def list_location_surveys(
 @router.delete("/location-surveys/{location_survey_id}", status_code=204)
 def delete_location_survey(
     location_survey_id: str,
+    payload: DeleteRequest,
     user: UserORM = Depends(get_current_user),
     db: Session = Depends(get_db_connection),
 ):
     company = _get_company(user, db)
     location_survey = _get_location_survey_or_404(location_survey_id, company.id, db)
-    location_survey.deleted_at = utc_now()
+
+    rowcount = (
+        db.query(LocationSurveyORM)
+        .filter(
+            LocationSurveyORM.id == location_survey.id,
+            LocationSurveyORM.updated_at == _strip_tz(payload.updated_at),
+        )
+        .update({"deleted_at": utc_now(), "updated_at": func.now()}, synchronize_session=False)
+    )
+    if rowcount == 0:
+        raise StaleObjectError("LocationSurvey", str(location_survey.id))
+
     db.commit()

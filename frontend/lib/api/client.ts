@@ -8,6 +8,7 @@ export {
   normalizeApiError,
   normalizeUnknownError,
   isNormalizedError,
+  isStaleObjectError,
   showError,
   extractErrorMessage,
 } from "./errors"
@@ -133,6 +134,7 @@ export interface LocationUpdate {
   country?: string | null
   google_business_url?: string | null
   is_active?: boolean | null
+  updated_at: string
 }
 
 // Question Type
@@ -227,6 +229,7 @@ export interface LocationSurveyUpdate {
   is_active?: boolean | null
   start_date?: string | null
   end_date?: string | null
+  updated_at: string
 }
 
 // QR Codes
@@ -276,6 +279,7 @@ export interface QRCodeUpdate {
   title?: string | null
   location_survey_id?: string | null
   is_active?: boolean | null
+  updated_at: string
 }
 
 // Dashboard
@@ -362,6 +366,7 @@ export interface LogicQuestionOption {
   question_type: string
   is_numeric: boolean
   position: number
+  config?: Record<string, unknown> | null
 }
 
 export interface LogicConditionPayload {
@@ -412,7 +417,14 @@ export interface LogicRuleBundleResponse {
   rules: LogicRuleResponse[]
 }
 
-export type RuleConditionType = "rating" | "sentiment" | "not_empty"
+export type RuleConditionType =
+  | "rating"
+  | "nps"
+  | "sentiment"
+  | "not_empty"
+  | "checkbox"
+  | "multiple_choice"
+  | "yes_no"
 export type RuleOperatorApi = "lt" | "lte" | "eq" | "gte" | "gt" | "is"
 export type FlowNodeType = "rule" | "branch" | "action" | "terminate"
 export type FlowBranchType = "TRUE" | "FALSE"
@@ -434,9 +446,76 @@ interface RuleConditionApi {
   condition_type: RuleConditionType
   question_id: string | null
   operator: RuleOperatorApi | null
-  value: string | null
+  value: string | string[] | null
   group_id: string | null
   created_at?: string
+}
+
+// ------------------------------------------------------------------
+// Direct API types — used by the rules page (no legacy conversion)
+// ------------------------------------------------------------------
+
+export interface RuleConditionData {
+  id?: string | null
+  condition_type: RuleConditionType
+  question_id: string | null
+  operator: RuleOperatorApi | null
+  value: string | string[] | null
+  group_id?: string | null
+  created_at?: string
+}
+
+export interface RuleGroupData {
+  id: string
+  operator: "AND" | "OR"
+  created_at: string
+}
+
+export interface BrokenReason {
+  type: string
+  condition_id: string
+  question_id: string | null
+  message: string
+}
+
+export interface RuleData {
+  id: string
+  company_id: string
+  survey_id: string
+  name: string
+  description: string | null
+  operator: "AND" | "OR"
+  groups: RuleGroupData[]
+  conditions: RuleConditionData[]
+  status: "active" | "broken"
+  broken_reasons: BrokenReason[]
+  created_at: string
+  updated_at: string
+}
+
+export interface RuleBundleData {
+  survey_id: string
+  questions: LogicQuestionOption[]
+  rules: RuleData[]
+}
+
+export interface RuleCreatePayload {
+  name: string
+  description: string | null
+  operator: "AND" | "OR"
+  groups: Array<{ id?: string | null; operator: "AND" | "OR" }>
+  conditions: Array<{
+    id?: string | null
+    condition_type: RuleConditionType
+    question_id: string | null
+    operator: RuleOperatorApi | null
+    value: string | string[] | null
+    group_id?: string | null
+  }>
+}
+
+export interface RuleUpdatePayload extends RuleCreatePayload {
+  updated_at: string
 }
 
 interface RuleApiResponse {
@@ -448,6 +527,8 @@ interface RuleApiResponse {
   operator: LogicConnector
   groups: Array<{ id: string; operator: LogicConnector; created_at: string }>
   conditions: RuleConditionApi[]
+  status: "active" | "broken"
+  broken_reasons: BrokenReason[]
   created_at: string
   updated_at: string
 }
@@ -478,6 +559,7 @@ export interface NotificationGroupResponse {
   company_id: string
   name: string
   created_at: string
+  updated_at: string
   members: NotificationGroupMemberResponse[]
   location_ids: string[]
 }
@@ -499,6 +581,10 @@ export interface FlowPayload {
   is_active: boolean
   location_survey_ids: string[]
   nodes: FlowNodePayload[]
+}
+
+export interface FlowUpdatePayload extends FlowPayload {
+  updated_at: string
 }
 
 export interface FlowNodeResponse {
@@ -747,6 +833,13 @@ export interface AnalyticsFiltersResponse {
 export interface AnalyticsAnswerDetail {
   question_text: string
   answer_value: string
+  has_photo?: boolean
+  question_id?: string | null
+}
+
+export interface PhotoSignedUrlResponse {
+  signed_url: string
+  expires_in_seconds: number
 }
 
 export interface AnalyticsResponseDetail {
@@ -819,13 +912,23 @@ export async function submitSurvey(
   sessionId: string,
   qrCodeId: string,
   answers: Record<string, unknown>,
+  photoFiles: Record<string, File> = {},
 ): Promise<SurveySubmitResponse> {
+  const form = new FormData()
+  form.append("session_id", sessionId)
+  form.append("qr_code_id", qrCodeId)
+  form.append("answers_json", JSON.stringify(answers))
+  for (const [questionId, file] of Object.entries(photoFiles)) {
+    form.append(`photo_${questionId}`, file)
+  }
+
   let res: Response
   try {
+    // Do NOT set Content-Type header — the browser sets it automatically with
+    // the correct multipart boundary when using FormData.
     res = await fetch(`${BACKEND_BASE}/api/v1/survey/submit`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sessionId, qr_code_id: qrCodeId, answers }),
+      body: form,
     })
   } catch (err) {
     throw normalizeUnknownError(err)
@@ -929,10 +1032,11 @@ export async function updateLocation(
   })
 }
 
-export async function deleteLocation(accessToken: string, id: string): Promise<void> {
+export async function deleteLocation(accessToken: string, id: string, updatedAt: string): Promise<void> {
   await apiFetch<unknown>(`${BACKEND_BASE}/api/v1/locations/${id}`, {
     method: "DELETE",
-    headers: authGetHeaders(accessToken),
+    headers: authHeaders(accessToken),
+    body: JSON.stringify({ updated_at: updatedAt }),
   })
 }
 
@@ -1042,10 +1146,12 @@ export async function updateLocationSurvey(
 export async function deleteLocationSurvey(
   accessToken: string,
   id: string,
+  updatedAt: string,
 ): Promise<void> {
   await apiFetch<unknown>(`${BACKEND_BASE}/api/v1/location-surveys/${id}`, {
     method: "DELETE",
-    headers: authGetHeaders(accessToken),
+    headers: authHeaders(accessToken),
+    body: JSON.stringify({ updated_at: updatedAt }),
   })
 }
 
@@ -1087,10 +1193,11 @@ export async function updateQRCode(
   })
 }
 
-export async function deleteQRCode(accessToken: string, id: string): Promise<void> {
+export async function deleteQRCode(accessToken: string, id: string, updatedAt: string): Promise<void> {
   await apiFetch<unknown>(`${BACKEND_BASE}/api/v1/qr-codes/${id}`, {
     method: "DELETE",
-    headers: authGetHeaders(accessToken),
+    headers: authHeaders(accessToken),
+    body: JSON.stringify({ updated_at: updatedAt }),
   })
 }
 
@@ -1218,8 +1325,39 @@ export async function deleteSurveyLogicRule(
   token: string,
   surveyId: string,
   ruleId: string,
+  updatedAt: string,
 ): Promise<void> {
-  await surveyRequest<unknown>(token, `/surveys/${surveyId}/rules/${ruleId}`, "DELETE")
+  await surveyRequest<unknown>(token, `/surveys/${surveyId}/rules/${ruleId}`, "DELETE", { updated_at: updatedAt })
+}
+
+// Direct API functions (no legacy conversion) used by the rules page
+export function fetchRuleBundleDirect(token: string, surveyId: string): Promise<RuleBundleData> {
+  return surveyRequest<RuleBundleData>(token, `/surveys/${surveyId}/rules`)
+}
+
+export function fetchCompanyBrokenRuleSummary(
+  token: string,
+): Promise<{ broken_rule_count: number }> {
+  return surveyRequest<{ broken_rule_count: number }>(token, "/rules/broken-summary")
+}
+
+export function createRuleDirect(
+  token: string,
+  surveyId: string,
+  payload: RuleCreatePayload,
+): Promise<RuleData> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return surveyRequest<RuleData>(token, `/surveys/${surveyId}/rules`, "POST", payload as any)
+}
+
+export function updateRuleDirect(
+  token: string,
+  surveyId: string,
+  ruleId: string,
+  payload: RuleUpdatePayload,
+): Promise<RuleData> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return surveyRequest<RuleData>(token, `/surveys/${surveyId}/rules/${ruleId}`, "PUT", payload as any)
 }
 
 export function fetchSurveyFlows(
@@ -1254,7 +1392,7 @@ export function updateSurveyFlow(
   token: string,
   surveyId: string,
   flowId: string,
-  payload: FlowPayload,
+  payload: FlowUpdatePayload,
 ): Promise<FlowResponse> {
   return surveyRequest<FlowResponse>(
     token,
@@ -1269,7 +1407,7 @@ export function setSurveyFlowActive(
   token: string,
   surveyId: string,
   flowId: string,
-  body: { is_active: boolean },
+  body: { is_active: boolean; updated_at: string },
 ): Promise<FlowResponse> {
   return surveyRequest<FlowResponse>(
     token,
@@ -1283,8 +1421,9 @@ export async function deleteSurveyFlow(
   token: string,
   surveyId: string,
   flowId: string,
+  updatedAt: string,
 ): Promise<void> {
-  await surveyRequest<unknown>(token, `/surveys/${surveyId}/flows/${flowId}`, "DELETE")
+  await surveyRequest<unknown>(token, `/surveys/${surveyId}/flows/${flowId}`, "DELETE", { updated_at: updatedAt })
 }
 
 export function testFlow(
@@ -1321,7 +1460,7 @@ export function createNotificationGroup(
 export function updateNotificationGroup(
   token: string,
   groupId: string,
-  payload: { name: string; members: Array<{ name: string; email: string }> },
+  payload: { name: string; members: Array<{ name: string; email: string }>; updated_at: string },
 ): Promise<NotificationGroupResponse> {
   return surveyRequest<NotificationGroupResponse>(
     token,
@@ -1360,8 +1499,9 @@ export function assignNotificationGroupToLocation(
 export async function deleteNotificationGroup(
   token: string,
   groupId: string,
+  updatedAt: string,
 ): Promise<void> {
-  await surveyRequest<unknown>(token, `/notification-groups/${groupId}`, "DELETE")
+  await surveyRequest<unknown>(token, `/notification-groups/${groupId}`, "DELETE", { updated_at: updatedAt })
 }
 
 export function fetchFlowRuns(token: string): Promise<FlowRunResponse[]> {
@@ -1408,25 +1548,25 @@ export function saveSurveyVersion(
 export function updateSurveyMeta(
   token: string,
   id: string,
-  data: { title?: string; status?: string },
+  data: { title?: string; status?: string; updated_at: string },
 ): Promise<SurveyListItem> {
   return surveyRequest<SurveyListItem>(token, `/surveys/${id}`, "PATCH", data)
 }
 
-export function publishSurvey(token: string, id: string): Promise<SurveyListItem> {
-  return surveyRequest<SurveyListItem>(token, `/surveys/${id}/publish`, "PATCH")
+export function publishSurvey(token: string, id: string, updatedAt: string): Promise<SurveyListItem> {
+  return surveyRequest<SurveyListItem>(token, `/surveys/${id}/publish`, "PATCH", { updated_at: updatedAt })
 }
 
-export function archiveSurvey(token: string, id: string): Promise<SurveyListItem> {
-  return surveyRequest<SurveyListItem>(token, `/surveys/${id}/archive`, "PATCH")
+export function archiveSurvey(token: string, id: string, updatedAt: string): Promise<SurveyListItem> {
+  return surveyRequest<SurveyListItem>(token, `/surveys/${id}/archive`, "PATCH", { updated_at: updatedAt })
 }
 
-export function unpublishSurvey(token: string, id: string): Promise<SurveyListItem> {
-  return surveyRequest<SurveyListItem>(token, `/surveys/${id}/unpublish`, "PATCH")
+export function unpublishSurvey(token: string, id: string, updatedAt: string): Promise<SurveyListItem> {
+  return surveyRequest<SurveyListItem>(token, `/surveys/${id}/unpublish`, "PATCH", { updated_at: updatedAt })
 }
 
-export function unarchiveSurvey(token: string, id: string): Promise<SurveyListItem> {
-  return surveyRequest<SurveyListItem>(token, `/surveys/${id}/unarchive`, "PATCH")
+export function unarchiveSurvey(token: string, id: string, updatedAt: string): Promise<SurveyListItem> {
+  return surveyRequest<SurveyListItem>(token, `/surveys/${id}/unarchive`, "PATCH", { updated_at: updatedAt })
 }
 
 export function duplicateSurvey(token: string, id: string): Promise<SurveyWithSchema> {
@@ -1490,6 +1630,17 @@ export function fetchAnalyticsResponseDetail(
   return _analyticsRequest<AnalyticsResponseDetail>(
     token,
     `/analytics/response/${responseId}`,
+  )
+}
+
+export function fetchPhotoSignedUrl(
+  token: string,
+  responseId: string,
+  questionId: string,
+): Promise<PhotoSignedUrlResponse> {
+  return _analyticsRequest<PhotoSignedUrlResponse>(
+    token,
+    `/analytics/response/${responseId}/photo/${questionId}`,
   )
 }
 

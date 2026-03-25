@@ -80,6 +80,47 @@ class ExternalAPIError(AppError):
         )
 
 
+class StaleObjectError(AppError):
+    def __init__(self, entity: str, entity_id: str):
+        super().__init__(
+            category=ErrorCategory.CONFLICT,
+            code="STALE_OBJECT",
+            message="This data has been updated by another user. Please refresh.",
+            status_code=409,
+            details={"entity": entity, "id": entity_id},
+        )
+
+
+class RateLimitExceededError(AppError):
+    def __init__(self):
+        super().__init__(
+            category=ErrorCategory.RATE_LIMIT,
+            code="RATE_LIMIT_EXCEEDED",
+            message="Too many requests. Please try again later.",
+            status_code=429,
+        )
+
+
+class SessionExpiredError(AppError):
+    def __init__(self):
+        super().__init__(
+            category=ErrorCategory.VALIDATION,
+            code="SESSION_EXPIRED",
+            message="This session has expired. Please restart the survey.",
+            status_code=400,
+        )
+
+
+class SuspiciousSubmissionError(AppError):
+    def __init__(self):
+        super().__init__(
+            category=ErrorCategory.VALIDATION,
+            code="SUSPICIOUS_ACTIVITY",
+            message="Submission rejected due to suspicious activity.",
+            status_code=400,
+        )
+
+
 class LogicEvaluationError(AppError):
     def __init__(
         self,
@@ -94,4 +135,29 @@ class LogicEvaluationError(AppError):
             message=message,
             status_code=status_code,
             details=details,
+        )
+
+
+class RuleValidationError(AppError):
+    """Raised when a rule cannot be saved because it contains broken conditions."""
+
+    def __init__(self, issues: list[dict]):
+        super().__init__(
+            category=ErrorCategory.VALIDATION,
+            code="RULE_INVALID",
+            message="Rule contains invalid conditions. Please fix all issues.",
+            status_code=400,
+            details={"issues": issues},
+        )
+
+
+class RuleBrokenError(AppError):
+    """Raised when a broken rule is evaluated at runtime."""
+
+    def __init__(self):
+        super().__init__(
+            category=ErrorCategory.VALIDATION,
+            code="RULE_BROKEN",
+            message="This rule is broken and cannot be evaluated.",
+            status_code=400,
         )

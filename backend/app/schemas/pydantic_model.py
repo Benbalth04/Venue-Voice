@@ -6,6 +6,10 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 from typing import Any, Literal
 
 
+class DeleteRequest(BaseModel):
+    updated_at: datetime
+
+
 class User(BaseModel):
     id: uuid.UUID
     email: str
@@ -67,6 +71,7 @@ class LocationUpdate(BaseModel):
     country: str | None = None
     google_business_url: str | None = None
     is_active: bool | None = None
+    updated_at: datetime
 
 
 class LocationResponse(BaseModel):
@@ -116,6 +121,7 @@ class LocationSurveyUpdate(BaseModel):
     is_active: bool | None = None
     start_date: datetime | None = None
     end_date: datetime | None = None
+    updated_at: datetime
 
     @model_validator(mode="after")
     def validate_date_range(self):
@@ -167,6 +173,7 @@ class QRCodeUpdate(BaseModel):
     title: str | None = None
     location_survey_id: uuid.UUID | None = None
     is_active: bool | None = None
+    updated_at: datetime
 
 
 class QRCodeAssetUrls(BaseModel):
@@ -290,6 +297,12 @@ class SurveySaveVersion(BaseModel):
 class SurveyUpdateMeta(BaseModel):
     title: str | None = None
     status: Literal["draft", "active", "archived"] | None = None
+    updated_at: datetime
+
+
+class SurveyStatusTransition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    updated_at: datetime
 
 
 class SurveyListItem(BaseModel):
@@ -351,12 +364,19 @@ class AnalyticsFiltersResponse(BaseModel):
 class AnalyticsAnswerDetail(BaseModel):
     question_text: str
     answer_value: str
+    has_photo: bool = False
+    question_id: str | None = None
 
 
 class AnalyticsResponseDetail(BaseModel):
     response_id: uuid.UUID
     survey_name: str
     answers: list[AnalyticsAnswerDetail]
+
+
+class PhotoSignedUrlResponse(BaseModel):
+    signed_url: str
+    expires_in_seconds: int
 
 
 # --------------------------------------------------
@@ -475,8 +495,12 @@ class AIAnalysisResponse(AIAnalysisBase):
 # --------------------------------------------------
 class RuleConditionType(str, PyEnum):
     rating = "rating"
+    nps = "nps"
     sentiment = "sentiment"
     not_empty = "not_empty"
+    checkbox = "checkbox"
+    multiple_choice = "multiple_choice"
+    yes_no = "yes_no"
 
 
 class RuleGroupOperator(str, PyEnum):
@@ -539,6 +563,7 @@ class RuleQuestionOption(BaseModel):
     question_type: str
     is_numeric: bool
     position: int
+    config: dict[str, Any] | None = None
 
 
 class RuleGroupCreate(BaseModel):
@@ -548,6 +573,9 @@ class RuleGroupCreate(BaseModel):
     operator: RuleGroupOperator
 
 
+_NUMERIC_OPERATORS = {RuleOperator.lt, RuleOperator.lte, RuleOperator.eq, RuleOperator.gte, RuleOperator.gt}
+
+
 class RuleConditionCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -555,41 +583,76 @@ class RuleConditionCreate(BaseModel):
     condition_type: RuleConditionType
     question_id: uuid.UUID | None = None
     operator: RuleOperator | None = None
-    value: str | None = None
+    value: str | list[str] | None = None
     group_id: uuid.UUID | None = None
 
     @model_validator(mode="after")
     def validate_shape(self):
-        if self.condition_type == RuleConditionType.not_empty:
+        ct = self.condition_type
+
+        # not_empty: presence check only — no operator or value
+        if ct == RuleConditionType.not_empty:
             if self.question_id is None:
                 raise ValueError("not_empty conditions require question_id")
             if self.operator is not None or self.value is not None:
                 raise ValueError("not_empty conditions cannot define operator or value")
             return self
 
+        # All remaining types require question_id
         if self.question_id is None:
             raise ValueError("condition question_id is required")
-        if self.operator is None:
-            raise ValueError("condition operator is required")
-        if self.value is None or not str(self.value).strip():
-            raise ValueError("condition value is required")
 
-        if self.condition_type == RuleConditionType.rating:
-            if self.operator not in {
-                RuleOperator.lt,
-                RuleOperator.lte,
-                RuleOperator.eq,
-                RuleOperator.gte,
-                RuleOperator.gt,
-            }:
-                raise ValueError("rating conditions require a numeric comparison operator")
-        elif self.condition_type == RuleConditionType.sentiment:
+        # Numeric comparison: rating (star), nps
+        if ct in {RuleConditionType.rating, RuleConditionType.nps}:
+            if self.operator not in _NUMERIC_OPERATORS:
+                raise ValueError(f"{ct.value} conditions require a numeric comparison operator (lt/lte/eq/gte/gt)")
+            if self.value is None or isinstance(self.value, list) or not str(self.value).strip():
+                raise ValueError(f"{ct.value} conditions require a numeric value")
+            try:
+                float(str(self.value).strip())
+            except ValueError as exc:
+                raise ValueError(f"{ct.value} conditions require a numeric value") from exc
+            return self
+
+        # Sentiment: is operator + allowed enum value
+        if ct == RuleConditionType.sentiment:
             if self.operator != RuleOperator.is_:
                 raise ValueError("sentiment conditions require the 'is' operator")
+            if self.value is None or isinstance(self.value, list) or not str(self.value).strip():
+                raise ValueError("sentiment conditions require a value")
             try:
                 SentimentValue(str(self.value).strip().lower())
             except ValueError as exc:
                 raise ValueError("sentiment conditions must target positive, neutral, or negative") from exc
+            return self
+
+        # Multiple choice: single string option, is operator
+        if ct == RuleConditionType.multiple_choice:
+            if self.operator != RuleOperator.is_:
+                raise ValueError("multiple_choice conditions require the 'is' operator")
+            if self.value is None or isinstance(self.value, list) or not str(self.value).strip():
+                raise ValueError("multiple_choice conditions require a single option value")
+            return self
+
+        # Yes/No: strictly "yes" or "no", is operator
+        if ct == RuleConditionType.yes_no:
+            if self.operator != RuleOperator.is_:
+                raise ValueError("yes_no conditions require the 'is' operator")
+            if self.value is None or isinstance(self.value, list):
+                raise ValueError("yes_no conditions require a value of 'yes' or 'no'")
+            if str(self.value).strip().lower() not in {"yes", "no"}:
+                raise ValueError("yes_no conditions require value 'yes' or 'no'")
+            return self
+
+        # Checkbox: non-empty list of option strings, is operator
+        if ct == RuleConditionType.checkbox:
+            if self.operator != RuleOperator.is_:
+                raise ValueError("checkbox conditions require the 'is' operator")
+            if not isinstance(self.value, list) or len(self.value) == 0:
+                raise ValueError("checkbox conditions require a non-empty list of option values")
+            if not all(isinstance(v, str) and v.strip() for v in self.value):
+                raise ValueError("checkbox condition values must be non-empty strings")
+            return self
 
         return self
 
@@ -621,7 +684,7 @@ class CreateRule(BaseModel):
 
 
 class UpdateRule(CreateRule):
-    pass
+    updated_at: datetime
 
 
 class RuleGroupResponse(BaseModel):
@@ -635,7 +698,7 @@ class RuleConditionResponse(BaseModel):
     condition_type: RuleConditionType
     question_id: uuid.UUID | None
     operator: RuleOperator | None
-    value: str | None
+    value: str | list[str] | None
     group_id: uuid.UUID | None
     created_at: datetime
 
@@ -647,6 +710,8 @@ class RuleResponse(BaseModel):
     name: str
     description: str | None = None
     operator: RuleGroupOperator
+    status: str = "active"
+    broken_reasons: list[dict] = Field(default_factory=list)
     groups: list[RuleGroupResponse] = Field(default_factory=list)
     conditions: list[RuleConditionResponse] = Field(default_factory=list)
     created_at: datetime
@@ -677,6 +742,7 @@ class NotificationGroupUpdate(BaseModel):
 
     name: str = Field(min_length=1, max_length=120)
     members: list[NotificationGroupMemberCreate] = Field(default_factory=list)
+    updated_at: datetime
 
     @model_validator(mode="after")
     def validate_unique_member_emails(self):
@@ -704,6 +770,7 @@ class NotificationGroupResponse(BaseModel):
     company_id: uuid.UUID
     name: str
     created_at: datetime
+    updated_at: datetime
     members: list[NotificationGroupMemberResponse] = Field(default_factory=list)
     location_ids: list[uuid.UUID] = Field(default_factory=list)
 
@@ -970,13 +1037,14 @@ class CreateFlow(BaseModel):
 
 
 class UpdateFlow(CreateFlow):
-    pass
+    updated_at: datetime
 
 
 class SetFlowActive(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     is_active: bool
+    updated_at: datetime
 
 
 class FlowNodeResponse(BaseModel):

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
+  Camera,
   ChevronLeft,
   ChevronRight,
   Download,
@@ -16,6 +17,7 @@ import {
   fetchAnalyticsFilters,
   fetchAnalyticsResponseDetail,
   fetchAnalyticsResponses,
+  fetchPhotoSignedUrl,
   extractErrorMessage,
   type AnalyticsAnswerDetail,
   type AnalyticsFilterOption,
@@ -88,6 +90,8 @@ function ReviewModal({
   const [error, setError] = useState<string | null>(null)
   const [sortKey, setSortKey] = useState<string>("question")
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc")
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
+  const [lightboxLoading, setLightboxLoading] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -174,9 +178,45 @@ function ReviewModal({
                     label: "Answer",
                     sortable: true,
                     align: "left",
-                    render: (a) => (
-                      <span className="font-medium text-zinc-900">{a.answer_value || "—"}</span>
-                    ),
+                    render: (a) => {
+                      if (a.has_photo && a.question_id) {
+                        return (
+                          <button
+                            type="button"
+                            disabled={lightboxLoading}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1 text-xs font-medium text-violet-700 hover:border-violet-300 hover:bg-violet-50 disabled:opacity-60"
+                            onClick={async () => {
+                              if (lightboxLoading) return
+                              setLightboxLoading(true)
+                              try {
+                                const token = await getToken()
+                                if (!token) return
+                                const { signed_url } = await fetchPhotoSignedUrl(
+                                  token,
+                                  responseId,
+                                  a.question_id!,
+                                )
+                                setLightboxUrl(signed_url)
+                              } catch {
+                                // silently ignore — the icon will re-enable
+                              } finally {
+                                setLightboxLoading(false)
+                              }
+                            }}
+                          >
+                            {lightboxLoading ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                            ) : (
+                              <Camera className="h-3.5 w-3.5" aria-hidden />
+                            )}
+                            View photo
+                          </button>
+                        )
+                      }
+                      return (
+                        <span className="font-medium text-zinc-900">{a.answer_value || "—"}</span>
+                      )
+                    },
                   },
                 ]}
                 getRowKey={(a) => `${a.question_text}-${a.answer_value ?? ""}`}
@@ -200,6 +240,30 @@ function ReviewModal({
           </button>
         </div>
       </div>
+
+      {/* Photo lightbox — rendered above the modal (z-[60]) */}
+      {lightboxUrl && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80"
+          onClick={() => setLightboxUrl(null)}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={lightboxUrl}
+            alt="Survey response photo"
+            className="max-h-[90vh] max-w-[90vw] rounded-xl object-contain shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button
+            type="button"
+            aria-label="Close photo"
+            className="absolute right-4 top-4 rounded-full bg-white/20 p-2 text-white hover:bg-white/40"
+            onClick={() => setLightboxUrl(null)}
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+      )}
     </div>
   )
 }
