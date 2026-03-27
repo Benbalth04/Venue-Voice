@@ -1,7 +1,7 @@
 "use client"
 
 import type { ReactNode } from "react"
-import { usePathname } from "next/navigation"
+import { usePathname, useSearchParams } from "next/navigation"
 import { Sidebar } from "@/components/layout/Sidebar"
 import { Topbar } from "@/components/layout/Topbar"
 import { UnreadResponsesProvider } from "@/components/layout/UnreadResponsesContext"
@@ -10,8 +10,22 @@ import { BrokenFlowsProvider } from "@/components/layout/BrokenFlowsContext"
 
 export function DashboardLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname()
+  const searchParams = useSearchParams()
+  const isEmbedded = searchParams.get("embedded") === "1"
   const isSurveyEditorRoute = /^\/dashboard\/surveys\/[^/]+$/.test(pathname)
   const isFlowEditorRoute = /^\/dashboard\/automations\/flows\/[^/]+$/.test(pathname)
+
+  if (isEmbedded) {
+    return (
+      <UnreadResponsesProvider>
+        <BrokenRulesProvider>
+          <BrokenFlowsProvider>
+            <main className="mx-auto flex-1 w-[80%] max-w-6xl py-8">{children}</main>
+          </BrokenFlowsProvider>
+        </BrokenRulesProvider>
+      </UnreadResponsesProvider>
+    )
+  }
 
   return (
     <UnreadResponsesProvider>

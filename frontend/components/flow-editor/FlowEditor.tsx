@@ -5,7 +5,7 @@ import "@xyflow/react/dist/style.css"
 import { useParams, useRouter, useSearchParams } from "next/navigation"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Background, ReactFlow, type Edge, type Node, type ReactFlowInstance } from "@xyflow/react"
-import { ArrowLeft, Loader2, RotateCcw, Save } from "lucide-react"
+import { ArrowLeft, Loader2, RotateCcw, Save, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner"
 import { Card } from "@/components/ui/card"
@@ -79,6 +79,8 @@ export function FlowEditor() {
   const [flowMissing, setFlowMissing] = useState(false)
   const [isMobileViewport, setIsMobileViewport] = useState(false)
   const [validationHighlightNodeId, setValidationHighlightNodeId] = useState<string | null>(null)
+  const [overlayFrame, setOverlayFrame] = useState<{ type: "rules" | "locations"; nodeId: string } | null>(null)
+  const pendingRuleIdRef = useRef<string | null>(null)
   const flowRef = useRef<ReactFlowInstance<Node, Edge> | null>(null)
   const hasFitView = useRef(false)
 
@@ -231,6 +233,65 @@ export function FlowEditor() {
     const t = window.setTimeout(() => setValidationHighlightNodeId(null), 10_000)
     return () => window.clearTimeout(t)
   }, [validationHighlightNodeId])
+
+  useEffect(() => {
+    const handler = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return
+      if (event.data?.type === "venue_voice_rule_created") {
+        pendingRuleIdRef.current = event.data.ruleId as string
+      }
+    }
+    window.addEventListener("message", handler)
+    return () => window.removeEventListener("message", handler)
+  }, [])
+
+  async function handleFrameClose() {
+    const frameType = overlayFrame?.type
+    const nodeId = overlayFrame?.nodeId
+    setOverlayFrame(null)
+    const token = await getToken()
+    if (!token || !draft) return
+    if (frameType === "rules") {
+      try {
+        const ruleBundle = await fetchSurveyLogicRules(token, draft.survey_id)
+        setRules(
+          ruleBundle.rules.map((rule) => ({
+            id: rule.id,
+            name: rule.name,
+            description: rule.description,
+            status: rule.status,
+          })),
+        )
+        const ruleId = pendingRuleIdRef.current
+        if (ruleId && nodeId) {
+          pendingRuleIdRef.current = null
+          setNodes((nodes) => nodes.map((n) => (n.id === nodeId ? normalizeNode({ ...n, rule_id: ruleId }) : n)))
+          setSelectedNodeId(nodeId)
+        }
+      } catch {
+        // silent — rules refresh on next full load
+      }
+    } else if (frameType === "locations") {
+      try {
+        const [locationSurveyRows, notifGroupRows] = await Promise.all([
+          fetchLocationSurveys(token, { survey_id: draft.survey_id }),
+          fetchNotificationGroups(token),
+        ])
+        setLocationSurveys(locationSurveyRows)
+        setNotificationGroups(notifGroupRows)
+      } catch {
+        // silent
+      }
+    }
+  }
+
+  const handleOpenRulesFrame = useCallback(() => {
+    setOverlayFrame({ type: "rules", nodeId: selectedNodeId })
+  }, [selectedNodeId])
+
+  const handleOpenLocationsFrame = useCallback(() => {
+    setOverlayFrame({ type: "locations", nodeId: selectedNodeId })
+  }, [selectedNodeId])
 
   const selectNodeOnCanvas = useCallback((id: string) => {
     setValidationHighlightNodeId((h) => (h === id ? null : h))
@@ -560,6 +621,35 @@ export function FlowEditor() {
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-zinc-50">
       {ConfirmDialogRender}
 
+      {overlayFrame ? (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 p-4">
+          <div className="relative flex h-[85vh] w-[90vw] max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div className="flex shrink-0 items-center justify-between border-b border-zinc-200 px-5 py-3">
+              <h2 className="text-sm font-semibold text-zinc-900">
+                {overlayFrame.type === "rules" ? "Rules" : "Locations"}
+              </h2>
+              <button
+                type="button"
+                onClick={() => void handleFrameClose()}
+                className="rounded-lg p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+                aria-label="Close"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <iframe
+              src={
+                overlayFrame.type === "rules"
+                  ? `/dashboard/automations/rules?surveyId=${draft.survey_id}&embedded=1`
+                  : `/dashboard/locations?embedded=1`
+              }
+              className="min-h-0 flex-1 border-0"
+              title={overlayFrame.type === "rules" ? "Rules" : "Locations"}
+            />
+          </div>
+        </div>
+      ) : null}
+
       <div className="flex items-center gap-3 border-b border-zinc-200 bg-white px-6 py-3">
         <Button variant="ghost" onClick={() => void navigateWithGuard("/dashboard/automations/flows")}>
           <ArrowLeft className="mr-1.5 h-4 w-4" />
@@ -652,6 +742,7 @@ export function FlowEditor() {
                     rulesById={rulesById}
                     brokenRuleIds={brokenRuleIds}
                     updateSelectedNode={updateSelectedNode}
+                    onOpenRulesFrame={handleOpenRulesFrame}
                   />
                 ) : null}
 
@@ -677,6 +768,7 @@ export function FlowEditor() {
                     selectedTriggerLocations={selectedTriggerLocations}
                     notificationGroups={notificationGroups}
                     updateSelectedNode={updateSelectedNode}
+                    onOpenLocationsFrame={handleOpenLocationsFrame}
                   />
                 ) : null}
               </div>

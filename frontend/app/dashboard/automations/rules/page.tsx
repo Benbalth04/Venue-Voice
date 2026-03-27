@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { useSearchParams } from "next/navigation"
 import {
   closestCenter,
   DndContext,
@@ -524,6 +525,8 @@ function SortableTopLevelItem({
 export default function RulesPage() {
   const { confirm, ConfirmDialogRender } = useConfirm()
   const { refreshBrokenRuleCount } = useBrokenRules()
+  const searchParams = useSearchParams()
+  const initialSurveyIdParam = searchParams.get("surveyId") ?? ""
 
   const [surveys, setSurveys] = useState<SurveySummary[]>([])
   const [selectedSurveyId, setSelectedSurveyId] = useState("")
@@ -605,7 +608,8 @@ export default function RulesPage() {
       try {
         const surveyRows = await fetchSurveys(token)
         setSurveys(surveyRows)
-        const initialId = surveyRows[0]?.id ?? ""
+        const paramId = initialSurveyIdParam && surveyRows.some((s) => s.id === initialSurveyIdParam) ? initialSurveyIdParam : ""
+        const initialId = paramId || surveyRows[0]?.id || ""
         setSelectedSurveyId(initialId)
         if (initialId) {
           const bundle = await fetchRuleBundleDirect(token, initialId)
@@ -664,9 +668,17 @@ export default function RulesPage() {
     setDraftError(null)
     try {
       const payload = payloadFromDraft(draft)
-      const saved = draft.id
-        ? await updateRuleDirect(token, selectedSurveyId, draft.id, { ...payload, updated_at: draft.updated_at ?? "" } as RuleUpdatePayload)
-        : await createRuleDirect(token, selectedSurveyId, payload)
+      const isNew = !draft.id
+      const saved = isNew
+        ? await createRuleDirect(token, selectedSurveyId, payload)
+        : await updateRuleDirect(token, selectedSurveyId, draft.id!, { ...payload, updated_at: draft.updated_at ?? "" } as RuleUpdatePayload)
+
+      if (isNew && window.self !== window.top) {
+        window.parent.postMessage(
+          { type: "venue_voice_rule_created", ruleId: saved.id, ruleName: saved.name },
+          window.location.origin,
+        )
+      }
 
       setRules((current) => {
         const exists = current.some((r) => r.id === saved.id)

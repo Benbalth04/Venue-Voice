@@ -252,7 +252,7 @@ function EditFlowModal({
         <div className="mt-6 flex items-center justify-between gap-2">
           <Button variant="outline" onClick={onEditFlow}>
             <ArrowRight className="mr-1.5 h-4 w-4" />
-            Edit flow actions
+            Edit flow steps
           </Button>
           <div className="flex gap-2">
             <Button variant="outline" onClick={onClose}>Cancel</Button>
