@@ -58,7 +58,7 @@ def _parse_value_list(value: str | None) -> list[str]:
 
 
 def _get_latest_questions(db: Session, survey_id: uuid.UUID) -> dict[uuid.UUID, QuestionORM]:
-    """Return questions from the latest version of the survey, keyed by question id."""
+    """Return questions from the latest version of the survey, keyed by stable_question_id."""
     survey = (
         db.query(SurveyORM)
         .filter(SurveyORM.id == survey_id, SurveyORM.deleted_at.is_(None))
@@ -78,7 +78,7 @@ def _get_latest_questions(db: Session, survey_id: uuid.UUID) -> dict[uuid.UUID, 
         )
         .all()
     )
-    return {row.id: row for row in rows}
+    return {row.stable_question_id: row for row in rows}
 
 
 # ── Core validation ───────────────────────────────────────────────────────────

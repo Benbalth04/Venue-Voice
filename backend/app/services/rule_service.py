@@ -172,6 +172,7 @@ def _get_rule_or_404(db: Session, survey_id: uuid.UUID, rule_id: uuid.UUID) -> R
 
 
 def _get_question_rows_for_survey(db: Session, survey_id: uuid.UUID) -> dict[uuid.UUID, QuestionORM]:
+    """Return questions from the latest survey version, keyed by stable_question_id."""
     survey = _get_survey_or_404(db, survey_id)
     rows = (
         db.query(QuestionORM)
@@ -184,7 +185,7 @@ def _get_question_rows_for_survey(db: Session, survey_id: uuid.UUID) -> dict[uui
         )
         .all()
     )
-    return {row.id: row for row in rows}
+    return {row.stable_question_id: row for row in rows}
 
 
 def _get_latest_question_options(db: Session, survey: SurveyORM) -> list[dict[str, Any]]:
@@ -202,7 +203,7 @@ def _get_latest_question_options(db: Session, survey: SurveyORM) -> list[dict[st
     )
     return [
         {
-            "id": row.id,
+            "id": str(row.stable_question_id),
             "question_key": str(row.question_key),
             "question_text": row.question_text,
             "question_type": row.question_type,
@@ -705,7 +706,8 @@ def build_response_contexts_for_response(
         )
         .all()
     )
-    questions_by_id = {question.id: question for question in response_questions}
+    # Key questions by stable_question_id so lookups are stable across versions.
+    questions_by_stable_id = {question.stable_question_id: question for question in response_questions}
     questions_by_key = {str(question.question_key): question for question in response_questions}
 
     normalized_answers = (
@@ -716,7 +718,8 @@ def build_response_contexts_for_response(
         )
         .all()
     )
-    answer_by_question_id = {
+    # answer.question_id stores stable_question_id
+    answer_by_stable_id = {
         answer.question_id: answer
         for answer in normalized_answers
         if answer.question_id is not None
@@ -731,19 +734,20 @@ def build_response_contexts_for_response(
         )
         .all()
     )
-    ai_by_question_id = {
+    # ai_row.question_id stores stable_question_id
+    ai_by_stable_id = {
         row.question_id: row
         for row in ai_rows
         if row.question_id is not None
     }
 
     contexts: dict[uuid.UUID, ResponseValueContext] = {}
-    for question_id, question in questions_by_id.items():
-        normalized = answer_by_question_id.get(question_id)
-        ai_row = ai_by_question_id.get(question_id)
+    for stable_id, question in questions_by_stable_id.items():
+        normalized = answer_by_stable_id.get(stable_id)
+        ai_row = ai_by_stable_id.get(stable_id)
         raw_value = raw_answers.get(str(question.question_key))
-        contexts[question_id] = ResponseValueContext(
-            question_id=question_id,
+        contexts[stable_id] = ResponseValueContext(
+            question_id=stable_id,
             question_key=str(question.question_key),
             question_type=question.question_type,
             is_numeric=bool(question.is_numeric),
@@ -778,7 +782,7 @@ def build_response_contexts_for_mock(
 
     contexts: dict[uuid.UUID, ResponseValueContext] = {}
     for question in questions:
-        raw = mock_response.get(str(question.question_key), mock_response.get(str(question.id)))
+        raw = mock_response.get(str(question.question_key), mock_response.get(str(question.stable_question_id)))
         raw_value = raw
         sentiment = None
         sentiment_score = None
@@ -787,8 +791,8 @@ def build_response_contexts_for_mock(
             sentiment = raw.get("sentiment")
             sentiment_score = _to_float(raw.get("sentiment_score"))
 
-        contexts[question.id] = ResponseValueContext(
-            question_id=question.id,
+        contexts[question.stable_question_id] = ResponseValueContext(
+            question_id=question.stable_question_id,
             question_key=str(question.question_key),
             question_type=question.question_type,
             is_numeric=bool(question.is_numeric),

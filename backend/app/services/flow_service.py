@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import threading
+import logging
 import time
 import uuid
 from dataclasses import dataclass
@@ -9,13 +9,20 @@ from typing import Any
 
 from sqlalchemy.orm import Session, joinedload
 
-from ..core.errors.exceptions import ConflictError, NotFoundError, StaleObjectError, ValidationError
+from ..core.errors.exceptions import (
+    ConflictError,
+    FlowExecutionError,
+    NotFoundError,
+    StaleObjectError,
+    ValidationError,
+)
 from ..db.postgres import SessionLocal
 from ..models.postgres_model import (
     Flow as FlowORM,
     FlowLocationSurvey as FlowLocationSurveyORM,
     FlowNode as FlowNodeORM,
     FlowRun as FlowRunORM,
+    FlowRunAction as FlowRunActionORM,
     Location as LocationORM,
     LocationNotificationGroup as LocationNotificationGroupORM,
     LocationSurvey as LocationSurveyORM,
@@ -23,6 +30,7 @@ from ..models.postgres_model import (
     NotificationGroupMember as NotificationGroupMemberORM,
     QRCode as QRCodeORM,
     Rule as RuleORM,
+    RuleCondition as RuleConditionORM,
     Survey as SurveyORM,
     SurveyResponse as SurveyResponseORM,
     SurveyVersion as SurveyVersionORM,
@@ -35,12 +43,15 @@ from ..schemas.pydantic_model import (
     FlowEmailTargetType,
     FlowNodeType,
     FlowRedirectTargetType,
+    RuleConditionType,
 )
 from .rule_service import (
     build_response_contexts_for_mock,
     build_response_contexts_for_response,
     evaluate_rule,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -58,6 +69,14 @@ class FlowEvaluationResult:
     trace: dict[str, Any]
     actions: list[FlowAction]
     runtime_ms: int
+
+
+@dataclass(slots=True)
+class FlowExecutionMetadata:
+    """Describes the characteristics of active flows for a location survey submission."""
+    has_active_flow: bool
+    has_redirect_action: bool
+    requires_ai_sentiment: bool
 
 
 def _now() -> datetime:
@@ -697,8 +716,6 @@ def _evaluate_flow_node(
                 "result": result,
             }
         )
-        if not result:
-            return []
         child = _select_single_child(node.id, children_by_parent)
         if child is None:
             return []
@@ -874,7 +891,24 @@ def _persist_flow_run(
     execution_trace: dict[str, Any],
     actions: list[FlowAction],
 ) -> FlowRunORM:
-    action_executed = ",".join(a.type for a in actions) if actions else None
+    # Idempotency guard — never create a duplicate run for the same (flow, response) pair.
+    if response_id is not None:
+        existing = (
+            db.query(FlowRunORM)
+            .filter(
+                FlowRunORM.flow_id == flow.id,
+                FlowRunORM.response_id == response_id,
+            )
+            .first()
+        )
+        if existing is not None:
+            logger.info(
+                "Flow run already exists for flow_id=%s response_id=%s — skipping (idempotent)",
+                flow.id,
+                response_id,
+            )
+            return existing
+
     row = FlowRunORM(
         company_id=company_id,
         flow_id=flow.id,
@@ -883,12 +917,24 @@ def _persist_flow_run(
         location_survey_id=location_survey_id,
         qr_code_id=qr_code_id,
         execution_trace=execution_trace,
-        action_executed=action_executed,
     )
     db.add(row)
     db.flush()
 
     for action in actions:
+        # Persist one FlowRunAction row per action taken.
+        action_config: dict[str, Any] = {}
+        if action.type == FlowActionType.redirect.value:
+            action_config = {"url": action.url}
+        elif action.type == FlowActionType.email.value:
+            action_config = {
+                "email_target": action.email_target,
+                "recipient_email": action.recipient_email,
+                "notification_group_id": str(action.notification_group_id) if action.notification_group_id else None,
+            }
+        db.add(FlowRunActionORM(flow_run_id=row.id, action_type=action.type, config=action_config))
+
+        # For email actions also create EmailEvent rows for delivery tracking.
         if action.type != FlowActionType.email.value:
             continue
         recipient_emails: list[str] = []
@@ -935,27 +981,61 @@ def _persist_flow_run(
     return row
 
 
-def has_sync_redirect_flow(
+def get_flow_execution_metadata(
     db: Session,
     company_id: uuid.UUID,
     survey_id: uuid.UUID,
     location_survey_id: uuid.UUID,
-) -> bool:
-    row = (
-        db.query(FlowNodeORM.id)
-        .join(FlowORM, FlowORM.id == FlowNodeORM.flow_id)
+) -> FlowExecutionMetadata:
+    """
+    Single-query metadata check run before survey submission processing.
+    Returns which execution branch to take based on the characteristics of
+    active, non-broken flows assigned to this location survey.
+    """
+    flow_id_rows = (
+        db.query(FlowORM.id)
         .join(FlowLocationSurveyORM, FlowLocationSurveyORM.flow_id == FlowORM.id)
         .filter(
             FlowORM.company_id == company_id,
             FlowORM.survey_id == survey_id,
             FlowORM.is_active.is_(True),
+            FlowORM.status == "active",
             FlowORM.deleted_at.is_(None),
             FlowLocationSurveyORM.location_survey_id == location_survey_id,
+        )
+        .all()
+    )
+    if not flow_id_rows:
+        return FlowExecutionMetadata(has_active_flow=False, has_redirect_action=False, requires_ai_sentiment=False)
+
+    flow_ids = [row.id for row in flow_id_rows]
+
+    has_redirect = (
+        db.query(FlowNodeORM.id)
+        .filter(
+            FlowNodeORM.flow_id.in_(flow_ids),
             FlowNodeORM.action_type == FlowActionType.redirect.value,
         )
         .first()
+    ) is not None
+
+    has_sentiment = (
+        db.query(RuleConditionORM.id)
+        .join(RuleORM, RuleORM.id == RuleConditionORM.rule_id)
+        .join(FlowNodeORM, FlowNodeORM.rule_id == RuleORM.id)
+        .filter(
+            FlowNodeORM.flow_id.in_(flow_ids),
+            RuleConditionORM.condition_type == RuleConditionType.sentiment.value,
+            RuleConditionORM.deleted_at.is_(None),
+        )
+        .first()
+    ) is not None
+
+    return FlowExecutionMetadata(
+        has_active_flow=True,
+        has_redirect_action=has_redirect,
+        requires_ai_sentiment=has_sentiment,
     )
-    return row is not None
 
 
 def execute_flows_for_response(
@@ -986,6 +1066,7 @@ def execute_flows_for_response(
             FlowORM.company_id == company_id,
             FlowORM.survey_id == survey_id,
             FlowORM.is_active.is_(True),
+            FlowORM.status == "active",
             FlowORM.deleted_at.is_(None),
             FlowLocationSurveyORM.location_survey_id == location_survey_id,
         )
@@ -1034,7 +1115,7 @@ def execute_flows_for_response(
     return first_action
 
 
-def _background_runner(
+def run_flow_background(
     *,
     company_id: uuid.UUID,
     survey_id: uuid.UUID,
@@ -1042,6 +1123,7 @@ def _background_runner(
     location_survey_id: uuid.UUID,
     qr_code_id: uuid.UUID | None,
 ) -> None:
+    """Background task: execute flows only (no AI needed)."""
     db = SessionLocal()
     try:
         execute_flows_for_response(
@@ -1052,11 +1134,15 @@ def _background_runner(
             location_survey_id=location_survey_id,
             qr_code_id=qr_code_id,
         )
+    except Exception:
+        logger.exception(
+            "Background flow execution failed for response_id=%s", survey_response_id
+        )
     finally:
         db.close()
 
 
-def trigger_flow_execution_in_background(
+def run_ai_then_flow_background(
     *,
     company_id: uuid.UUID,
     survey_id: uuid.UUID,
@@ -1064,18 +1150,67 @@ def trigger_flow_execution_in_background(
     location_survey_id: uuid.UUID,
     qr_code_id: uuid.UUID | None,
 ) -> None:
-    thread = threading.Thread(
-        target=_background_runner,
-        kwargs={
-            "company_id": company_id,
-            "survey_id": survey_id,
-            "survey_response_id": survey_response_id,
-            "location_survey_id": location_survey_id,
-            "qr_code_id": qr_code_id,
-        },
-        daemon=True,
-    )
-    thread.start()
+    """Background task: run AI analysis first, then execute flows (scenario b)."""
+    from .ai_analysis_service import run_ai_analysis_for_response  # local import to avoid circular
+
+    db = SessionLocal()
+    try:
+        response = (
+            db.query(SurveyResponseORM)
+            .filter(
+                SurveyResponseORM.id == survey_response_id,
+                SurveyResponseORM.deleted_at.is_(None),
+            )
+            .first()
+        )
+        if response is None:
+            raise FlowExecutionError(
+                code="RESPONSE_NOT_FOUND",
+                message=f"Survey response {survey_response_id} not found in background AI+flow task",
+            )
+        run_ai_analysis_for_response(db, response)
+        execute_flows_for_response(
+            db,
+            company_id=company_id,
+            survey_id=survey_id,
+            survey_response_id=survey_response_id,
+            location_survey_id=location_survey_id,
+            qr_code_id=qr_code_id,
+        )
+    except Exception:
+        logger.exception(
+            "Background AI+flow execution failed for response_id=%s", survey_response_id
+        )
+    finally:
+        db.close()
+
+
+def run_ai_background(*, survey_response_id: uuid.UUID) -> None:
+    """Background task: run AI analysis only (scenario c — no-wait AI for flows with redirect)."""
+    from .ai_analysis_service import run_ai_analysis_for_response  # local import to avoid circular
+
+    db = SessionLocal()
+    try:
+        response = (
+            db.query(SurveyResponseORM)
+            .filter(
+                SurveyResponseORM.id == survey_response_id,
+                SurveyResponseORM.deleted_at.is_(None),
+            )
+            .first()
+        )
+        if response is not None:
+            run_ai_analysis_for_response(db, response)
+        else:
+            logger.warning(
+                "Background AI analysis: response_id=%s not found, skipping", survey_response_id
+            )
+    except Exception:
+        logger.exception(
+            "Background AI analysis failed for response_id=%s", survey_response_id
+        )
+    finally:
+        db.close()
 
 
 def test_flow(
@@ -1126,6 +1261,7 @@ def test_flow(
 def list_flow_runs(db: Session, company_id: uuid.UUID) -> list[dict[str, Any]]:
     rows = (
         db.query(FlowRunORM, FlowORM, SurveyORM, LocationORM, QRCodeORM)
+        .options(joinedload(FlowRunORM.flow_run_actions))
         .join(FlowORM, FlowORM.id == FlowRunORM.flow_id)
         .join(SurveyORM, SurveyORM.id == FlowORM.survey_id)
         .outerjoin(LocationSurveyORM, LocationSurveyORM.id == FlowRunORM.location_survey_id)
@@ -1146,10 +1282,14 @@ def list_flow_runs(db: Session, company_id: uuid.UUID) -> list[dict[str, Any]]:
             "response_id": run.response_id,
             "success": run.success,
             "location_survey_id": run.location_survey_id,
+            "location_id": location.id if location else None,
             "location_name": location.name if location else None,
             "qr_code_id": run.qr_code_id,
             "qr_code_title": qr.title if qr else None,
-            "action_executed": run.action_executed,
+            "actions": [
+                {"id": a.id, "action_type": a.action_type, "config": a.config, "created_at": a.created_at}
+                for a in sorted(run.flow_run_actions, key=lambda a: a.created_at)
+            ],
             "runtime_ms": int(run.execution_trace.get("runtime_ms")) if isinstance(run.execution_trace, dict) and run.execution_trace.get("runtime_ms") is not None else None,
             "execution_trace": run.execution_trace,
             "created_at": run.created_at,

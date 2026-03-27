@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, Form, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request, UploadFile
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from ..core.errors.exceptions import ConflictError, NotFoundError, SessionExpiredError, SuspiciousSubmissionError, ValidationError
@@ -442,6 +442,7 @@ def _is_answer_empty(val: Any) -> bool:
 # --------------------------------------------------
 @router.post("/survey/submit")
 async def submit_survey(
+    background_tasks: BackgroundTasks,
     request: Request,
     session_id: uuid.UUID = Form(...),
     qr_code_id: uuid.UUID = Form(...),
@@ -636,11 +637,11 @@ async def submit_survey(
         if q_orm and q_orm.is_numeric:
             num_val = _to_numeric(raw_value)
             if num_val is not None:
-                normalized_answers.append((q_orm.id, None, num_val))
+                normalized_answers.append((q_orm.stable_question_id, None, num_val))
         else:
             text_val = _to_text(raw_value)
             if text_val:
-                qid = q_orm.id if q_orm else None
+                qid = q_orm.stable_question_id if q_orm else None
                 normalized_answers.append((qid, text_val, None))
 
     end_time = now_utc
@@ -704,9 +705,9 @@ async def submit_survey(
                 )
                 uploaded_paths.append(storage_path)
 
-                # Look up the Question ORM row so we can store the FK
+                # Look up the Question ORM row so we can store the stable question id
                 q_orm = questions_by_key.get(q_id_str)
-                question_db_id: uuid.UUID | None = q_orm.id if q_orm else None
+                question_db_id: uuid.UUID | None = q_orm.stable_question_id if q_orm else None
 
                 # Persist photo metadata
                 db.add(
@@ -746,9 +747,12 @@ async def submit_survey(
 
     from ..services.ai_analysis_service import run_ai_analysis_for_response
     from ..services.flow_service import (
+        FlowExecutionMetadata,
         execute_flows_for_response,
-        has_sync_redirect_flow,
-        trigger_flow_execution_in_background,
+        get_flow_execution_metadata,
+        run_ai_background,
+        run_ai_then_flow_background,
+        run_flow_background,
     )
 
     saved = (
@@ -759,14 +763,10 @@ async def submit_survey(
         )
         .first()
     )
+
+    workflow_action: dict[str, Any] | None = None
+
     if saved:
-        try:
-            run_ai_analysis_for_response(db, saved)
-        except Exception:
-            logger.exception(
-                "AI sentiment analysis failed after survey submit (response_id=%s)",
-                response_id,
-            )
         qr = (
             db.query(QRCodeORM)
             .filter(
@@ -776,35 +776,67 @@ async def submit_survey(
             .first()
         )
         if qr:
+            # Determine which execution branch applies based on flow characteristics.
             try:
-                if has_sync_redirect_flow(db, sess.company_id, sv.survey_id, qr.location_survey_id):
-                    workflow_action = execute_flows_for_response(
-                        db,
-                        company_id=sess.company_id,
-                        survey_id=sv.survey_id,
-                        survey_response_id=response_id,
-                        location_survey_id=qr.location_survey_id,
-                        qr_code_id=sess.qr_code_id,
-                    )
-                else:
-                    trigger_flow_execution_in_background(
-                        company_id=sess.company_id,
-                        survey_id=sv.survey_id,
-                        survey_response_id=response_id,
-                        location_survey_id=qr.location_survey_id,
-                        qr_code_id=sess.qr_code_id,
-                    )
-                    workflow_action = None
+                meta = get_flow_execution_metadata(
+                    db,
+                    company_id=sess.company_id,
+                    survey_id=sv.survey_id,
+                    location_survey_id=qr.location_survey_id,
+                )
             except Exception:
                 logger.exception(
-                    "Flow evaluation failed after survey submit (response_id=%s)",
+                    "Flow metadata check failed (response_id=%s) — defaulting to no-flow path",
                     response_id,
                 )
-                workflow_action = None
-        else:
-            workflow_action = None
-    else:
-        workflow_action = None
+                meta = FlowExecutionMetadata(
+                    has_active_flow=False, has_redirect_action=False, requires_ai_sentiment=False
+                )
+
+            common_kwargs: dict[str, Any] = dict(
+                company_id=sess.company_id,
+                survey_id=sv.survey_id,
+                survey_response_id=response_id,
+                location_survey_id=qr.location_survey_id,
+                qr_code_id=sess.qr_code_id,
+            )
+
+            if not meta.has_active_flow:
+                # a. No active non-broken flow — redirect to thank-you page.
+                pass
+
+            elif not meta.has_redirect_action and not meta.requires_ai_sentiment:
+                # has flow, no redirect, no AI — run flow in background.
+                background_tasks.add_task(run_flow_background, **common_kwargs)
+
+            elif not meta.has_redirect_action and meta.requires_ai_sentiment:
+                # b. No redirect, flow uses AI sentiment — run AI first then flow in background (sequential).
+                background_tasks.add_task(run_ai_then_flow_background, **common_kwargs)
+
+            elif meta.has_redirect_action and not meta.requires_ai_sentiment:
+                # c. Has redirect, no AI sentiment — fire AI in background, run flow sync for redirect URL.
+                background_tasks.add_task(run_ai_background, survey_response_id=response_id)
+                try:
+                    workflow_action = execute_flows_for_response(db, **common_kwargs)
+                except Exception:
+                    logger.exception(
+                        "Sync flow execution failed (response_id=%s)", response_id
+                    )
+
+            else:
+                # d. Has redirect and AI sentiment — run AI sync first, then run flow sync.
+                try:
+                    run_ai_analysis_for_response(db, saved)
+                except Exception:
+                    logger.exception(
+                        "Sync AI analysis failed (response_id=%s)", response_id
+                    )
+                try:
+                    workflow_action = execute_flows_for_response(db, **common_kwargs)
+                except Exception:
+                    logger.exception(
+                        "Sync flow execution failed (response_id=%s)", response_id
+                    )
 
     company = (
         db.query(CompanyORM)

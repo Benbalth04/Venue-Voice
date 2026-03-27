@@ -7,6 +7,7 @@ import json
 import logging
 import os
 from typing import Any
+import time
 
 from openai import OpenAI, APITimeoutError, APIError
 
@@ -38,7 +39,8 @@ SYSTEM_PROMPT = (
 
 _MAX_USER_CHARS = 12_000
 _DEFAULT_MODEL = "gpt-4o-mini"
-_ATTEMPTS = 2
+_ATTEMPTS = 4  # 1 initial attempt + 3 retries
+_BASE_BACKOFF_SEC = 1.0
 _TIMEOUT_SEC = 5.0
 
 _client: OpenAI | None = None
@@ -146,6 +148,10 @@ def analyze_sentiment(text: str) -> tuple[dict[str, Any], str]:
                 _ATTEMPTS,
                 e,
             )
+        if attempt < _ATTEMPTS - 1:
+            backoff = _BASE_BACKOFF_SEC * (2 ** attempt)
+            logger.debug("Backing off %.1fs before retry (attempt %s/%s)", backoff, attempt + 1, _ATTEMPTS)
+            time.sleep(backoff)
 
     msg = str(last_err) if last_err else "unknown error"
     raise ExternalAPIError(

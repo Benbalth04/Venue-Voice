@@ -1106,6 +1106,13 @@ class FlowTestResponse(BaseModel):
     actions: list[FlowActionResult] = Field(default_factory=list)
 
 
+class FlowRunActionResponse(BaseModel):
+    id: uuid.UUID
+    action_type: str
+    config: dict[str, Any]
+    created_at: datetime
+
+
 class FlowRunResponse(BaseModel):
     id: uuid.UUID
     company_id: uuid.UUID
@@ -1116,10 +1123,11 @@ class FlowRunResponse(BaseModel):
     response_id: uuid.UUID | None
     success: bool
     location_survey_id: uuid.UUID | None
+    location_id: uuid.UUID | None = None
     location_name: str | None = None
     qr_code_id: uuid.UUID | None
     qr_code_title: str | None = None
-    action_executed: str | None
+    actions: list[FlowRunActionResponse] = Field(default_factory=list)
     runtime_ms: int | None = None
     execution_trace: dict[str, Any]
     created_at: datetime

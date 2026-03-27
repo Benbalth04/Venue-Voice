@@ -136,6 +136,7 @@ CREATE TABLE IF NOT EXISTS question_type_settings (
 --------------------------------------------------
 CREATE TABLE questions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    stable_question_id UUID NOT NULL DEFAULT uuid_generate_v4(),
     survey_version_id UUID NOT NULL REFERENCES survey_versions(id) ON DELETE CASCADE,
     question_key TEXT NOT NULL,
     question_text TEXT NOT NULL,
@@ -145,6 +146,7 @@ CREATE TABLE questions (
     is_numeric BOOLEAN NOT NULL DEFAULT FALSE,
     deleted_at TIMESTAMP NULL
 );
+CREATE INDEX idx_questions_stable_question_id ON questions(stable_question_id);
 
 --------------------------------------------------
 -- QR CODES
@@ -263,7 +265,7 @@ CREATE TABLE survey_responses (
 CREATE TABLE survey_response_answers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     survey_response_id UUID NOT NULL REFERENCES survey_responses(id) ON DELETE CASCADE,
-    question_id UUID REFERENCES questions(id) ON DELETE SET NULL,
+    question_id UUID NULL,
     text_value TEXT,
     numeric_value NUMERIC,
     created_at TIMESTAMP DEFAULT NOW(),
@@ -280,7 +282,7 @@ CREATE TABLE survey_response_answers (
 CREATE TABLE survey_response_photos (
     id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     survey_response_id  UUID NOT NULL REFERENCES survey_responses(id) ON DELETE CASCADE,
-    question_id         UUID REFERENCES questions(id) ON DELETE SET NULL,
+    question_id         UUID NULL,
     storage_path        TEXT NOT NULL,
     mime_type           TEXT NOT NULL,
     file_size_bytes     INTEGER NOT NULL,
@@ -335,7 +337,7 @@ CREATE TABLE rule_conditions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     rule_id UUID NOT NULL REFERENCES rules(id) ON DELETE CASCADE,
     condition_type TEXT NOT NULL CHECK (condition_type IN ('rating', 'nps', 'sentiment', 'not_empty', 'checkbox', 'multiple_choice', 'yes_no')),
-    question_id UUID NULL REFERENCES questions(id) ON DELETE SET NULL,
+    question_id UUID NULL,
     operator TEXT NULL CHECK (operator IS NULL OR operator IN ('lt', 'lte', 'eq', 'gte', 'gt', 'is')),
     value TEXT NULL,
     group_id UUID NULL REFERENCES rule_groups(id) ON DELETE SET NULL,
@@ -433,7 +435,18 @@ CREATE TABLE flow_runs (
     location_survey_id UUID NULL REFERENCES location_surveys(id) ON DELETE SET NULL,
     qr_code_id UUID NULL REFERENCES qr_codes(id) ON DELETE SET NULL,
     execution_trace JSONB NOT NULL,
-    action_executed TEXT,
+    created_at TIMESTAMP DEFAULT NOW(),
+    CONSTRAINT uqflow _flow_runs_flow_response UNIQUE (flow_id, response_id)
+);
+
+--------------------------------------------------
+-- FLOW RUN ACTIONS
+--------------------------------------------------
+CREATE TABLE flow_run_actions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    flow_run_id UUID NOT NULL REFERENCES flow_runs(id) ON DELETE CASCADE,
+    action_type TEXT NOT NULL CHECK (action_type IN ('redirect', 'email')),
+    config JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -459,7 +472,7 @@ CREATE TABLE ai_analysis (
     location_id UUID REFERENCES locations(id),
 
     survey_response_id UUID NOT NULL REFERENCES survey_responses(id) ON DELETE CASCADE,
-    question_id UUID REFERENCES questions(id) ON DELETE SET NULL,
+    question_id UUID NULL,
 
     -- raw input/output
     prompt TEXT NOT NULL,
@@ -581,116 +594,58 @@ INSERT INTO users (id, email, first_name, last_name, onboarding_complete, create
 INSERT INTO companies (id, owner_user_id, name, primary_industry, company_size, location_count, how_heard, thank_you_message, created_at, deleted_at) VALUES
 ('02238978-8b23-408a-a5e4-a0399578229a', '8567b7dc-6049-415e-97d8-740a6483c1b6', 'Test Company', NULL, NULL, 3, NULL, NULL, '2026-03-15 05:56:49.03126', NULL);
 
-INSERT INTO locations (id, company_id, name, is_active, state, country, google_business_url, created_at, updated_at, deleted_at) VALUES
-('87ff1d9a-d62a-425f-a378-06bab8438eb7', '02238978-8b23-408a-a5e4-a0399578229a', 'Test Venue', true, NULL, NULL, NULL, '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126', NULL);
+INSERT INTO locations (id, company_id, name, is_active, state, country, google_business_url, created_at, updated_at, deleted_at) VALUES 
+('87ff1d9a-d62a-425f-a378-06bab8438eb7', '02238978-8b23-408a-a5e4-a0399578229a', 'Main Venue', true, NULL, NULL, 'https://youtube.com.au', '2026-03-15 05:56:49.03126', '2026-03-27 05:21:23.422119', NULL);
 
-INSERT INTO surveys (id, company_id, name, status, latest_version, created_at, updated_at, deleted_at) VALUES
-('a3be873f-0271-48e4-84a1-ba8b26f15d14', '02238978-8b23-408a-a5e4-a0399578229a', 'Survey 1', 'active', 1, '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126', NULL);
+INSERT INTO surveys (id, company_id, name, status, latest_version, created_at, updated_at, deleted_at) VALUES 
+('3bf0df79-f109-4975-a40a-4f0bb4e128af', '02238978-8b23-408a-a5e4-a0399578229a', 'Survey 1', 'active', 2, '2026-03-27 05:17:51.882525', '2026-03-27 05:18:54.263651', NULL);
 
-INSERT INTO location_surveys (id, location_id, survey_id, is_active, start_date, end_date, created_at, updated_at, deleted_at) VALUES
-('bf0c4580-ebee-4a2e-a7f0-14663d3316c0', '87ff1d9a-d62a-425f-a378-06bab8438eb7', 'a3be873f-0271-48e4-84a1-ba8b26f15d14', true, '2026-03-15 05:56:49.03126', NULL, '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126', NULL);
+INSERT INTO location_surveys (id, location_id, survey_id, is_active, start_date, end_date, created_at, updated_at, deleted_at) VALUES 
+('6491b89d-bba6-4226-878d-adbc585b3f5e', '87ff1d9a-d62a-425f-a378-06bab8438eb7', '3bf0df79-f109-4975-a40a-4f0bb4e128af', true, '2026-03-27 05:21:00', NULL, '2026-03-27 05:21:31.497525', '2026-03-27 05:21:31.497525', NULL);
 
-INSERT INTO qr_codes (id, company_id, title, is_active, location_survey_id, location_id, redirect_url, has_logo, created_at, updated_at, deleted_at) VALUES
-('372b0789-0df2-4086-9523-d6799fa5509b', '02238978-8b23-408a-a5e4-a0399578229a', 'Default QR Code', true, 'bf0c4580-ebee-4a2e-a7f0-14663d3316c0', '87ff1d9a-d62a-425f-a378-06bab8438eb7', 'http://localhost:3000/r/372b0789-0df2-4086-9523-d6799fa5509b', true, '2026-03-15 05:56:49.03126', '2026-03-15 05:56:49.03126', NULL);
+INSERT INTO qr_codes (id, company_id, title, is_active, location_survey_id, location_id, redirect_url, has_logo, created_at, updated_at, deleted_at) VALUES 
+('9b32692f-3ed4-4c48-89fa-f076b57e42c3', '02238978-8b23-408a-a5e4-a0399578229a', 'Main Venue QR Code 1', true, '6491b89d-bba6-4226-878d-adbc585b3f5e', '87ff1d9a-d62a-425f-a378-06bab8438eb7', 'http://localhost:3000/r/9b32692f-3ed4-4c48-89fa-f076b57e42c3', true, '2026-03-27 05:21:41.657327', '2026-03-27 05:21:41.657327', NULL);
 
-INSERT INTO qr_code_assets (id, qr_code_id, format, storage_path, public_url, created_at) VALUES
-('0872ff7f-4853-464e-94d7-53ef1ca40d43', '372b0789-0df2-4086-9523-d6799fa5509b', 'svg', '372b0789-0df2-4086-9523-d6799fa5509b/qr.svg', 'https://hriennuneldnfctmvjbu.supabase.co/storage/v1/object/public/qr_codes/372b0789-0df2-4086-9523-d6799fa5509b/qr.svg', '2026-03-15 05:56:49.03126'),
-('98d669ad-2613-434c-b48e-ca36b993c0a5', '372b0789-0df2-4086-9523-d6799fa5509b', 'png', '372b0789-0df2-4086-9523-d6799fa5509b/qr.png', 'https://hriennuneldnfctmvjbu.supabase.co/storage/v1/object/public/qr_codes/372b0789-0df2-4086-9523-d6799fa5509b/qr.png', '2026-03-15 05:56:49.03126'),
-('2874ccd8-9b4b-4476-ba65-61bfebf54b9e', '372b0789-0df2-4086-9523-d6799fa5509b', 'jpeg', '372b0789-0df2-4086-9523-d6799fa5509b/qr.jpeg', 'https://hriennuneldnfctmvjbu.supabase.co/storage/v1/object/public/qr_codes/372b0789-0df2-4086-9523-d6799fa5509b/qr.jpeg', '2026-03-24 03:06:42.023949');
+INSERT INTO survey_versions (id, survey_id, version_number, schema_json, created_by, created_at, theme_settings, deleted_at) VALUES 
+('7efc9d9c-9b40-49cf-aa0b-efa9da6ac69b', '3bf0df79-f109-4975-a40a-4f0bb4e128af', 1, '{"theme": {"textColor": "#1E1E1E", "fontFamily": "Inter", "primaryColor": "#7C3AED", "backgroundColor": "#FFFFFF"}, "title": {"text": "Customer Feedback", "style": {"size": "h1"}}, "version": 1, "settings": {"contentAlign": "left", "showProgressBar": true, "progressBarColor": "#7C3AED"}, "subtitle": {"text": "Tell us about your experience", "style": {"size": "body"}}, "questions": []}', '8567b7dc-6049-415e-97d8-740a6483c1b6', '2026-03-27 05:17:51.882525', '{"font": "Inter", "primary_color": "#7C3AED", "background_color": "#FFFFFF", "content_alignment": "left", "show_progress_bar": true, "progress_bar_color": "#7C3AED"}', NULL),
+('b73b405c-a8f0-4e76-ab9c-bc119fb10ac2', '3bf0df79-f109-4975-a40a-4f0bb4e128af', 2, '{"theme": {"textColor": "#1E1E1E", "fontFamily": "Inter", "primaryColor": "#7C3AED", "backgroundColor": "#FFFFFF"}, "title": {"text": "Customer Feedback", "style": {"size": "h1"}}, "version": 143, "settings": {"contentAlign": "left", "showProgressBar": true, "progressBarColor": "#7C3AED"}, "subtitle": {"text": "Tell us about your experience", "style": {"size": "body"}}, "questions": [{"id": "ca07b7a6-8ecd-4917-adad-97abda063a20", "type": "star", "title": {"text": "How would you rate your experience today?", "style": {"size": "h2"}}, "version": 52, "optional": false, "settings": {"optional": false, "starCount": 5, "text_size": "medium", "selected_colour": "#7C3AED", "title_alignment": "inherit", "action_alignment": "left"}, "description": {"text": "", "style": {"size": "body"}}}, {"id": "89159a1b-7694-47ef-90cb-673aa24d465c", "type": "nps", "title": {"text": "How likely are you to recommend us?", "style": {"size": "h2"}}, "version": 50, "optional": false, "settings": {"optional": false, "max_label": "Extremely likely", "max_score": 10, "min_label": "Not likely", "text_size": "medium", "selected_colour": "#7C3AED", "title_alignment": "inherit", "action_alignment": "left"}, "description": {"text": "", "style": {"size": "body"}}}, {"id": "1a942a63-9662-4c3f-96f1-6011f61834ca", "type": "text", "title": {"text": "Anything else you would like to add?", "style": {"size": "h2"}}, "version": 40, "optional": true, "settings": {"optional": false, "text_size": "medium", "placeholder": "Type your answer...", "title_alignment": "inherit", "action_alignment": "left"}, "description": {"text": "", "style": {"size": "body"}}}]}', '8567b7dc-6049-415e-97d8-740a6483c1b6', '2026-03-27 05:18:51.146895', '{"font": "Inter", "primary_color": "#7C3AED", "background_color": "#FFFFFF", "content_alignment": "left", "show_progress_bar": true, "progress_bar_color": "#7C3AED"}', NULL);
 
+INSERT INTO flows (id, company_id, name, description, is_active, status, broken_reasons, survey_id, created_at, updated_at, deleted_at) VALUES 
+('f1a7d3be-4d74-4e95-a647-96dc0e54a268', '02238978-8b23-408a-a5e4-a0399578229a', 'Check for negative review', NULL, true, 'active', '[]', '3bf0df79-f109-4975-a40a-4f0bb4e128af', '2026-03-27 05:22:31.155757', '2026-03-27 05:22:31.155757', NULL);
 
-INSERT INTO survey_versions (id, survey_id, version_number, schema_json, created_by, created_at, theme_settings) VALUES
-(
-'9d781c15-9b16-4920-bfee-9577fd19320b',
-'a3be873f-0271-48e4-84a1-ba8b26f15d14',
-1,
-$$
-{
-  "theme": {
-    "textColor": "#1E1E1E",
-    "fontFamily": "Inter",
-    "primaryColor": "#7C3AED",
-    "backgroundColor": "#FFFFFF"
-  },
-  "title": {
-    "text": "Customer Feedback",
-    "style": {
-      "size": "h1"
-    }
-  },
-  "version": 57,
-  "settings": {
-    "contentAlign": "left",
-    "showProgressBar": true,
-    "progressBarColor": "#7C3AED"
-  },
-  "subtitle": {
-    "text": "Tell us about your experience",
-    "style": {
-      "size": "body"
-    }
-  },
-  "questions": [
-    {
-      "id": "53fc5573-5d03-4ca1-8c15-0f70bc0b177f",
-      "type": "star",
-      "title": {
-        "text": "How would you rate our service?",
-        "style": {
-          "size": "h2"
-        }
-      },
-      "version": 56,
-      "optional": false,
-      "settings": {
-        "optional": false,
-        "starCount": 5,
-        "text_size": "medium",
-        "selected_colour": "#7C3AED",
-        "title_alignment": "inherit",
-        "action_alignment": "left"
-      },
-      "description": {
-        "text": "",
-        "style": {
-          "size": "body"
-        }
-      }
-    }
-  ]
-}
-$$::jsonb,
-'8567b7dc-6049-415e-97d8-740a6483c1b6',
-'2026-03-20 04:50:57.021003',
-$$
-{
-  "font": "Inter",
-  "primary_color": "#7C3AED",
-  "background_color": "#FFFFFF",
-  "content_alignment": "left",
-  "show_progress_bar": true,
-  "progress_bar_color": "#7C3AED"
-}
-$$::jsonb
-);
+INSERT INTO flow_location_surveys (id, flow_id, location_survey_id) VALUES 
+('5d7e64b7-835b-4edc-8a03-afc591a9808e', 'f1a7d3be-4d74-4e95-a647-96dc0e54a268', '6491b89d-bba6-4226-878d-adbc585b3f5e');
 
-INSERT INTO questions (id, survey_version_id, question_key, question_text, question_type, config, position, is_numeric) VALUES
-(
-    '80b07b18-1d33-424d-a73d-37eeb06139f8',
-    '9d781c15-9b16-4920-bfee-9577fd19320b', 
-    '53fc5573-5d03-4ca1-8c15-0f70bc0b177f', 
-    'How would you rate our service?',
-    'star', 
-    $$
-    {
-    "optional": false,
-    "starCount": 5,
-    "text_size": "medium",
-    "selected_colour": "#7C3AED",
-    "title_alignment": "inherit",
-    "action_alignment": "left"
-    }
-    $$::jsonb,
-    0, 
-    true
-);
+INSERT INTO rules (id, company_id, name, description, operator, survey_id, status, broken_reasons, created_at, updated_at, deleted_at) VALUES 
+('3ce94644-e658-429b-b64a-6ed6d0ae39f4', '02238978-8b23-408a-a5e4-a0399578229a', 'Poor Experience', 'Experience rating less than 3, or NPS less than 5, or negative text sentiment', 'OR', '3bf0df79-f109-4975-a40a-4f0bb4e128af', 'active', '[]', '2026-03-27 05:20:33.236423', '2026-03-27 05:20:33.236423', NULL);
+
+INSERT INTO flow_nodes (id, flow_id, parent_id, node_type, rule_id, branch_type, action_type, action_config, "position", created_at) VALUES 
+('89ddc043-613b-41ba-912c-3430228ae1e3', 'f1a7d3be-4d74-4e95-a647-96dc0e54a268', NULL, 'rule', '3ce94644-e658-429b-b64a-6ed6d0ae39f4', NULL, NULL, 'null', 0, '2026-03-27 05:22:31.155757'),
+('197d214e-e0b5-4d2c-a7d6-26a81c090308', 'f1a7d3be-4d74-4e95-a647-96dc0e54a268', '89ddc043-613b-41ba-912c-3430228ae1e3', 'branch', NULL, NULL, NULL, '{"match_type": "all", "rule_conditions": [{"rule_id": "3ce94644-e658-429b-b64a-6ed6d0ae39f4", "expected": true}]}', 1, '2026-03-27 05:22:31.155757'),
+('6433248c-7d5f-4c08-a05f-9c3518642bf1', 'f1a7d3be-4d74-4e95-a647-96dc0e54a268', '197d214e-e0b5-4d2c-a7d6-26a81c090308', 'action', NULL, 'TRUE', 'email', '{"target": "location_notification_groups"}', 2, '2026-03-27 05:22:31.155757'),
+('b1927031-aac3-4dc7-95b6-3fda92d1bc61', 'f1a7d3be-4d74-4e95-a647-96dc0e54a268', '197d214e-e0b5-4d2c-a7d6-26a81c090308', 'action', NULL, 'FALSE', 'redirect', '{"target": "google_business_url"}', 3, '2026-03-27 05:22:31.155757');
+
+INSERT INTO notification_groups (id, company_id, name, created_at, updated_at, deleted_at) VALUES 
+('6a9b031b-be96-4a88-9568-34dccf998245', '02238978-8b23-408a-a5e4-a0399578229a', 'Poor reviews notification group', '2026-03-27 05:20:55.499181', '2026-03-27 05:20:55.536055', NULL);
+
+INSERT INTO location_notification_groups (id, location_id, group_id) VALUES 
+('3e6c40fe-6456-4ffa-b965-ef1e3d5c6558', '87ff1d9a-d62a-425f-a378-06bab8438eb7', '6a9b031b-be96-4a88-9568-34dccf998245');
+
+INSERT INTO notification_group_members (id, group_id, name, email, created_at, deleted_at) VALUES 
+('62630fa2-78cc-47d1-81a4-a37fe973b758', '6a9b031b-be96-4a88-9568-34dccf998245', 'Ben 1', 'benbalthes@gmail.com', '2026-03-27 05:20:55.522992', NULL),
+('1cac56d8-47e2-4b35-bcc2-13e06f5bc424', '6a9b031b-be96-4a88-9568-34dccf998245', 'Ben 2', 'benbalthess@gmail.com', '2026-03-27 05:20:55.522992', NULL);
+
+INSERT INTO qr_code_assets (id, qr_code_id, format, storage_path, public_url, created_at) VALUES 
+('ca7d0afe-71c5-45f1-ba66-5ae343b38796', '9b32692f-3ed4-4c48-89fa-f076b57e42c3', 'svg', '9b32692f-3ed4-4c48-89fa-f076b57e42c3/qr.svg', 'https://hriennuneldnfctmvjbu.supabase.co/storage/v1/object/public/qr_codes/9b32692f-3ed4-4c48-89fa-f076b57e42c3/qr.svg', '2026-03-27 05:21:41.657327'),
+ ('1eb01e44-203a-489a-ab32-e21ab7195038', '9b32692f-3ed4-4c48-89fa-f076b57e42c3', 'png', '9b32692f-3ed4-4c48-89fa-f076b57e42c3/qr.png', 'https://hriennuneldnfctmvjbu.supabase.co/storage/v1/object/public/qr_codes/9b32692f-3ed4-4c48-89fa-f076b57e42c3/qr.png', '2026-03-27 05:21:41.657327'),
+ ('d1161adf-0d3d-4bd8-b600-45c74949fd5b', '9b32692f-3ed4-4c48-89fa-f076b57e42c3', 'jpeg', '9b32692f-3ed4-4c48-89fa-f076b57e42c3/qr.jpeg', 'https://hriennuneldnfctmvjbu.supabase.co/storage/v1/object/public/qr_codes/9b32692f-3ed4-4c48-89fa-f076b57e42c3/qr.jpeg', '2026-03-27 05:21:41.657327');
+
+INSERT INTO questions (id, stable_question_id, survey_version_id, question_key, question_text, question_type, config, "position", is_numeric, deleted_at) VALUES 
+('7fd86603-d3b0-41a1-879f-803f68474f2c', 'b2644512-4db1-429c-a433-93549285ba20', 'b73b405c-a8f0-4e76-ab9c-bc119fb10ac2', 'ca07b7a6-8ecd-4917-adad-97abda063a20', 'How would you rate your experience today?', 'star', '{"optional": false, "starCount": 5, "text_size": "medium", "selected_colour": "#7C3AED", "title_alignment": "inherit", "action_alignment": "left"}', 0, true, NULL),
+('934f5d3c-89f2-4d5b-9d9a-ed91220910c5', '3707bc0f-558f-48a7-afd7-b205eb26ca47', 'b73b405c-a8f0-4e76-ab9c-bc119fb10ac2', '89159a1b-7694-47ef-90cb-673aa24d465c', 'How likely are you to recommend us?', 'nps', '{"optional": false, "max_label": "Extremely likely", "max_score": 10, "min_label": "Not likely", "text_size": "medium", "selected_colour": "#7C3AED", "title_alignment": "inherit", "action_alignment": "left"}', 1, true, NULL),
+('edf8937b-473f-4005-acb1-0c2dfbba75dc', 'ffea322b-be78-4e65-b282-3e7ea72ecf92', 'b73b405c-a8f0-4e76-ab9c-bc119fb10ac2', '1a942a63-9662-4c3f-96f1-6011f61834ca', 'Anything else you would like to add?', 'text', '{"optional": false, "text_size": "medium", "placeholder": "Type your answer...", "title_alignment": "inherit", "action_alignment": "left"}', 2, false, NULL);
+
+INSERT INTO rule_conditions (id, rule_id, condition_type, question_id, operator, value, group_id, created_at, updated_at, deleted_at) VALUES 
+('10f0e9f4-3c9a-4521-af58-c7c0d32d4f4f', '3ce94644-e658-429b-b64a-6ed6d0ae39f4', 'rating', 'b2644512-4db1-429c-a433-93549285ba20', 'lt', '3', NULL, '2026-03-27 05:20:33.236423', '2026-03-27 05:20:33.236423', NULL),
+('ace15df7-59a6-4165-b722-4b45d069fb7e', '3ce94644-e658-429b-b64a-6ed6d0ae39f4', 'nps', '3707bc0f-558f-48a7-afd7-b205eb26ca47', 'lt', '5', NULL, '2026-03-27 05:20:33.236423', '2026-03-27 05:20:33.236423', NULL),
+('54113335-740b-47ad-9216-0d34eace8ec1', '3ce94644-e658-429b-b64a-6ed6d0ae39f4', 'sentiment', 'ffea322b-be78-4e65-b282-3e7ea72ecf92', 'is', 'negative', NULL, '2026-03-27 05:20:33.236423', '2026-03-27 05:20:33.236423', NULL);

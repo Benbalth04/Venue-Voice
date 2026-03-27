@@ -632,6 +632,13 @@ export interface FlowTestResponse {
   }>
 }
 
+export interface FlowRunAction {
+  id: string
+  action_type: "redirect" | "email"
+  config: Record<string, unknown>
+  created_at: string
+}
+
 export interface FlowRunResponse {
   id: string
   company_id: string
@@ -642,10 +649,11 @@ export interface FlowRunResponse {
   response_id: string | null
   success: boolean
   location_survey_id: string | null
+  location_id: string | null
   location_name: string | null
   qr_code_id: string | null
   qr_code_title: string | null
-  action_executed: string | null
+  actions: FlowRunAction[]
   runtime_ms: number | null
   execution_trace: Record<string, unknown>
   created_at: string

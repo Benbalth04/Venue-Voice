@@ -403,7 +403,8 @@ def get_response_detail(
         .order_by(QuestionORM.position)
         .all()
     )
-    q_by_id: dict[str, QuestionORM] = {str(q.id): q for q in questions}
+    # q_by_id is keyed by stable_question_id (what answer.question_id stores)
+    q_by_id: dict[str, QuestionORM] = {str(q.stable_question_id): q for q in questions}
     q_by_key: dict[str, QuestionORM] = {q.question_key: q for q in questions}
 
     # Fetch normalized answers

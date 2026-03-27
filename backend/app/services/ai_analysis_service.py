@@ -77,7 +77,8 @@ def run_ai_analysis_for_response(db: Session, survey_response: SurveyResponseORM
     if not ai_questions:
         return
 
-    ai_qids: set[uuid.UUID] = {q.id for q in ai_questions}
+    # Use stable_question_id to match answers (which also store stable_question_id)
+    ai_qids: set[uuid.UUID] = {q.stable_question_id for q in ai_questions}
 
     answers = (
         db.query(SurveyResponseAnswerORM)

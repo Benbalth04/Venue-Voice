@@ -2,7 +2,27 @@
 
 import { useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
-import { AlertTriangle, ArrowRight, Loader2, Pencil, Plus, Save, ToggleLeft, ToggleRight, Trash2, X } from "lucide-react"
+import {
+  AlertTriangle,
+  ArrowRight,
+  ArrowUpRight,
+  CheckCircle2,
+  ChevronDown,
+  Clock,
+  ExternalLink,
+  Loader2,
+  Mail,
+  MapPin,
+  Pencil,
+  Plus,
+  QrCode,
+  Save,
+  ToggleLeft,
+  ToggleRight,
+  Trash2,
+  X,
+  XCircle,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner"
 import { Card } from "@/components/ui/card"
@@ -11,11 +31,14 @@ import { SingleSelectDropdown } from "@/components/ui/DropdownSelect"
 import { supabase } from "@/lib/supabase/client"
 
 import { draftFromFlow, preorderDraftNodesWithPositions } from "@/components/flow-editor/draftUtils"
+import { FlowExecutionPreview } from "@/components/flow-editor/FlowExecutionPreview"
 import {
   deleteSurveyFlow,
   extractErrorMessage,
+  fetchFlow,
   fetchFlowRuns,
   fetchFlows,
+  fetchNotificationGroups,
   fetchRuleBundleDirect,
   fetchSurveys,
   isStaleObjectError,
@@ -23,11 +46,110 @@ import {
   updateSurveyFlow,
   type FlowPayload,
   type FlowResponse,
+  type FlowRunAction,
   type FlowRunResponse,
   type FlowUpdatePayload,
+  type NotificationGroupResponse,
   type RuleBundleData,
   type SurveySummary,
 } from "@/lib/api/client"
+import type { RuleInfo } from "@/components/flow-editor/buildReadOnlyCanvas"
+
+function formatDateTime(iso: string) {
+  const d = new Date(iso)
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+}
+
+function ActionPill({
+  action,
+  locationId,
+  notificationGroups,
+}: {
+  action: FlowRunAction
+  locationId: string | null
+  notificationGroups: NotificationGroupResponse[]
+}) {
+  const [open, setOpen] = useState(false)
+  const isRedirect = action.action_type === "redirect"
+
+  // Build the list of detail lines to show in the popover
+  const detailLines: string[] = []
+  if (isRedirect) {
+    const url = action.config.url as string | null | undefined
+    detailLines.push(url ? url : "Google Business URL")
+  } else {
+    const target = action.config.email_target as string | undefined
+    const email = action.config.recipient_email as string | null | undefined
+    const groupId = action.config.notification_group_id as string | null | undefined
+
+    if (target === "custom_email" && email) {
+      detailLines.push(email)
+    } else if (target === "notification_group" && groupId) {
+      const group = notificationGroups.find((g) => g.id === groupId)
+      detailLines.push(group?.name ?? groupId)
+    } else {
+      // location_notification_groups — show every group tied to this location
+      const locationGroups = locationId
+        ? notificationGroups.filter((g) => g.location_ids.includes(locationId))
+        : []
+      if (locationGroups.length > 0) {
+        for (const g of locationGroups) detailLines.push(g.name)
+      } else {
+        detailLines.push("Location notification groups")
+      }
+    }
+  }
+
+  return (
+    <div className="relative">
+      {open ? (
+        <div
+          className="fixed inset-0 z-10"
+          onClick={(e) => {
+            e.stopPropagation()
+            setOpen(false)
+          }}
+        />
+      ) : null}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          setOpen((v) => !v)
+        }}
+        className="relative z-20 inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-medium text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-100"
+      >
+        {isRedirect ? (
+          <ArrowUpRight className="h-3 w-3 text-violet-500" />
+        ) : (
+          <Mail className="h-3 w-3 text-emerald-600" />
+        )}
+        {isRedirect ? "Redirect" : "Email"}
+        <ChevronDown className="h-3 w-3 text-zinc-400" />
+      </button>
+      {open ? (
+        <div className="absolute left-0 top-full z-30 mt-1 w-max min-w-[220px] rounded-xl border border-zinc-200 bg-white p-3 shadow-xl">
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+            {isRedirect ? "Redirect target" : "Email recipients"}
+          </p>
+          <div className="space-y-1">
+            {detailLines.map((line, i) => (
+              <p key={i} className="whitespace-nowrap text-sm text-zinc-900">
+                {line}
+              </p>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
 
 function truncateDescription(value: string | null, maxLength = 120) {
   if (!value?.trim()) return ""
@@ -293,9 +415,13 @@ export default function FlowsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [brokenRuleIds, setBrokenRuleIds] = useState<Set<string>>(new Set())
+  const [rulesById, setRulesById] = useState<Map<string, RuleInfo>>(new Map())
+  const [notificationGroups, setNotificationGroups] = useState<NotificationGroupResponse[]>([])
   const [createOpen, setCreateOpen] = useState(false)
   const [editFlow, setEditFlow] = useState<FlowResponse | null>(null)
   const [editSaving, setEditSaving] = useState(false)
+  const [previewState, setPreviewState] = useState<{ run: FlowRunResponse; flow: FlowResponse } | null>(null)
+  const [previewLoading, setPreviewLoading] = useState<string | null>(null)
 
   async function getToken() {
     const {
@@ -309,29 +435,34 @@ export default function FlowsPage() {
       const token = await getToken()
       if (!token) return
       try {
-        const [surveyRows, flowRows, flowRunRows] = await Promise.all([
+        const [surveyRows, flowRows, flowRunRows, notifGroups] = await Promise.all([
           fetchSurveys(token),
           fetchFlows(token),
           fetchFlowRuns(token),
+          fetchNotificationGroups(token),
         ])
         setSurveys(surveyRows)
         setFlows(flowRows)
         setFlowRuns(flowRunRows)
+        setNotificationGroups(notifGroups)
 
-        // Fetch rule bundles for each unique survey to find broken rules
+        // Fetch rule bundles for each unique survey to find broken rules + build rulesById map
         const uniqueSurveyIds = [...new Set(flowRows.map((f) => f.survey_id))]
         const results = await Promise.allSettled(
           uniqueSurveyIds.map((sid) => fetchRuleBundleDirect(token, sid) as Promise<RuleBundleData>),
         )
         const broken = new Set<string>()
+        const ruleMap = new Map<string, RuleInfo>()
         for (const r of results) {
           if (r.status === "fulfilled") {
             for (const rule of r.value.rules) {
+              ruleMap.set(rule.id, { name: rule.name, description: rule.description ?? null })
               if (rule.status === "broken") broken.add(rule.id)
             }
           }
         }
         setBrokenRuleIds(broken)
+        setRulesById(ruleMap)
       } catch (err) {
         setError(extractErrorMessage(err, "Failed to load flows"))
       } finally {
@@ -416,6 +547,25 @@ export default function FlowsPage() {
     }
   }
 
+  async function openPreview(run: FlowRunResponse) {
+    const existing = flows.find((f) => f.id === run.flow_id)
+    if (existing) {
+      setPreviewState({ run, flow: existing })
+      return
+    }
+    const token = await getToken()
+    if (!token) return
+    setPreviewLoading(run.id)
+    try {
+      const flow = await fetchFlow(token, run.flow_id)
+      setPreviewState({ run, flow })
+    } catch {
+      // flow may have been deleted
+    } finally {
+      setPreviewLoading(null)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex min-h-[220px] items-center justify-center">
@@ -427,6 +577,14 @@ export default function FlowsPage() {
   return (
     <div className="space-y-6">
       {ConfirmDialogRender}
+      {previewState ? (
+        <FlowExecutionPreview
+          run={previewState.run}
+          flow={previewState.flow}
+          rulesById={rulesById}
+          onClose={() => setPreviewState(null)}
+        />
+      ) : null}
       {editFlow ? (
         <EditFlowModal
           flow={editFlow}
@@ -560,25 +718,74 @@ export default function FlowsPage() {
           ) : (
             <div className="space-y-3">
               {flowRuns.slice(0, 8).map((run) => (
-                <details key={run.id} className="rounded-2xl border border-zinc-200 bg-white px-4 py-3">
-                  <summary className="cursor-pointer list-none">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="font-medium text-zinc-900">{run.flow_name}</p>
-                        <p className="mt-1 text-sm text-zinc-500">
-                          {run.survey_name} · {run.location_name ?? "Unknown location"} ·{" "}
-                          {run.action_executed ?? "No action"}
-                        </p>
-                      </div>
-                      <span className="text-sm text-zinc-500">
-                        {run.runtime_ms != null ? `${run.runtime_ms} ms` : "n/a"}
-                      </span>
+                <div key={run.id} className="rounded-2xl border border-zinc-200 bg-white px-4 py-4">
+                  {/* Top row: name + status + run time */}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      {run.success ? (
+                        <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
+                      ) : (
+                        <XCircle className="h-4 w-4 shrink-0 text-red-500" />
+                      )}
+                      <p className="truncate font-semibold text-zinc-900">{run.flow_name}</p>
                     </div>
-                  </summary>
-                  <pre className="mt-3 overflow-x-auto rounded-xl bg-zinc-950 p-3 text-xs text-zinc-100">
-                    {JSON.stringify(run.execution_trace, null, 2)}
-                  </pre>
-                </details>
+                    {run.runtime_ms != null ? (
+                      <span className="shrink-0 rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs font-medium text-zinc-600">
+                        {run.runtime_ms} ms
+                      </span>
+                    ) : null}
+                  </div>
+
+                  {/* Meta */}
+                  <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-zinc-500">
+                    <span className="flex items-center gap-1">
+                      <Clock className="h-3.5 w-3.5 shrink-0" />
+                      {formatDateTime(run.created_at)}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <MapPin className="h-3.5 w-3.5 shrink-0" />
+                      {run.survey_name}
+                      {run.location_name ? ` · ${run.location_name}` : ""}
+                    </span>
+                    {run.qr_code_title ? (
+                      <span className="flex items-center gap-1">
+                        <QrCode className="h-3.5 w-3.5 shrink-0" />
+                        {run.qr_code_title}
+                      </span>
+                    ) : null}
+                  </div>
+
+                  {/* Actions + view button */}
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {run.actions.length > 0 ? (
+                        run.actions.map((action) => (
+                          <ActionPill
+                            key={action.id}
+                            action={action}
+                            locationId={run.location_id}
+                            notificationGroups={notificationGroups}
+                          />
+                        ))
+                      ) : (
+                        <span className="text-xs text-zinc-400">No actions taken</span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      disabled={previewLoading === run.id}
+                      onClick={() => void openPreview(run)}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {previewLoading === run.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      )}
+                      View execution
+                    </button>
+                  </div>
+                </div>
               ))}
             </div>
           )}

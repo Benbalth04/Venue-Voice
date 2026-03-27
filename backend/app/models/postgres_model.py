@@ -279,6 +279,12 @@ class Question(SoftDeleteMixin, Base):
         primary_key=True,
         server_default=func.uuid_generate_v4()
     )
+    stable_question_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=False,
+        server_default=func.uuid_generate_v4(),
+        index=True,
+    )
     survey_version_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("survey_versions.id", ondelete="CASCADE"),
@@ -295,8 +301,6 @@ class Question(SoftDeleteMixin, Base):
     config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     is_numeric: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-
-    rule_conditions = relationship("RuleCondition", back_populates="question")
 
 # --------------------------------------------------
 # ANSWERS (legacy responses - one row per question)
@@ -615,7 +619,6 @@ class SurveyResponseAnswer(SoftDeleteMixin, Base):
     )
     question_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("questions.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -651,7 +654,6 @@ class SurveyResponsePhoto(Base):
     )
     question_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("questions.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -698,7 +700,6 @@ class AIAnalysis(SoftDeleteMixin, Base):
     )
     question_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("questions.id", ondelete="SET NULL"),
         nullable=True,
     )
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
@@ -814,7 +815,6 @@ class RuleCondition(SoftDeleteMixin, Base):
     condition_type: Mapped[str] = mapped_column(String, nullable=False)
     question_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("questions.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -833,7 +833,6 @@ class RuleCondition(SoftDeleteMixin, Base):
 
     rule = relationship("Rule", back_populates="conditions")
     group = relationship("RuleGroup", back_populates="conditions")
-    question = relationship("Question", back_populates="rule_conditions")
 
 
 class NotificationGroup(SoftDeleteMixin, Base):
@@ -1064,14 +1063,18 @@ class FlowRun(Base):
         nullable=True,
     )
     execution_trace: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    action_executed: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("flow_id", "response_id", name="uq_flow_runs_flow_response"),
+    )
 
     flow = relationship("Flow", back_populates="runs")
     response = relationship("SurveyResponse", back_populates="flow_runs")
     location_survey = relationship("LocationSurvey", back_populates="flow_runs")
     qr_code = relationship("QRCode", back_populates="flow_runs")
     email_events = relationship("EmailEvent", back_populates="flow_run")
+    flow_run_actions = relationship("FlowRunAction", back_populates="flow_run", cascade="all, delete-orphan")
 
 
 class EmailEvent(Base):
@@ -1099,6 +1102,27 @@ class EmailEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     flow_run = relationship("FlowRun", back_populates="email_events")
+
+
+class FlowRunAction(Base):
+    __tablename__ = "flow_run_actions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.uuid_generate_v4(),
+    )
+    flow_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("flow_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    action_type: Mapped[str] = mapped_column(String, nullable=False)
+    config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    flow_run = relationship("FlowRun", back_populates="flow_run_actions")
 
 
 # --------------------------------------------------

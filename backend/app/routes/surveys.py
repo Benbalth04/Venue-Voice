@@ -123,8 +123,19 @@ def _extract_theme_settings(schema: dict[str, Any]) -> dict[str, Any] | None:
 # ------------------------------------------------------------------
 # Sync questions from schema to questions table
 # ------------------------------------------------------------------
-def _sync_questions_from_schema(db: Session, survey_version_id: uuid.UUID, schema: dict[str, Any]) -> None:
-    """Populate questions table from survey schema. Replaces existing questions for this version."""
+def _sync_questions_from_schema(
+    db: Session,
+    survey_version_id: uuid.UUID,
+    schema: dict[str, Any],
+    prev_by_key: dict[str, tuple[str, uuid.UUID]] | None = None,
+) -> None:
+    """Populate questions table from survey schema. Replaces existing questions for this version.
+
+    prev_by_key maps question_key -> (question_type, stable_question_id) from the previous version.
+    When provided, questions with the same key AND type inherit the previous stable_question_id so
+    that rules and analytics remain stable across minor edits (title, description, style changes).
+    A new stable_question_id is generated only when a question is new or its type has changed.
+    """
     questions_data = schema.get("questions")
     if not isinstance(questions_data, list):
         return
@@ -150,13 +161,22 @@ def _sync_questions_from_schema(db: Session, survey_version_id: uuid.UUID, schem
 
         is_numeric = _get_is_numeric_for_type(db, q_type)
 
-
         config = q.get("settings") or q.get("config")
         if not isinstance(config, dict):
             config = None
 
+        # Inherit stable_question_id from the previous version when key and type match.
+        # A type change generates a fresh stable ID to properly invalidate dependent rules.
+        stable_id: uuid.UUID
+        if prev_by_key:
+            prev_type, prev_stable = prev_by_key.get(str(q_id), (None, None))
+            stable_id = prev_stable if (prev_stable is not None and prev_type == q_type) else uuid.uuid4()
+        else:
+            stable_id = uuid.uuid4()
+
         db.add(
             QuestionORM(
+                stable_question_id=stable_id,
                 survey_version_id=survey_version_id,
                 question_key=str(q_id),
                 question_text=question_text or "(Untitled)",
@@ -476,6 +496,20 @@ def save_survey_version(
     if current_sv.schema_json == payload.survey_schema_json:
         return _to_survey_with_schema(survey, current_sv, last_edited_by)
 
+    # Build stable_question_id map from the current version before creating the new one.
+    prev_questions = (
+        db.query(QuestionORM)
+        .filter(
+            QuestionORM.survey_version_id == current_sv.id,
+            QuestionORM.deleted_at.is_(None),
+        )
+        .all()
+    )
+    prev_by_key: dict[str, tuple[str, uuid.UUID]] = {
+        str(q.question_key): (q.question_type, q.stable_question_id)
+        for q in prev_questions
+    }
+
     new_version_number = survey.latest_version + 1
     theme_settings = _extract_theme_settings(payload.survey_schema_json)
     sv = SurveyVersionORM(
@@ -487,7 +521,7 @@ def save_survey_version(
     )
     db.add(sv)
     db.flush()
-    _sync_questions_from_schema(db, sv.id, payload.survey_schema_json)
+    _sync_questions_from_schema(db, sv.id, payload.survey_schema_json, prev_by_key)
 
     survey.latest_version = new_version_number
     survey.updated_at = datetime.now(timezone.utc)

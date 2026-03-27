@@ -161,3 +161,16 @@ class RuleBrokenError(AppError):
             message="This rule is broken and cannot be evaluated.",
             status_code=400,
         )
+
+
+class FlowExecutionError(AppError):
+    """Raised when a flow run fails due to an internal engine error."""
+
+    def __init__(self, code: str, message: str, details: dict | None = None):
+        super().__init__(
+            category=ErrorCategory.UNKNOWN,
+            code=code,
+            message=message,
+            status_code=500,
+            details=details,
+        )
