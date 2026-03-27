@@ -1,6 +1,6 @@
 "use client"
 
-import { AlertTriangle } from "lucide-react"
+import { AlertTriangle, Plus } from "lucide-react"
 import { SingleSelectDropdown } from "@/components/ui/DropdownSelect"
 import type { FlowActionType, LocationSurveyResponse, NotificationGroupResponse } from "@/lib/api/client"
 import { canonicalParentId, redirectActionCountOnPathFromRootTo } from "../draftUtils"
@@ -14,6 +14,7 @@ export function FlowActionInspector(props: {
   notificationGroups: NotificationGroupResponse[]
   updateSelectedNode: (update: (node: DraftNode) => DraftNode) => void
   onOpenLocationsFrame: () => void
+  onOpenNotificationGroupsFrame: () => void
 }) {
   const {
     draftNodes,
@@ -23,6 +24,7 @@ export function FlowActionInspector(props: {
     notificationGroups,
     updateSelectedNode,
     onOpenLocationsFrame,
+    onOpenNotificationGroupsFrame,
   } = props
 
   const parentId = canonicalParentId(selectedNode.parent_id)
@@ -208,6 +210,14 @@ export function FlowActionInspector(props: {
                   />
                 </div>
               </label>
+              <button
+                type="button"
+                onClick={onOpenNotificationGroupsFrame}
+                className="flex items-center gap-1.5 text-xs font-medium text-violet-600 hover:text-violet-800"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Create or update a notification group
+              </button>
               {(() => {
                 const group = notificationGroups.find(
                   (g) => g.id === String(selectedActionConfig.notification_group_id ?? ""),

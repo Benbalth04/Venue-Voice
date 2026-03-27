@@ -79,7 +79,7 @@ export function FlowEditor() {
   const [flowMissing, setFlowMissing] = useState(false)
   const [isMobileViewport, setIsMobileViewport] = useState(false)
   const [validationHighlightNodeId, setValidationHighlightNodeId] = useState<string | null>(null)
-  const [overlayFrame, setOverlayFrame] = useState<{ type: "rules" | "locations"; nodeId: string } | null>(null)
+  const [overlayFrame, setOverlayFrame] = useState<{ type: "rules" | "locations" | "notification_groups"; nodeId: string } | null>(null)
   const pendingRuleIdRef = useRef<string | null>(null)
   const flowRef = useRef<ReactFlowInstance<Node, Edge> | null>(null)
   const hasFitView = useRef(false)
@@ -271,7 +271,7 @@ export function FlowEditor() {
       } catch {
         // silent — rules refresh on next full load
       }
-    } else if (frameType === "locations") {
+    } else if (frameType === "locations" || frameType === "notification_groups") {
       try {
         const [locationSurveyRows, notifGroupRows] = await Promise.all([
           fetchLocationSurveys(token, { survey_id: draft.survey_id }),
@@ -291,6 +291,10 @@ export function FlowEditor() {
 
   const handleOpenLocationsFrame = useCallback(() => {
     setOverlayFrame({ type: "locations", nodeId: selectedNodeId })
+  }, [selectedNodeId])
+
+  const handleOpenNotificationGroupsFrame = useCallback(() => {
+    setOverlayFrame({ type: "notification_groups", nodeId: selectedNodeId })
   }, [selectedNodeId])
 
   const selectNodeOnCanvas = useCallback((id: string) => {
@@ -626,7 +630,7 @@ export function FlowEditor() {
           <div className="relative flex h-[85vh] w-[90vw] max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
             <div className="flex shrink-0 items-center justify-between border-b border-zinc-200 px-5 py-3">
               <h2 className="text-sm font-semibold text-zinc-900">
-                {overlayFrame.type === "rules" ? "Rules" : "Locations"}
+                {overlayFrame.type === "rules" ? "Rules" : overlayFrame.type === "locations" ? "Locations" : "Notification Groups"}
               </h2>
               <button
                 type="button"
@@ -641,10 +645,12 @@ export function FlowEditor() {
               src={
                 overlayFrame.type === "rules"
                   ? `/dashboard/automations/rules?surveyId=${draft.survey_id}&embedded=1`
-                  : `/dashboard/locations?embedded=1`
+                  : overlayFrame.type === "locations"
+                    ? `/dashboard/locations?embedded=1`
+                    : `/dashboard/automations/notification_groups?embedded=1`
               }
               className="min-h-0 flex-1 border-0"
-              title={overlayFrame.type === "rules" ? "Rules" : "Locations"}
+              title={overlayFrame.type === "rules" ? "Rules" : overlayFrame.type === "locations" ? "Locations" : "Notification Groups"}
             />
           </div>
         </div>
@@ -769,6 +775,7 @@ export function FlowEditor() {
                     notificationGroups={notificationGroups}
                     updateSelectedNode={updateSelectedNode}
                     onOpenLocationsFrame={handleOpenLocationsFrame}
+                    onOpenNotificationGroupsFrame={handleOpenNotificationGroupsFrame}
                   />
                 ) : null}
               </div>
