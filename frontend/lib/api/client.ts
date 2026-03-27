@@ -991,6 +991,13 @@ export async function fetchUser(accessToken: string): Promise<UserResponse> {
   })
 }
 
+export async function confirmEmail(accessToken: string): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(`${BACKEND_BASE}/api/v1/user/confirm-email`, {
+    method: "POST",
+    headers: authHeaders(accessToken),
+  })
+}
+
 export async function setupAccount(
   accessToken: string,
   payload: SetupAccountPayload,

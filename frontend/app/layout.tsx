@@ -27,7 +27,7 @@ const manrope = Manrope({
 });
 
 export const metadata: Metadata = {
-  title: "Venue Voice — Real-Time Customer Feedback for Venues",
+  title: "Venue Voice",
   description: "Capture customer feedback at your venues, analyse sentiment with AI, and automate workflows. Built for hospitality, retail, and multi-location businesses.",
 };
 

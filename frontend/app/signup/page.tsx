@@ -47,6 +47,7 @@ export default function SignupPage() {
         email,
         password,
         options: {
+          emailRedirectTo: "http://localhost:3000/auth/callback",
           data: {
             first_name: firstName,
             last_name: lastName,
@@ -66,13 +67,12 @@ export default function SignupPage() {
       } = await supabase.auth.getSession()
 
       if (session?.access_token) {
-        // User record is auto-bootstrapped on first GET /me (dashboard load)
         router.push("/dashboard")
         return
       }
 
-      // No session yet (likely requires email confirmation).
-      router.push("/login")
+      // No session yet — email confirmation required.
+      router.push(`/verify-email?email=${encodeURIComponent(email)}`)
     } finally {
       setLoading(false)
     }
@@ -180,4 +180,3 @@ export default function SignupPage() {
     </div>
   )
 }
-

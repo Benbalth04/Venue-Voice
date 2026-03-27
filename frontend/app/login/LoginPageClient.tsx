@@ -6,6 +6,7 @@ import Link from "next/link"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { supabase } from "@/lib/supabase/client"
+import { fetchUser } from "@/lib/api/client"
 
 export default function LoginPageClient() {
   const router = useRouter()
@@ -44,8 +45,13 @@ export default function LoginPageClient() {
         return
       }
 
-      // User record is auto-bootstrapped on first GET /me (dashboard load)
-      router.push(next)
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session) {
+        const me = await fetchUser(session.access_token)
+        router.push(me.onboarding_complete ? next : "/onboarding")
+      } else {
+        router.push(next)
+      }
     } finally {
       setLoading(false)
     }

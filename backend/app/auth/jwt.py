@@ -93,13 +93,24 @@ def _ensure_application_user(jwt_payload: dict[str, Any], db: Session,) -> UserO
     sub = jwt_payload.get("sub")
     email = jwt_payload.get("email")
     meta = jwt_payload.get("user_metadata") or {}
+    is_verified = bool(jwt_payload.get("email_confirmed_at"))
 
     if not sub:
         raise AuthError(code="INVALID_TOKEN", message="Invalid token: missing sub")
 
     user_id = uuid.UUID(str(sub))
     existing = db.query(UserORM).filter(UserORM.id == user_id).first()
+
+    if not existing and email:
+        # Fallback: same email already exists under a different Supabase sub
+        existing = db.query(UserORM).filter(UserORM.email == str(email)).first()
+
     if existing:
+        # Sync email_verified status if it changed
+        if is_verified and not existing.email_verified:
+            existing.email_verified = True
+            db.commit()
+            db.refresh(existing)
         return existing
 
     first_name = str(meta.get("first_name") or "User")
@@ -110,6 +121,7 @@ def _ensure_application_user(jwt_payload: dict[str, Any], db: Session,) -> UserO
         first_name=first_name,
         last_name=last_name,
         onboarding_complete=False,
+        email_verified=is_verified,
     )
     db.add(new_user)
     db.commit()

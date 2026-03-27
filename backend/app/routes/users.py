@@ -36,9 +36,23 @@ def get_me(
         first_name=user.first_name,
         last_name=user.last_name,
         onboarding_complete=user.onboarding_complete,
+        email_verified=user.email_verified,
         company_name=company_name,
         user_display_name=display_name,
     )
+
+
+@router.post("/user/confirm-email")
+def confirm_email(
+    user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    """Mark the authenticated user's email as verified. Called by the frontend
+    after Supabase successfully processes an email verification link."""
+    if not user.email_verified:
+        user.email_verified = True
+        db.commit()
+    return {"ok": True}
 
 
 @router.post("/setup-account")

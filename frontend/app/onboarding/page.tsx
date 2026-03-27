@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { setupAccount, fetchUser, extractErrorMessage } from "@/lib/api/client"
 import { useAuth } from "@/contexts/AuthContext"
 import { AuthGuard } from "@/components/auth/AuthGuard"
+import { EmailVerifiedGuard } from "@/components/auth/EmailVerifiedGuard"
 import { OnboardingIncompleteGuard } from "@/components/auth/OnboardingIncompleteGuard"
 
 const INDUSTRY_OPTIONS = [
@@ -291,9 +292,11 @@ function OnboardingPageContent() {
 export default function OnboardingPage() {
   return (
     <AuthGuard>
-      <OnboardingIncompleteGuard>
-        <OnboardingPageContent />
-      </OnboardingIncompleteGuard>
+      <EmailVerifiedGuard>
+        <OnboardingIncompleteGuard>
+          <OnboardingPageContent />
+        </OnboardingIncompleteGuard>
+      </EmailVerifiedGuard>
     </AuthGuard>
   )
 }

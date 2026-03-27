@@ -12,6 +12,7 @@ CREATE TABLE users (
     first_name TEXT NOT NULL,
     last_name TEXT NOT NULL,
     onboarding_complete BOOLEAN DEFAULT FALSE NOT NULL,
+    email_verified BOOLEAN DEFAULT FALSE NOT NULL,
     created_at TIMESTAMP DEFAULT NOW(),
     deleted_at TIMESTAMP NULL
 );
@@ -436,7 +437,7 @@ CREATE TABLE flow_runs (
     qr_code_id UUID NULL REFERENCES qr_codes(id) ON DELETE SET NULL,
     execution_trace JSONB NOT NULL,
     created_at TIMESTAMP DEFAULT NOW(),
-    CONSTRAINT uqflow _flow_runs_flow_response UNIQUE (flow_id, response_id)
+    CONSTRAINT uqflow UNIQUE (flow_id, response_id)
 );
 
 --------------------------------------------------
@@ -588,8 +589,8 @@ INSERT INTO question_type_settings (question_type, setting_key, setting_label, s
 ('photo', 'text_size', 'Text size', 'select', FALSE, 'medium', '["small","medium","large","extra_large"]'::jsonb, NULL)
 ON CONFLICT (question_type, setting_key) DO NOTHING;
 
-INSERT INTO users (id, email, first_name, last_name, onboarding_complete, created_at, deleted_at) VALUES
-('8567b7dc-6049-415e-97d8-740a6483c1b6', 'benbalthes@gmail.com', 'Ben', 'Balthes', true, '2026-03-15 05:56:39.091809', NULL);
+INSERT INTO users (id, email, first_name, last_name, onboarding_complete, email_verified, created_at, deleted_at) VALUES
+('8567b7dc-6049-415e-97d8-740a6483c1b6', 'benbalthes@gmail.com', 'Ben', 'Balthes', true, true, '2026-03-15 05:56:39.091809', NULL);
 
 INSERT INTO companies (id, owner_user_id, name, primary_industry, company_size, location_count, how_heard, thank_you_message, created_at, deleted_at) VALUES
 ('02238978-8b23-408a-a5e4-a0399578229a', '8567b7dc-6049-415e-97d8-740a6483c1b6', 'Test Company', NULL, NULL, 3, NULL, NULL, '2026-03-15 05:56:49.03126', NULL);

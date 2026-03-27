@@ -16,6 +16,7 @@ class User(BaseModel):
     first_name: str
     last_name: str
     onboarding_complete: bool = False
+    email_verified: bool = False
 
 
 class UserResponse(BaseModel):
@@ -24,6 +25,7 @@ class UserResponse(BaseModel):
     first_name: str
     last_name: str
     onboarding_complete: bool
+    email_verified: bool
     company_name: str | None = None
     user_display_name: str | None = None
 
