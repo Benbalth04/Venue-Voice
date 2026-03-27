@@ -1,6 +1,7 @@
 "use client"
 
-import { X } from "lucide-react"
+import { AlertTriangle, X } from "lucide-react"
+import Link from "next/link"
 import { DropdownSelect, SingleSelectDropdown } from "@/components/ui/DropdownSelect"
 import type { BranchRuleCondition, DraftNode, RuleSummary } from "../types"
 import { ruleIdsFromRuleNodesUpstream } from "../draftUtils"
@@ -12,9 +13,13 @@ export function FlowBranchInspector(props: {
   branchConfig: { rule_conditions: BranchRuleCondition[]; match_type: FlowBranchMatchType }
   rules: RuleSummary[]
   rulesById: Map<string, RuleSummary>
+  brokenRuleIds: Set<string>
   updateSelectedNode: (update: (node: DraftNode) => DraftNode) => void
 }) {
-  const { draftNodes, selectedNode, branchConfig, rules, rulesById, updateSelectedNode } = props
+  const { draftNodes, selectedNode, branchConfig, rules, rulesById, brokenRuleIds, updateSelectedNode } = props
+  const brokenConditionRuleIds = branchConfig.rule_conditions
+    .map((c) => c.rule_id)
+    .filter((id) => brokenRuleIds.has(id))
   const conditions = branchConfig.rule_conditions
   const matchType = branchConfig.match_type
   const upstreamRuleIds = ruleIdsFromRuleNodesUpstream(draftNodes, selectedNode.id)
@@ -54,6 +59,25 @@ export function FlowBranchInspector(props: {
           />
         </div>
       </div>
+      {brokenConditionRuleIds.length > 0 ? (
+        <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <p className="font-medium">
+              {brokenConditionRuleIds.length === 1
+                ? `1 rule in this branch is broken`
+                : `${brokenConditionRuleIds.length} rules in this branch are broken`}{" "}
+              and cannot run.
+            </p>
+            <Link
+              href="/dashboard/automations/rules"
+              className="mt-0.5 inline-block underline underline-offset-2 hover:text-red-900"
+            >
+              Go to Rules to fix {brokenConditionRuleIds.length === 1 ? "it" : "them"}
+            </Link>
+          </div>
+        </div>
+      ) : null}
       <div className="space-y-2">
         <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Rules in this branch</span>
         {conditions.length === 0 ? (

@@ -10,6 +10,8 @@ export type BuildFlowCanvasParams = {
   selectedNodeId: string
   validationHighlightNodeId: string | null
   rulesById: Map<string, RuleSummary>
+  brokenRuleIds: Set<string>
+  brokenActionNodeIds: Set<string>
   locationSurveys: LocationSurveyResponse[]
   notificationGroups: NotificationGroupResponse[]
   setSelectedNodeId: (id: string) => void
@@ -24,6 +26,8 @@ export function buildFlowCanvas(params: BuildFlowCanvasParams): { nodes: Node[];
     selectedNodeId,
     validationHighlightNodeId,
     rulesById,
+    brokenRuleIds,
+    brokenActionNodeIds,
     locationSurveys,
     notificationGroups,
     setSelectedNodeId,
@@ -187,6 +191,15 @@ export function buildFlowCanvas(params: BuildFlowCanvasParams): { nodes: Node[];
 
     const canvasKind = node.node_type as CanvasNodeData["kind"]
 
+    const brokenRuleHighlight =
+      node.node_type === "rule"
+        ? !!node.rule_id && brokenRuleIds.has(node.rule_id)
+        : node.node_type === "branch"
+          ? branchConfig.rule_conditions.some((c) => brokenRuleIds.has(c.rule_id))
+          : node.node_type === "action"
+            ? brokenActionNodeIds.has(node.id)
+            : false
+
     pushFlowNode(
       node.node_type,
       node.id,
@@ -198,6 +211,7 @@ export function buildFlowCanvas(params: BuildFlowCanvasParams): { nodes: Node[];
         subtitle,
         selected: selectedNodeId === node.id,
         errorHighlight: validationHighlightNodeId === node.id,
+        brokenRuleHighlight,
         onSelect: () => setSelectedNodeId(node.id),
         onDelete: () => void removeNodeCascade(node.id),
       },

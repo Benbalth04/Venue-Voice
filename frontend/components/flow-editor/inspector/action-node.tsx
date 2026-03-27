@@ -1,5 +1,7 @@
 "use client"
 
+import { AlertTriangle } from "lucide-react"
+import Link from "next/link"
 import { SingleSelectDropdown } from "@/components/ui/DropdownSelect"
 import type { FlowActionType, LocationSurveyResponse, NotificationGroupResponse } from "@/lib/api/client"
 import { canonicalParentId, redirectActionCountOnPathFromRootTo } from "../draftUtils"
@@ -25,6 +27,19 @@ export function FlowActionInspector(props: {
   const parentId = canonicalParentId(selectedNode.parent_id)
   const redirectsEarlierOnPath = parentId ? redirectActionCountOnPathFromRootTo(draftNodes, parentId) : 0
   const redirectOptionLocked = redirectsEarlierOnPath >= 1
+
+  const locationsWithoutGoogleUrl = selectedTriggerLocations.filter((ls) => !ls.location_google_business_url)
+  const locationsWithoutNotifGroups = selectedTriggerLocations.filter(
+    (ls) => !notificationGroups.some((ng) => ng.location_ids.includes(ls.location_id)),
+  )
+  const showGoogleUrlAlert =
+    selectedNode.action_type === "redirect" &&
+    String(selectedActionConfig?.target ?? "google_business_url") === "google_business_url" &&
+    locationsWithoutGoogleUrl.length > 0
+  const showNotifGroupsAlert =
+    selectedNode.action_type === "email" &&
+    String(selectedActionConfig?.target ?? "location_notification_groups") === "location_notification_groups" &&
+    locationsWithoutNotifGroups.length > 0
 
   return (
     <div className="space-y-4">
@@ -77,6 +92,24 @@ export function FlowActionInspector(props: {
               />
             </div>
           </label>
+          {showGoogleUrlAlert ? (
+            <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div>
+                <p className="font-medium">
+                  {locationsWithoutGoogleUrl.length === 1
+                    ? `1 trigger location is missing a Google Business URL`
+                    : `${locationsWithoutGoogleUrl.length} trigger locations are missing a Google Business URL`}
+                </p>
+                <Link
+                  href="/dashboard/locations"
+                  className="mt-0.5 inline-block underline underline-offset-2 hover:text-red-900"
+                >
+                  Go to Locations to fix {locationsWithoutGoogleUrl.length === 1 ? "it" : "them"}
+                </Link>
+              </div>
+            </div>
+          ) : null}
           {selectedActionConfig?.target === "custom_url" ? (
             <label className="block">
               <span className="text-sm font-medium text-zinc-700">Custom URL</span>
@@ -189,6 +222,24 @@ export function FlowActionInspector(props: {
             </>
           ) : null}
 
+          {showNotifGroupsAlert ? (
+            <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div>
+                <p className="font-medium">
+                  {locationsWithoutNotifGroups.length === 1
+                    ? `1 trigger location has no notification groups assigned`
+                    : `${locationsWithoutNotifGroups.length} trigger locations have no notification groups assigned`}
+                </p>
+                <Link
+                  href="/dashboard/automations/notification_groups"
+                  className="mt-0.5 inline-block underline underline-offset-2 hover:text-red-900"
+                >
+                  Go to Notification Groups to fix {locationsWithoutNotifGroups.length === 1 ? "it" : "them"}
+                </Link>
+              </div>
+            </div>
+          ) : null}
           {selectedActionConfig?.target === "location_notification_groups" ? (
             <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-600">
               {selectedTriggerLocations.length === 0 ? (

@@ -6,6 +6,7 @@ import { Sidebar } from "@/components/layout/Sidebar"
 import { Topbar } from "@/components/layout/Topbar"
 import { UnreadResponsesProvider } from "@/components/layout/UnreadResponsesContext"
 import { BrokenRulesProvider } from "@/components/layout/BrokenRulesContext"
+import { BrokenFlowsProvider } from "@/components/layout/BrokenFlowsContext"
 
 export function DashboardLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname()
@@ -15,6 +16,7 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
   return (
     <UnreadResponsesProvider>
       <BrokenRulesProvider>
+      <BrokenFlowsProvider>
       <div className="flex min-h-screen bg-zinc-50">
         <Sidebar />
         <div className="flex min-h-screen min-w-0 flex-1 flex-col">
@@ -30,6 +32,7 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
           </main>
         </div>
       </div>
+      </BrokenFlowsProvider>
       </BrokenRulesProvider>
     </UnreadResponsesProvider>
   )

@@ -1,7 +1,7 @@
 "use client"
 
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react"
-import { GitBranch, Mail, OctagonX, Trash2, Workflow } from "lucide-react"
+import { AlertTriangle, GitBranch, Mail, OctagonX, Trash2, Workflow } from "lucide-react"
 import type { CanvasNodeData } from "../types"
 
 export function FlowCanvasNodeView({ data }: NodeProps<Node<CanvasNodeData>>) {
@@ -28,6 +28,14 @@ export function FlowCanvasNodeView({ data }: NodeProps<Node<CanvasNodeData>>) {
             : "bg-emerald-50 text-emerald-700 border-emerald-200"
   return (
     <div className="relative">
+      {data.brokenRuleHighlight ? (
+        <div
+          className="absolute -right-1.5 -top-1.5 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-white shadow"
+          title="Contains a broken rule"
+        >
+          <AlertTriangle className="h-3 w-3" />
+        </div>
+      ) : null}
       {data.kind !== "trigger" ? <Handle type="target" position={Position.Left} className="!h-3 !w-3 !bg-zinc-300" /> : null}
       {showSource ? <Handle type="source" position={Position.Right} className="!h-3 !w-3 !bg-violet-500" /> : null}
       <button
@@ -35,7 +43,7 @@ export function FlowCanvasNodeView({ data }: NodeProps<Node<CanvasNodeData>>) {
         onClick={data.onSelect}
         className={[
           "flex h-auto w-[280px] flex-col justify-start overflow-hidden rounded-2xl border bg-white px-4 py-4 text-left shadow-sm transition",
-          data.errorHighlight
+          data.errorHighlight || data.brokenRuleHighlight
             ? "border-red-500 shadow-md ring-2 ring-red-200"
             : data.selected
               ? "border-violet-500 shadow-md ring-2 ring-violet-200"

@@ -387,6 +387,8 @@ CREATE TABLE flows (
     name TEXT NOT NULL,
     description VARCHAR(240),
     is_active BOOLEAN DEFAULT TRUE,
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'broken')),
+    broken_reasons JSONB DEFAULT '[]'::jsonb,
     survey_id UUID NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),

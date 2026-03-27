@@ -496,9 +496,11 @@ def save_survey_version(
     db.refresh(survey)
     db.refresh(sv)
 
-    # Revalidate all rules for this survey against the new version
+    # Revalidate all rules and flows for this survey against the new version
     from ..services.rule_validator import revalidate_rules_for_survey
+    from ..services.flow_validator import revalidate_flows_for_survey
     revalidate_rules_for_survey(db, survey.id)
+    revalidate_flows_for_survey(db, survey.id)
     db.commit()
 
     return _to_survey_with_schema(survey, sv, str(current_user.id))

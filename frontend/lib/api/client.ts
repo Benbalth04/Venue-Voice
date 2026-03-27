@@ -407,6 +407,7 @@ export interface LogicRuleResponse {
   enabled: boolean
   action_type: LogicActionType
   conditions: LogicConditionResponse[]
+  status: "active" | "broken"
   created_at: string
   updated_at: string
 }
@@ -607,6 +608,8 @@ export interface FlowResponse {
   name: string
   description: string | null
   is_active: boolean
+  status: string
+  broken_reasons: Record<string, unknown>[]
   location_survey_ids: string[]
   nodes: FlowNodeResponse[]
   created_at: string
@@ -723,6 +726,7 @@ function ruleApiToLegacy(rule: RuleApiResponse): LogicRuleResponse {
     enabled: true,
     action_type: "none",
     conditions: topLevel,
+    status: rule.status,
     created_at: rule.created_at,
     updated_at: rule.updated_at,
   }
@@ -1055,6 +1059,21 @@ export async function syncLocationNotificationGroups(
   )
 }
 
+export interface LocationFlowDependencies {
+  google_business_url_flows: { id: string; name: string }[]
+  notification_group_flows: { id: string; name: string }[]
+}
+
+export async function getLocationFlowDependencies(
+  accessToken: string,
+  locationId: string,
+): Promise<LocationFlowDependencies> {
+  return apiFetch<LocationFlowDependencies>(
+    `${BACKEND_BASE}/api/v1/locations/${locationId}/flow-dependencies`,
+    { headers: authGetHeaders(accessToken) },
+  )
+}
+
 // ------------------------------------------------------------------
 // Question Types
 // ------------------------------------------------------------------
@@ -1339,6 +1358,12 @@ export function fetchCompanyBrokenRuleSummary(
   token: string,
 ): Promise<{ broken_rule_count: number }> {
   return surveyRequest<{ broken_rule_count: number }>(token, "/rules/broken-summary")
+}
+
+export function fetchCompanyBrokenFlowSummary(
+  token: string,
+): Promise<{ broken_flow_count: number }> {
+  return surveyRequest<{ broken_flow_count: number }>(token, "/flows/broken-summary")
 }
 
 export function createRuleDirect(

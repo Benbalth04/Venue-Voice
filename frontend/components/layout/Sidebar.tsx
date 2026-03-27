@@ -5,6 +5,7 @@ import Image from "next/image"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import {
+  AlertTriangle,
   BarChart3,
   LayoutDashboard,
   Link2,
@@ -17,12 +18,16 @@ import {
 } from "lucide-react"
 import { supabase } from "@/lib/supabase/client"
 import { useUnreadResponses } from "@/components/layout/UnreadResponsesContext"
+import { useBrokenRules } from "@/components/layout/BrokenRulesContext"
+import { useBrokenFlows } from "@/components/layout/BrokenFlowsContext"
 
 type NavChild = {
   href: string
   label: string
   exact?: boolean
   showUnreadCount?: boolean
+  showBrokenFlowCount?: boolean
+  showBrokenRuleCount?: boolean
 }
 
 type NavItem = {
@@ -78,8 +83,8 @@ const items: NavItem[] = [
     label: "Automations",
     icon: Zap,
     children: [
-      { href: "/dashboard/automations/flows", label: "Flows", exact: true },
-      { href: "/dashboard/automations/rules", label: "Rules", exact: true },
+      { href: "/dashboard/automations/flows", label: "Flows", exact: true, showBrokenFlowCount: true },
+      { href: "/dashboard/automations/rules", label: "Rules", exact: true, showBrokenRuleCount: true },
       {
         href: "/dashboard/automations/notification_groups",
         label: "Notification Groups",
@@ -100,6 +105,8 @@ export function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
   const { unreadCount } = useUnreadResponses()
+  const { brokenRuleCount } = useBrokenRules()
+  const { brokenFlowCount } = useBrokenFlows()
 
   async function onLogout() {
     supabase.auth.signOut().catch((err) => {
@@ -184,6 +191,26 @@ export function Sidebar() {
                           >
                             {unreadCount > 99 ? "99+" : unreadCount}
                           </span>
+                        ) : null}
+                        {child.showBrokenFlowCount && brokenFlowCount > 0 ? (
+                          <AlertTriangle
+                            className="h-3 w-3 shrink-0 text-red-500"
+                            aria-label={`${brokenFlowCount} broken flow${brokenFlowCount === 1 ? "" : "s"}`}
+                          >
+                            <title>
+                              {`${brokenFlowCount} broken flow${brokenFlowCount === 1 ? "" : "s"}`}
+                            </title>
+                          </AlertTriangle>
+                        ) : null}
+                        {child.showBrokenRuleCount && brokenRuleCount > 0 ? (
+                          <AlertTriangle
+                            className="h-3 w-3 shrink-0 text-amber-500"
+                            aria-label={`${brokenRuleCount} broken rule${brokenRuleCount === 1 ? "" : "s"}`}
+                          >
+                            <title>
+                              {`${brokenRuleCount} broken rule${brokenRuleCount === 1 ? "" : "s"}`}
+                            </title>
+                          </AlertTriangle>
                         ) : null}
                       </Link>
                     )

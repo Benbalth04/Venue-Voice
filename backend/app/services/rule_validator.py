@@ -14,6 +14,7 @@ import uuid
 from typing import Any
 
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm.attributes import flag_modified
 
 from ..models.postgres_model import (
     Question as QuestionORM,
@@ -332,3 +333,4 @@ def revalidate_rules_for_survey(db: Session, survey_id: uuid.UUID) -> None:
             ]
         rule.status = status
         rule.broken_reasons = broken_reasons
+        flag_modified(rule, "broken_reasons")

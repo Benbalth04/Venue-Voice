@@ -1,8 +1,11 @@
+import logging
 import uuid
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func
@@ -15,11 +18,14 @@ from ..auth.jwt import get_current_user
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import (
     Company as CompanyORM,
+    Flow as FlowORM,
+    FlowLocationSurvey as FlowLocationSurveyORM,
+    FlowNode as FlowNodeORM,
     Location as LocationORM,
     LocationSurvey as LocationSurveyORM,
     User as UserORM,
 )
-from ..schemas.pydantic_model import DeleteRequest, LocationCreate, LocationResponse, LocationUpdate
+from ..schemas.pydantic_model import DeleteRequest, FlowSummary, LocationCreate, LocationFlowDependencies, LocationResponse, LocationUpdate
 
 
 def _strip_tz(dt: datetime) -> datetime:
@@ -180,6 +186,73 @@ def get_location(
     return _to_response(_get_location_or_404(location_id, company.id, db))
 
 
+@router.get("/locations/{location_id}/flow-dependencies", response_model=LocationFlowDependencies)
+def get_location_flow_dependencies(
+    location_id: str,
+    user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    company = _get_company(user, db)
+    loc = _get_location_or_404(location_id, company.id, db)
+
+    ls_ids = [
+        ls.id
+        for ls in db.query(LocationSurveyORM.id)
+        .filter(
+            LocationSurveyORM.location_id == loc.id,
+            LocationSurveyORM.deleted_at.is_(None),
+        )
+        .all()
+    ]
+
+    if not ls_ids:
+        return LocationFlowDependencies(google_business_url_flows=[], notification_group_flows=[])
+
+    flow_ids = [
+        row.flow_id
+        for row in db.query(FlowLocationSurveyORM.flow_id)
+        .filter(FlowLocationSurveyORM.location_survey_id.in_(ls_ids))
+        .distinct()
+        .all()
+    ]
+
+    if not flow_ids:
+        return LocationFlowDependencies(google_business_url_flows=[], notification_group_flows=[])
+
+    flows = (
+        db.query(FlowORM)
+        .filter(FlowORM.id.in_(flow_ids), FlowORM.deleted_at.is_(None))
+        .all()
+    )
+
+    google_business_url_flows: list[FlowSummary] = []
+    notification_group_flows: list[FlowSummary] = []
+
+    for flow in flows:
+        has_gbu = any(
+            node.action_type == "redirect"
+            and isinstance(node.action_config, dict)
+            and node.action_config.get("target") == "google_business_url"
+            for node in flow.nodes
+        )
+        has_lng = any(
+            node.action_type == "email"
+            and isinstance(node.action_config, dict)
+            and node.action_config.get("target") == "location_notification_groups"
+            for node in flow.nodes
+        )
+        summary = FlowSummary(id=str(flow.id), name=flow.name)
+        if has_gbu:
+            google_business_url_flows.append(summary)
+        if has_lng:
+            notification_group_flows.append(summary)
+
+    return LocationFlowDependencies(
+        google_business_url_flows=google_business_url_flows,
+        notification_group_flows=notification_group_flows,
+    )
+
+
 @router.patch("/locations/{location_id}", response_model=LocationResponse)
 def update_location(
     location_id: str,
@@ -244,6 +317,16 @@ def update_location(
     except IntegrityError:
         db.rollback()
         raise ConflictError(code="LOCATION_NAME_CONFLICT", message="A location with this name already exists")
+
+    # Revalidate flows that target this location (separate transaction; fail-safe).
+    try:
+        from ..services.flow_validator import revalidate_flows_for_location
+        revalidate_flows_for_location(db, loc.id)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Flow revalidation failed for location %s", loc.id)
+
     return _to_response(loc)
 
 

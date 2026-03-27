@@ -13,6 +13,7 @@ import {
   createLocation,
   fetchLocations,
   fetchNotificationGroups,
+  getLocationFlowDependencies,
   isStaleObjectError,
   syncLocationNotificationGroups,
   updateLocation,
@@ -244,6 +245,34 @@ export default function LocationsPage() {
         google_business_url: form.google_business_url.trim() || null,
       }
       if (editTarget) {
+        const isRemovingGBUrl = !!editTarget.google_business_url && !form.google_business_url.trim()
+        const currentGroupIds = notificationGroups
+          .filter((g) => g.location_ids.includes(editTarget.id))
+          .map((g) => g.id)
+        const isRemovingAllGroups = currentGroupIds.length > 0 && form.notification_group_ids.length === 0
+
+        if (isRemovingGBUrl || isRemovingAllGroups) {
+          const deps = await getLocationFlowDependencies(token, editTarget.id)
+
+          if (isRemovingGBUrl && deps.google_business_url_flows.length > 0) {
+            await confirm({
+              title: "Cannot remove Google Business URL",
+              message: `This URL is required by the following flows:\n${deps.google_business_url_flows.map((f) => `- ${f.name}`).join("\n")}`,
+              confirmLabel: "OK",
+            })
+            return
+          }
+
+          if (isRemovingAllGroups && deps.notification_group_flows.length > 0) {
+            await confirm({
+              title: "Cannot remove notification groups",
+              message: `Notification groups are required by the following flows:\n${deps.notification_group_flows.map((f) => `- ${f.name}`).join("\n")}`,
+              confirmLabel: "OK",
+            })
+            return
+          }
+        }
+
         const payload: LocationUpdate = { ...basePayload, updated_at: editTarget.updated_at }
         const updated = await updateLocation(token, editTarget.id, payload)
         await syncLocationNotificationGroups(token, editTarget.id, form.notification_group_ids)

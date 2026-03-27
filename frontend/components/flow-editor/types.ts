@@ -22,6 +22,7 @@ export type RuleSummary = {
   id: string
   name: string
   description: string | null
+  status?: "active" | "broken"
 }
 
 export type BranchRuleCondition = { rule_id: string; expected: boolean }
@@ -41,6 +42,8 @@ export type CanvasNodeData = {
   selected: boolean
   /** Transient validation highlight (red border); cleared after timeout or when user selects this node. */
   errorHighlight?: boolean
+  /** Persistent broken-rule highlight (red border + badge); shown when a referenced rule is broken. */
+  brokenRuleHighlight?: boolean
   onSelect: () => void
   onDelete?: () => void
 }

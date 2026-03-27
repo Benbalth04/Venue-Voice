@@ -1,7 +1,10 @@
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from ..auth.jwt import get_current_user
 from ..core.errors.exceptions import NotFoundError, PermissionError, ValidationError
@@ -58,6 +61,7 @@ from ..services.rule_service import (
     get_rule_bundle,
     update_rule as update_rule_service,
 )
+from ..services.flow_service import get_company_broken_flow_count
 
 router = APIRouter()
 
@@ -120,6 +124,15 @@ def get_company_broken_rules_summary(
     return {"broken_rule_count": get_company_broken_rule_count(db, company.id)}
 
 
+@router.get("/flows/broken-summary")
+def get_company_broken_flows_summary(
+    current_user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    company = _get_company_for_user(db, current_user)
+    return {"broken_flow_count": get_company_broken_flow_count(db, company.id)}
+
+
 @router.get("/surveys/{survey_id}/rules/broken/summary")
 def get_broken_rules_summary(
     survey_id: str,
@@ -154,8 +167,18 @@ def update_rule(
     survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
     rule_uuid = _parse_uuid(rule_id, code="INVALID_RULE_ID", label="rule ID")
     _ensure_survey_access(db, current_user, survey_uuid)
-    print(f"Updating rule {rule_uuid} for survey {survey_uuid} with payload: {payload}")
-    return update_rule_service(db, survey_uuid, rule_uuid, payload)
+    result = update_rule_service(db, survey_uuid, rule_uuid, payload)
+    # Rule status may have changed (active ↔ broken); revalidate all flows for this
+    # survey so broken flows referencing this rule are cleared. Fail-safe — a
+    # revalidation error must never fail the rule update itself.
+    try:
+        from ..services.flow_validator import revalidate_flows_for_survey
+        revalidate_flows_for_survey(db, survey_uuid)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Flow revalidation failed for survey %s after rule update", survey_uuid)
+    return result
 
 
 @router.delete("/surveys/{survey_id}/rules/{rule_id}", status_code=204)
@@ -344,12 +367,22 @@ def assign_notification_group_to_location_route(
 ):
     company = _get_company_for_user(db, current_user)
     location_uuid = _parse_uuid(location_id, code="INVALID_LOCATION_ID", label="location ID")
-    return assign_notification_group_to_location(
+    result = assign_notification_group_to_location(
         db,
         company.id,
         location_uuid,
         payload.group_id,
     )
+    # A group was added to this location; this may fix MISSING_NOTIFICATION_GROUPS
+    # on flows that target it. Revalidate fail-safe in a separate transaction.
+    try:
+        from ..services.flow_validator import revalidate_flows_for_location
+        revalidate_flows_for_location(db, location_uuid)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Flow revalidation failed for location %s after notification group assignment", location_uuid)
+    return result
 
 
 @router.put("/locations/{location_id}/notification-groups", response_model=list[NotificationGroupResponse])
@@ -361,12 +394,22 @@ def sync_location_notification_groups_route(
 ):
     company = _get_company_for_user(db, current_user)
     location_uuid = _parse_uuid(location_id, code="INVALID_LOCATION_ID", label="location ID")
-    return sync_location_notification_groups(
+    result = sync_location_notification_groups(
         db,
         company.id,
         location_uuid,
         payload.group_ids,
     )
+    # Revalidate flows that target this location after notification-group changes
+    # (separate transaction from the sync; fail-safe).
+    try:
+        from ..services.flow_validator import revalidate_flows_for_location
+        revalidate_flows_for_location(db, location_uuid)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Flow revalidation failed for location %s", location_uuid)
+    return result
 
 
 @router.delete("/notification-groups/{group_id}", status_code=204)

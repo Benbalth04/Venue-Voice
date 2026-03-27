@@ -934,6 +934,8 @@ class Flow(SoftDeleteMixin, Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str | None] = mapped_column(String(240), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    status: Mapped[str] = mapped_column(String, nullable=False, default="active", server_default="active")
+    broken_reasons: Mapped[list] = mapped_column(JSONB, nullable=True, default=list, server_default="[]")
     survey_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("surveys.id", ondelete="CASCADE"),

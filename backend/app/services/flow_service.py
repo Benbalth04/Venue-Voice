@@ -161,6 +161,8 @@ def _flow_to_response(flow: FlowORM) -> dict[str, Any]:
             }
             for node in sorted(flow.nodes, key=lambda row: (row.position, row.created_at, row.id))
         ],
+        "status": getattr(flow, "status", "active") or "active",
+        "broken_reasons": getattr(flow, "broken_reasons", None) or [],
         "created_at": flow.created_at,
         "updated_at": flow.updated_at,
     }
@@ -1154,3 +1156,15 @@ def list_flow_runs(db: Session, company_id: uuid.UUID) -> list[dict[str, Any]]:
         }
         for run, flow, survey, location, qr in rows
     ]
+
+
+def get_company_broken_flow_count(db: Session, company_id: uuid.UUID) -> int:
+    return (
+        db.query(FlowORM)
+        .filter(
+            FlowORM.company_id == company_id,
+            FlowORM.deleted_at.is_(None),
+            FlowORM.status == "broken",
+        )
+        .count()
+    )

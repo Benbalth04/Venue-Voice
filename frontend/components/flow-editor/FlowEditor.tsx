@@ -99,6 +99,7 @@ export function FlowEditor() {
         id: rule.id,
         name: rule.name,
         description: rule.description,
+        status: rule.status,
       })),
     )
     setLocationSurveys(locationSurveyRows)
@@ -162,6 +163,8 @@ export function FlowEditor() {
   }, [flowId, initialName, initialSurveyId, isNew])
 
   const rulesById = useMemo(() => new Map(rules.map((rule) => [rule.id, rule])), [rules])
+  const brokenRuleIds = useMemo(() => new Set(rules.filter((r) => r.status === "broken").map((r) => r.id)), [rules])
+
   const surveyName = useMemo(
     () => surveys.find((survey) => survey.id === draft?.survey_id)?.name ?? "Unknown survey",
     [draft?.survey_id, surveys],
@@ -174,6 +177,27 @@ export function FlowEditor() {
     () => locationSurveys.filter((item) => draft?.location_survey_ids.includes(item.id)),
     [draft?.location_survey_ids, locationSurveys],
   )
+
+  const brokenActionNodeIds = useMemo(() => {
+    if (!draft || !selectedTriggerLocations.length) return new Set<string>()
+    const missingGoogleUrl = selectedTriggerLocations.some((ls) => !ls.location_google_business_url)
+    const missingNotifGroups = selectedTriggerLocations.some(
+      (ls) => !notificationGroups.some((ng) => ng.location_ids.includes(ls.location_id)),
+    )
+    const ids = new Set<string>()
+    for (const node of draft.nodes) {
+      if (node.node_type !== "action") continue
+      const config = normalizeActionConfig(node.action_type, node.config)
+      if (node.action_type === "redirect" && config?.target === "google_business_url" && missingGoogleUrl) {
+        ids.add(node.id)
+      }
+      if (node.action_type === "email" && config?.target === "location_notification_groups" && missingNotifGroups) {
+        ids.add(node.id)
+      }
+    }
+    return ids
+  }, [draft, selectedTriggerLocations, notificationGroups])
+
   const locationSurveySelectOptions = useMemo(() => {
     const blocked = new Set<string>()
     for (const flow of existingFlows) {
@@ -469,6 +493,8 @@ export function FlowEditor() {
         selectedNodeId,
         validationHighlightNodeId,
         rulesById,
+        brokenRuleIds,
+        brokenActionNodeIds,
         locationSurveys,
         notificationGroups,
         setSelectedNodeId: selectNodeOnCanvas,
@@ -624,6 +650,7 @@ export function FlowEditor() {
                     selectedNode={selectedNode}
                     rules={rules}
                     rulesById={rulesById}
+                    brokenRuleIds={brokenRuleIds}
                     updateSelectedNode={updateSelectedNode}
                   />
                 ) : null}
@@ -635,6 +662,7 @@ export function FlowEditor() {
                     branchConfig={selectedBranchConfig}
                     rules={rules}
                     rulesById={rulesById}
+                    brokenRuleIds={brokenRuleIds}
                     updateSelectedNode={updateSelectedNode}
                   />
                 ) : null}

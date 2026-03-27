@@ -85,6 +85,16 @@ class LocationResponse(BaseModel):
     updated_at: str
 
 
+class FlowSummary(BaseModel):
+    id: str
+    name: str
+
+
+class LocationFlowDependencies(BaseModel):
+    google_business_url_flows: list[FlowSummary]
+    notification_group_flows: list[FlowSummary]
+
+
 # --------------------------------------------------
 # LOCATION SURVEYS
 # --------------------------------------------------
@@ -1067,6 +1077,8 @@ class FlowResponse(BaseModel):
     name: str
     description: str | None = None
     is_active: bool
+    status: str = "active"
+    broken_reasons: list[dict] = Field(default_factory=list)
     location_survey_ids: list[uuid.UUID] = Field(default_factory=list)
     nodes: list[FlowNodeResponse] = Field(default_factory=list)
     created_at: datetime

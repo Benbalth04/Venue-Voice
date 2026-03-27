@@ -172,11 +172,13 @@ def _get_rule_or_404(db: Session, survey_id: uuid.UUID, rule_id: uuid.UUID) -> R
 
 
 def _get_question_rows_for_survey(db: Session, survey_id: uuid.UUID) -> dict[uuid.UUID, QuestionORM]:
+    survey = _get_survey_or_404(db, survey_id)
     rows = (
         db.query(QuestionORM)
         .join(SurveyVersionORM, SurveyVersionORM.id == QuestionORM.survey_version_id)
         .filter(
             SurveyVersionORM.survey_id == survey_id,
+            SurveyVersionORM.version_number == survey.latest_version,
             SurveyVersionORM.deleted_at.is_(None),
             QuestionORM.deleted_at.is_(None),
         )
@@ -545,6 +547,8 @@ def update_rule(db: Session, survey_id: uuid.UUID, rule_id: uuid.UUID, payload: 
                 "name": payload.name.strip(),
                 "description": payload.description.strip() if payload.description and payload.description.strip() else None,
                 "operator": payload.operator.value,
+                "status": "active",
+                "broken_reasons": [],
             },
             synchronize_session="fetch",
         )
@@ -581,11 +585,11 @@ def update_rule(db: Session, survey_id: uuid.UUID, rule_id: uuid.UUID, payload: 
 
     db.flush()
 
-    # Expire the rule so that validate_rule re-queries fresh conditions from DB.
+    # Expire all session state so that validate_rule re-queries fresh data from DB.
     # The bulk deletes above used synchronize_session=False, leaving stale condition
-    # objects in the session identity map. Without this, joinedload in validate_rule
-    # can return the old (deleted) conditions instead of the newly written ones.
-    db.expire(rule)
+    # and group objects in the session identity map. expire_all() guarantees every
+    # subsequent SELECT in this transaction reads from the DB.
+    db.expire_all()
 
     # Validate updated rule against current survey version before committing
     status, broken_reasons = _validate_rule_status(rule.id, db)

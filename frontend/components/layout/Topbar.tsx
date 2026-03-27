@@ -7,12 +7,14 @@ import { supabase } from "@/lib/supabase/client"
 import { fetchUser } from "@/lib/api/client"
 import { useUnreadResponses } from "@/components/layout/UnreadResponsesContext"
 import { useBrokenRules } from "@/components/layout/BrokenRulesContext"
+import { useBrokenFlows } from "@/components/layout/BrokenFlowsContext"
 
 export function Topbar() {
   const [companyName, setCompanyName] = useState<string>("")
   const [displayName, setDisplayName] = useState<string>("")
   const { unreadCount } = useUnreadResponses()
   const { brokenRuleCount } = useBrokenRules()
+  const { brokenFlowCount } = useBrokenFlows()
 
   useEffect(() => {
     async function load() {
@@ -62,6 +64,22 @@ export function Topbar() {
         </div>
       </header>
 
+      {brokenFlowCount > 0 && (
+        <div className="flex items-center justify-between border-b border-red-200 bg-red-50 px-6 py-2">
+          <div className="flex items-center gap-2 text-sm text-red-700">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            <span>
+              {brokenFlowCount} flow{brokenFlowCount !== 1 ? "s are" : " is"} broken — {brokenFlowCount !== 1 ? "they" : "it"} cannot run until fixed
+            </span>
+          </div>
+          <Link
+            href="/dashboard/automations/flows"
+            className="text-xs font-medium text-red-700 underline underline-offset-2 hover:text-red-900"
+          >
+            Go to Flows
+          </Link>
+        </div>
+      )}
       {brokenRuleCount > 0 && (
         <div className="flex items-center justify-between border-b border-amber-200 bg-amber-50 px-6 py-2">
           <div className="flex items-center gap-2 text-sm text-amber-700">
