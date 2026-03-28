@@ -1084,10 +1084,11 @@ def execute_flows_for_response(
     )
     first_action: dict[str, Any] | None = None
 
+    persisted_flow_runs: list[FlowRunORM] = []
     for flow in flows:
         result = _evaluate_single_flow(db, flow, contexts, runtime_context=runtime_context)
         actions = result.actions
-        _persist_flow_run(
+        flow_run = _persist_flow_run(
             db,
             company_id=company_id,
             flow=flow,
@@ -1097,6 +1098,7 @@ def execute_flows_for_response(
             execution_trace=result.trace,
             actions=actions,
         )
+        persisted_flow_runs.append(flow_run)
         if actions and first_action is None:
             redirect_action = next(
                 (a for a in actions if a.type == FlowActionType.redirect.value and a.url),
@@ -1112,6 +1114,19 @@ def execute_flows_for_response(
             break
 
     db.commit()
+
+    # Attempt immediate email delivery. Failures are logged and left in
+    # "pending" status so the reconciliation job can retry them.
+    from .email_service import send_emails_for_flow_run
+    for flow_run in persisted_flow_runs:
+        try:
+            send_emails_for_flow_run(flow_run.id, db)
+        except Exception:
+            logger.exception(
+                "Immediate email send failed for flow_run_id=%s — reconciliation will retry",
+                flow_run.id,
+            )
+
     return first_action
 
 

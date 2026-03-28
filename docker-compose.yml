@@ -39,6 +39,8 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       OPENAI_SENTIMENT_MODEL: ${OPENAI_SENTIMENT_MODEL}
       REDIS_URL: redis://redis:6379/0
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL}
     networks:
       - backend
     healthcheck:

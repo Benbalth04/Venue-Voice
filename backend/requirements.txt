@@ -15,3 +15,5 @@ cairosvg
 alembic
 python-multipart
 redis
+resend
+apscheduler
