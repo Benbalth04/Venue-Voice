@@ -9,6 +9,7 @@ import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request, UploadFile
 from starlette.datastructures import UploadFile as StarletteUploadFile
@@ -30,6 +31,7 @@ from ..models.postgres_model import (
     Question as QuestionORM,
     QuestionType as QuestionTypeORM,
     QuestionTypeSetting as QuestionTypeSettingORM,
+    RedirectConfirmation as RedirectConfirmationORM,
     ScanEvent as ScanEventORM,
     Survey as SurveyORM,
     SurveyResponse as SurveyResponseORM,
@@ -849,7 +851,25 @@ async def submit_survey(
     thank_you_message = (company.thank_you_message or "Thank you for your feedback!") if company else "Thank you for your feedback!"
     redirect_url = f"{FRONTEND_ORIGIN}/survey/thank-you?session={sess.id}&qr={sess.qr_code_id}"
     if workflow_action and workflow_action.get("type") == "redirect" and workflow_action.get("url"):
-        redirect_url = str(workflow_action["url"])
+        dest = str(workflow_action["url"])
+        params: dict[str, str] = {
+            "dest": dest,
+            "session": str(sess.id),
+            "qr": str(sess.qr_code_id),
+        }
+        review_title = workflow_action.get("review_title")
+        review_subtitle = workflow_action.get("review_subtitle")
+        confirm_button_label = workflow_action.get("confirm_button_label")
+        decline_button_label = workflow_action.get("decline_button_label")
+        if isinstance(review_title, str) and review_title.strip():
+            params["title"] = review_title.strip()
+        if isinstance(review_subtitle, str) and review_subtitle.strip():
+            params["subtitle"] = review_subtitle.strip()
+        if isinstance(confirm_button_label, str) and confirm_button_label.strip():
+            params["confirm"] = confirm_button_label.strip()
+        if isinstance(decline_button_label, str) and decline_button_label.strip():
+            params["decline"] = decline_button_label.strip()
+        redirect_url = f"{FRONTEND_ORIGIN}/survey/review-redirect?{urlencode(params)}"
 
     return {
         "success": True,
@@ -958,3 +978,46 @@ def get_thank_you_data(
         "thank_you_message": thank_you_message,
         "company_name": company_name,
     }
+
+
+# --------------------------------------------------
+@router.post("/survey/redirect-confirmation")
+def record_redirect_confirmation(
+    session: str,
+    qr: str,
+    db: Session = Depends(get_db_connection),
+):
+    """Record that a respondent confirmed they want to follow the redirect.
+
+    Idempotent — repeated calls for the same survey response are safe and
+    return the same 200 response without creating duplicate rows.
+    """
+    try:
+        session_uid = uuid.UUID(session)
+        qr_uid = uuid.UUID(qr)
+    except ValueError:
+        raise ValidationError(code="INVALID_SESSION_OR_QR_ID", message="Invalid session or QR code ID")
+
+    resp = (
+        db.query(SurveyResponseORM)
+        .filter(
+            SurveyResponseORM.session_id == session_uid,
+            SurveyResponseORM.qr_code_id == qr_uid,
+            SurveyResponseORM.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if not resp:
+        raise NotFoundError(code="SUBMISSION_NOT_FOUND", message="Submission not found")
+
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    stmt = (
+        pg_insert(RedirectConfirmationORM)
+        .values(survey_response_id=resp.id)
+        .on_conflict_do_nothing(index_elements=["survey_response_id"])
+    )
+    db.execute(stmt)
+    db.commit()
+
+    return {"recorded": True}

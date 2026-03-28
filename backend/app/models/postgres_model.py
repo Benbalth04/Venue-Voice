@@ -1153,3 +1153,24 @@ class ResponseRead(SoftDeleteMixin, Base):
         index=True,
     )
     read_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+
+
+# --------------------------------------------------
+# REDIRECT CONFIRMATIONS
+# --------------------------------------------------
+class RedirectConfirmation(Base):
+    __tablename__ = "redirect_confirmations"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.uuid_generate_v4(),
+    )
+    survey_response_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("survey_responses.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

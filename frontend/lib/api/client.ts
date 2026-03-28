@@ -982,6 +982,16 @@ export async function fetchThankYouData(
   )
 }
 
+export async function recordRedirectConfirmation(
+  sessionId: string,
+  qrCodeId: string,
+): Promise<{ recorded: boolean }> {
+  return apiFetch<{ recorded: boolean }>(
+    `${BACKEND_BASE}/api/v1/survey/redirect-confirmation?session=${encodeURIComponent(sessionId)}&qr=${encodeURIComponent(qrCodeId)}`,
+    { method: "POST" },
+  )
+}
+
 // ------------------------------------------------------------------
 // Auth / User
 // ------------------------------------------------------------------

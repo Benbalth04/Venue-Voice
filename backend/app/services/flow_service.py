@@ -61,6 +61,10 @@ class FlowAction:
     notification_group_id: uuid.UUID | None = None
     recipient_email: str | None = None
     email_target: str | None = None
+    review_title: str | None = None
+    review_subtitle: str | None = None
+    confirm_button_label: str | None = None
+    decline_button_label: str | None = None
 
 
 @dataclass(slots=True)
@@ -804,6 +808,14 @@ def _evaluate_flow_node(
             action.url = str(runtime_context.get("location_google_business_url") or "").strip() or None
         else:
             action.url = str(config.get("url") or "").strip() or None
+        raw_title = config.get("review_title")
+        raw_subtitle = config.get("review_subtitle")
+        action.review_title = str(raw_title).strip() if isinstance(raw_title, str) and raw_title.strip() else None
+        action.review_subtitle = str(raw_subtitle).strip() if isinstance(raw_subtitle, str) and raw_subtitle.strip() else None
+        raw_confirm = config.get("confirm_button_label")
+        raw_decline = config.get("decline_button_label")
+        action.confirm_button_label = str(raw_confirm).strip() if isinstance(raw_confirm, str) and raw_confirm.strip() else None
+        action.decline_button_label = str(raw_decline).strip() if isinstance(raw_decline, str) and raw_decline.strip() else None
         if not action.url:
             trace_nodes.append(
                 {
@@ -1110,6 +1122,10 @@ def execute_flows_for_response(
                 "url": chosen.url,
                 "notification_group_id": str(chosen.notification_group_id) if chosen.notification_group_id else None,
                 "recipient_email": chosen.recipient_email,
+                "review_title": chosen.review_title,
+                "review_subtitle": chosen.review_subtitle,
+                "confirm_button_label": chosen.confirm_button_label,
+                "decline_button_label": chosen.decline_button_label,
             }
             break
 

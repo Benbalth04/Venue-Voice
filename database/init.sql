@@ -507,6 +507,18 @@ CREATE TABLE ai_analysis (
 
 
 --------------------------------------------------
+-- REDIRECT CONFIRMATIONS
+--------------------------------------------------
+CREATE TABLE redirect_confirmations (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    survey_response_id UUID NOT NULL REFERENCES survey_responses(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (survey_response_id)
+);
+CREATE INDEX idx_redirect_confirmations_response_id ON redirect_confirmations(survey_response_id);
+
+
+--------------------------------------------------
 -- Seed Data
 --------------------------------------------------
 INSERT INTO question_types (type, category, label, is_numeric, analyse_with_ai) VALUES

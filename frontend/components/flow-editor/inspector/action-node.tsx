@@ -123,7 +123,7 @@ export function FlowActionInspector(props: {
                 onChange={(event) =>
                   updateSelectedNode((node) => ({
                     ...node,
-                    config: { target: "custom_url", url: event.target.value },
+                    config: { ...(node.config ?? {}), target: "custom_url", url: event.target.value },
                   }))
                 }
               />
@@ -146,6 +146,72 @@ export function FlowActionInspector(props: {
               )}
             </div>
           )}
+          <label className="block">
+            <span className="text-sm font-medium text-zinc-700">
+              Confirm button text{" "}
+              <span className="font-normal text-zinc-400">(optional)</span>
+            </span>
+            <input
+              className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
+              placeholder="Yes, I'd love to!"
+              value={String(selectedActionConfig?.confirm_button_label ?? "")}
+              onChange={(event) =>
+                updateSelectedNode((node) => ({
+                  ...node,
+                  config: { ...(node.config ?? {}), confirm_button_label: event.target.value },
+                }))
+              }
+            />
+          </label>
+          <label className="block">
+            <span className="text-sm font-medium text-zinc-700">
+              Decline button text{" "}
+              <span className="font-normal text-zinc-400">(optional)</span>
+            </span>
+            <input
+              className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
+              placeholder="No thanks"
+              value={String(selectedActionConfig?.decline_button_label ?? "")}
+              onChange={(event) =>
+                updateSelectedNode((node) => ({
+                  ...node,
+                  config: { ...(node.config ?? {}), decline_button_label: event.target.value },
+                }))
+              }
+            />
+          </label>
+          <label className="block">
+            <span className="text-sm font-medium text-zinc-700">Review page title</span>
+            <input
+              className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500"
+              placeholder="Thank you for your response"
+              value={String(selectedActionConfig?.review_title ?? "")}
+              onChange={(event) =>
+                updateSelectedNode((node) => ({
+                  ...node,
+                  config: { ...(node.config ?? {}), review_title: event.target.value },
+                }))
+              }
+            />
+          </label>
+          <label className="block">
+            <span className="text-sm font-medium text-zinc-700">
+              Review page subtitle{" "}
+              <span className="font-normal text-zinc-400">(optional)</span>
+            </span>
+            <textarea
+              className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 resize-none"
+              rows={3}
+              placeholder="The survey owner would love for you to provide some feedback on Google Reviews, would you like to?"
+              value={String(selectedActionConfig?.review_subtitle ?? "")}
+              onChange={(event) =>
+                updateSelectedNode((node) => ({
+                  ...node,
+                  config: { ...(node.config ?? {}), review_subtitle: event.target.value },
+                }))
+              }
+            />
+          </label>
         </>
       ) : (
         <>
