@@ -1132,4 +1132,92 @@ class FlowRunResponse(BaseModel):
     actions: list[FlowRunActionResponse] = Field(default_factory=list)
     runtime_ms: int | None = None
     execution_trace: dict[str, Any]
-    created_at: datetime
+
+
+# ── Survey Dashboard ──────────────────────────────────────────────────────────
+
+from datetime import date as _date  # noqa: E402 — local alias to avoid shadowing datetime
+
+
+class DashboardFilterParams(BaseModel):
+    location_ids: list[uuid.UUID] | None = None
+    qr_code_ids: list[uuid.UUID] | None = None
+    date_start: datetime | None = None
+    date_end: datetime | None = None
+
+
+class DailyNumericPoint(BaseModel):
+    date: _date
+    avg_value: float | None
+    count: int
+
+
+class DailySentimentPoint(BaseModel):
+    date: _date
+    positive: int
+    neutral: int
+    negative: int
+    total: int
+
+
+class DailyDistributionPoint(BaseModel):
+    date: _date
+    distribution: dict[str, float]  # option_key → % of daily total
+    total: int
+
+
+class RatingDistribution(BaseModel):
+    buckets: dict[str, int]  # "1"–"5" → count
+    total: int
+
+
+class ChoiceDistribution(BaseModel):
+    buckets: dict[str, int]  # option_key → count
+    total: int
+
+
+class SentimentDistribution(BaseModel):
+    positive: int
+    neutral: int
+    negative: int
+    total: int
+
+
+class QuestionAggregation(BaseModel):
+    stable_question_id: uuid.UUID
+    question_text: str
+    question_type: str
+    config: dict | None = None
+    position: int
+    total_responses: int
+    # star
+    rating_distribution: RatingDistribution | None = None
+    daily_avg: list[DailyNumericPoint] | None = None
+    # nps
+    daily_nps_avg: list[DailyNumericPoint] | None = None
+    # text / long_text
+    sentiment_distribution: SentimentDistribution | None = None
+    daily_sentiment: list[DailySentimentPoint] | None = None
+    # multiple_choice / checkbox
+    choice_distribution: ChoiceDistribution | None = None
+    daily_choices: list[DailyDistributionPoint] | None = None
+    # yes_no
+    yes_no_distribution: ChoiceDistribution | None = None
+    daily_yes_pct: list[DailyNumericPoint] | None = None
+    # email / phone
+    daily_count: list[DailyNumericPoint] | None = None
+    # photo
+    photo_count: int | None = None
+
+
+class SurveyDashboardResponse(BaseModel):
+    survey_id: uuid.UUID
+    survey_name: str
+    date_start: datetime
+    date_end: datetime
+    questions: list[QuestionAggregation]
+
+
+class OldQuestionsDashboardResponse(BaseModel):
+    survey_id: uuid.UUID
+    questions: list[QuestionAggregation]

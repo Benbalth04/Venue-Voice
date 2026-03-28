@@ -517,6 +517,30 @@ CREATE TABLE redirect_confirmations (
 );
 CREATE INDEX idx_redirect_confirmations_response_id ON redirect_confirmations(survey_response_id);
 
+-- Survey Dashboard performance indexes
+CREATE INDEX IF NOT EXISTS idx_survey_responses_version_datetime
+    ON survey_responses(survey_version_id, completion_datetime)
+    WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_survey_responses_qr_code_dashboard
+    ON survey_responses(qr_code_id)
+    WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_location_snapshots_location_id
+    ON location_snapshots(location_id);
+
+CREATE INDEX IF NOT EXISTS idx_survey_response_answers_response_nodeletion
+    ON survey_response_answers(survey_response_id)
+    WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_questions_stable_version
+    ON questions(stable_question_id, survey_version_id)
+    WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_ai_analysis_response_question_nodeletion
+    ON ai_analysis(survey_response_id, question_id)
+    WHERE deleted_at IS NULL;
+
 
 --------------------------------------------------
 -- Seed Data

@@ -1735,3 +1735,46 @@ export async function downloadAnalyticsExport(
   a.click()
   URL.revokeObjectURL(a.href)
 }
+
+// ------------------------------------------------------------------
+// Survey Dashboard
+// ------------------------------------------------------------------
+
+export interface SurveyDashboardAPIParams {
+  location_ids?: string[]
+  qr_code_ids?: string[]
+  date_start?: string
+  date_end?: string
+}
+
+function buildDashboardQueryString(params: SurveyDashboardAPIParams): string {
+  const p = new URLSearchParams()
+  params.location_ids?.forEach((id) => p.append("location_ids", id))
+  params.qr_code_ids?.forEach((id) => p.append("qr_code_ids", id))
+  if (params.date_start) p.set("date_start", params.date_start)
+  if (params.date_end) p.set("date_end", params.date_end)
+  return p.toString()
+}
+
+export async function getSurveyDashboard<T = unknown>(
+  token: string,
+  surveyId: string,
+  params: SurveyDashboardAPIParams
+): Promise<T> {
+  const qs = buildDashboardQueryString(params)
+  return apiFetch<T>(`${BACKEND_BASE}/api/v1/surveys/${surveyId}/dashboard?${qs}`, {
+    headers: authGetHeaders(token),
+  })
+}
+
+export async function getSurveyDashboardOldQuestions<T = unknown>(
+  token: string,
+  surveyId: string,
+  params: SurveyDashboardAPIParams
+): Promise<T> {
+  const qs = buildDashboardQueryString(params)
+  return apiFetch<T>(
+    `${BACKEND_BASE}/api/v1/surveys/${surveyId}/dashboard/old-questions?${qs}`,
+    { headers: authGetHeaders(token) }
+  )
+}

@@ -14,6 +14,7 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
   const isEmbedded = searchParams.get("embedded") === "1"
   const isSurveyEditorRoute = /^\/dashboard\/surveys\/[^/]+$/.test(pathname)
   const isFlowEditorRoute = /^\/dashboard\/automations\/flows\/[^/]+$/.test(pathname)
+  const isSurveyDashboardRoute = pathname.startsWith("/dashboard/analytics/survey_dashboard")
 
   if (isEmbedded) {
     return (
@@ -39,6 +40,8 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
             className={
               isSurveyEditorRoute || isFlowEditorRoute
                 ? "flex min-h-0 flex-1 flex-col overflow-hidden"
+                : isSurveyDashboardRoute
+                ? "mx-auto flex-1 w-[95%] max-w-screen-2xl py-8"
                 : "mx-auto flex-1 w-[80%] max-w-6xl py-8"
             }
           >

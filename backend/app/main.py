@@ -13,6 +13,7 @@ from .routes.surveys import router as surveys_router
 from .routes.logic import router as logic_router
 from .routes.survey_public import router as survey_public_router
 from .routes.analytics import router as analytics_router
+from .routes.survey_dashboard import router as survey_dashboard_router
 from .core.errors.app_error import AppError
 from .core.errors.handlers import app_error_handler, generic_exception_handler
 from .tasks.email_reconciliation import start_scheduler, stop_scheduler
@@ -38,6 +39,7 @@ app.include_router(logic_router, prefix="/api/v1", tags=["logic"])
 app.include_router(qr_public_router, prefix="/q", tags=["qr-redirect"])
 app.include_router(survey_public_router, prefix="/api/v1", tags=["survey-public"])
 app.include_router(analytics_router, prefix="/api/v1", tags=["analytics"])
+app.include_router(survey_dashboard_router, prefix="/api/v1", tags=["survey-dashboard"])
 
 # Inner: transforms IDs; outer: CORS (runs first on the request).
 app.add_middleware(
