@@ -63,6 +63,7 @@ export interface QuestionAggregation {
   daily_count?: DailyNumericPoint[];
   // photo
   photo_count?: number;
+  photo_urls?: string[];
 }
 
 export interface SurveyDashboardResponse {

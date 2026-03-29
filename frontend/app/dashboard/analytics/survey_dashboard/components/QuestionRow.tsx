@@ -152,11 +152,33 @@ export function QuestionRow({ question }: Props) {
 
         {chartData.type === "photo" && (
           <ChartCard title="Photo Responses" isEmpty={question.photo_count === 0}>
-            <div className="flex h-full items-center justify-center">
-              <p className="text-sm text-zinc-500">
-                {question.photo_count ?? 0} photo{(question.photo_count ?? 0) !== 1 ? "s" : ""} collected
-              </p>
-            </div>
+            {question.photo_urls && question.photo_urls.length > 0 ? (
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+                {question.photo_urls.map((url, i) => (
+                  <a
+                    key={i}
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block overflow-hidden rounded-lg border border-zinc-200 hover:opacity-90 transition-opacity"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={url}
+                      alt={`Photo response ${i + 1}`}
+                      className="h-24 w-full object-cover"
+                      loading="lazy"
+                    />
+                  </a>
+                ))}
+              </div>
+            ) : (
+              <div className="flex h-full items-center justify-center">
+                <p className="text-sm text-zinc-500">
+                  {question.photo_count ?? 0} photo{(question.photo_count ?? 0) !== 1 ? "s" : ""} collected
+                </p>
+              </div>
+            )}
           </ChartCard>
         )}
 

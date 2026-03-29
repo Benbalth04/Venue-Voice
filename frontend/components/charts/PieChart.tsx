@@ -44,7 +44,7 @@ interface Props extends PieChartProps {
   height?: number;
 }
 
-export function PieChart({ labels, data, backgroundColors, options, height = 200 }: Props) {
+export function PieChart({ labels, data, backgroundColors, options, height = 260 }: Props) {
   const colors = backgroundColors ?? DEFAULT_COLORS.slice(0, labels.length);
   const chartData = {
     labels,

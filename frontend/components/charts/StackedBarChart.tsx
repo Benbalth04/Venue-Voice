@@ -58,7 +58,7 @@ interface Props extends StackedBarChartProps {
   height?: number;
 }
 
-export function StackedBarChart({ labels, datasets, options, height = 200 }: Props) {
+export function StackedBarChart({ labels, datasets, options, height = 260 }: Props) {
   const data = { labels, datasets };
   const merged = { ...DEFAULT_OPTIONS, ...options } as ChartOptions<"bar">;
   return (

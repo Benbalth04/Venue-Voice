@@ -52,7 +52,7 @@ interface Props extends BarChartProps {
   height?: number;
 }
 
-export function BarChart({ labels, datasets, options, height = 200 }: Props) {
+export function BarChart({ labels, datasets, options, height = 260 }: Props) {
   const data = { labels, datasets };
   const merged = { ...DEFAULT_OPTIONS, ...options } as ChartOptions<"bar">;
   return (

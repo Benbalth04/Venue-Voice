@@ -23,19 +23,19 @@ export function ChartCard({
   return (
     <Card className={`flex flex-col gap-3 p-4 ${className}`}>
       <div className="text-sm font-semibold text-zinc-700">{title}</div>
-      <div className="relative min-h-[200px]">
+      <div className="relative min-h-[260px]">
         {isLoading && (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/80">
             <LoadingSpinner size="sm" />
           </div>
         )}
         {!isLoading && error && (
-          <div className="flex h-full min-h-[200px] items-center justify-center">
+          <div className="flex h-full min-h-[260px] items-center justify-center">
             <p className="text-sm text-red-500">{error}</p>
           </div>
         )}
         {!isLoading && !error && isEmpty && (
-          <div className="flex h-full min-h-[200px] items-center justify-center">
+          <div className="flex h-full min-h-[260px] items-center justify-center">
             <p className="text-sm text-zinc-400">No data for selected filters</p>
           </div>
         )}

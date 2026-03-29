@@ -70,7 +70,7 @@ export function LineChart({
   datasets,
   options,
   showLegend = false,
-  height = 200,
+  height = 260,
 }: Props) {
   const data = { labels, datasets };
   const merged: ChartOptions<"line"> = {

@@ -219,7 +219,9 @@ function transformChoice(q: QuestionAggregation): QuestionChartData {
   const dist = q.choice_distribution ?? { buckets: {}, total: 0 };
   const config = q.config as QuestionConfig | null;
   const labelMap = buildOptionLabelMap(config);
-  const keys = Object.keys(dist.buckets);
+  const keys = Object.keys(dist.buckets).sort((a, b) =>
+    (labelMap[a] ?? a).localeCompare(labelMap[b] ?? b)
+  );
 
   const distributionBarProps: BarChartProps = {
     labels: keys.map((k) => labelMap[k] ?? k),
@@ -233,7 +235,9 @@ function transformChoice(q: QuestionAggregation): QuestionChartData {
   };
 
   const daily = q.daily_choices ?? [];
-  const allKeys = collectAllKeys(daily.map((p) => p.distribution), keys);
+  const allKeys = collectAllKeys(daily.map((p) => p.distribution), keys).sort((a, b) =>
+    (labelMap[a] ?? a).localeCompare(labelMap[b] ?? b)
+  );
   const stackedTimeProps: StackedBarChartProps = {
     labels: daily.map((p) => formatDate(p.date)),
     datasets: allKeys.map((k, i) => ({

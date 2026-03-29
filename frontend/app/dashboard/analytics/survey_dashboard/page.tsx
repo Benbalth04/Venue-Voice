@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState, Suspense } from "react";
+import { useCallback, useEffect, useMemo, useState, Suspense } from "react";
 import { RefreshCw } from "lucide-react";
 import { LoadingBlock } from "@/components/ui/LoadingSpinner";
 import { supabase } from "@/lib/supabase/client";
 import { fetchAnalyticsFilters, fetchSurveysList, type AnalyticsFilterOption, type SurveyListItem } from "@/lib/api/client";
-import type { SurveyDashboardResponse } from "@/lib/dashboard/types";
+import type { FilterState, SurveyDashboardResponse } from "@/lib/dashboard/types";
 import { useDashboardFilters } from "./hooks/useDashboardFilters";
 import { useDashboardData } from "./hooks/useDashboardData";
 import { SurveySelector } from "./components/SurveySelector";
@@ -14,13 +14,14 @@ import { QuestionRow } from "./components/QuestionRow";
 import { OldQuestionsAccordion } from "./components/OldQuestionsAccordion";
 
 const REFRESH_COOLDOWN_SECONDS = 60;
+const REGENERATE_COOLDOWN_SECONDS = 30;
 
 async function getToken(): Promise<string | null> {
   const { data } = await supabase.auth.getSession();
   return data.session?.access_token ?? null;
 }
 
-function useRefreshCooldown(lastFetched: number | null): number {
+function useRefreshCooldown(lastFetched: number | null, cooldownSeconds = REFRESH_COOLDOWN_SECONDS): number {
   const [secondsLeft, setSecondsLeft] = useState(0);
 
   useEffect(() => {
@@ -29,7 +30,7 @@ function useRefreshCooldown(lastFetched: number | null): number {
       return;
     }
     const compute = () =>
-      Math.max(0, REFRESH_COOLDOWN_SECONDS - Math.floor((Date.now() - lastFetched) / 1000));
+      Math.max(0, cooldownSeconds - Math.floor((Date.now() - lastFetched) / 1000));
 
     setSecondsLeft(compute());
 
@@ -40,7 +41,7 @@ function useRefreshCooldown(lastFetched: number | null): number {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [lastFetched]);
+  }, [lastFetched, cooldownSeconds]);
 
   return secondsLeft;
 }
@@ -54,6 +55,9 @@ function SurveyDashboardInner() {
   const [metaLoading, setMetaLoading] = useState(true);
 
   const [generated, setGenerated] = useState<string | null>(filters.surveyId);
+  const [appliedFilters, setAppliedFilters] = useState<FilterState>(filters);
+  const [appliedDates, setAppliedDates] = useState<{ dateStart: Date; dateEnd: Date }>(resolvedDates);
+  const [lastGenerated, setLastGenerated] = useState<number | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -81,15 +85,30 @@ function SurveyDashboardInner() {
   const handleGenerate = useCallback(() => {
     if (!filters.surveyId) return;
     setGenerated(filters.surveyId);
-  }, [filters.surveyId]);
+    setAppliedFilters(filters);
+    setAppliedDates(resolvedDates);
+    setLastGenerated(Date.now());
+  }, [filters, resolvedDates]);
 
   const { data, isLoading, error, lastFetched, refetch } = useDashboardData(
     generated,
-    filters,
-    resolvedDates
+    appliedFilters,
+    appliedDates
   );
 
+  const filtersAreDirty = useMemo(() => {
+    if (!data) return false;
+    return (
+      filters.surveyId !== appliedFilters.surveyId ||
+      filters.locationIds.join(",") !== appliedFilters.locationIds.join(",") ||
+      filters.qrCodeIds.join(",") !== appliedFilters.qrCodeIds.join(",") ||
+      resolvedDates.dateStart.toISOString() !== appliedDates.dateStart.toISOString() ||
+      resolvedDates.dateEnd.toISOString() !== appliedDates.dateEnd.toISOString()
+    );
+  }, [data, filters, appliedFilters, resolvedDates, appliedDates]);
+
   const secondsLeft = useRefreshCooldown(lastFetched);
+  const regenerateSecondsLeft = useRefreshCooldown(lastGenerated, REGENERATE_COOLDOWN_SECONDS);
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -112,12 +131,32 @@ function SurveyDashboardInner() {
 
       {/* Filter bar */}
       {filters.surveyId && (
-        <DashboardFilterBar
-          locations={locations}
-          qrCodes={qrCodes}
-          filters={filters}
-          onFilterChange={updateFilters}
-        />
+        <>
+          <DashboardFilterBar
+            locations={locations}
+            qrCodes={qrCodes}
+            filters={filters}
+            onFilterChange={updateFilters}
+          />
+          {filtersAreDirty && (
+            <div className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5">
+              <p className="text-sm text-amber-700">
+                Filters have changed. Regenerate to update the dashboard.
+                {regenerateSecondsLeft > 0 && (
+                  <span className="ml-2 text-amber-500">Next regenerate available in {regenerateSecondsLeft}s</span>
+                )}
+              </p>
+              <button
+                type="button"
+                onClick={handleGenerate}
+                disabled={isLoading || regenerateSecondsLeft > 0}
+                className="shrink-0 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+              >
+                {isLoading ? "Generating…" : "Regenerate Dashboard"}
+              </button>
+            </div>
+          )}
+        </>
       )}
 
       {/* Loading state */}
@@ -158,8 +197,8 @@ function SurveyDashboardInner() {
           </div>
           <OldQuestionsAccordion
             surveyId={data.survey_id}
-            filters={filters}
-            resolvedDates={resolvedDates}
+            filters={appliedFilters}
+            resolvedDates={appliedDates}
           />
         </>
       )}

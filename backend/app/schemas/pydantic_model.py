@@ -1208,6 +1208,7 @@ class QuestionAggregation(BaseModel):
     daily_count: list[DailyNumericPoint] | None = None
     # photo
     photo_count: int | None = None
+    photo_urls: list[str] | None = None
 
 
 class SurveyDashboardResponse(BaseModel):

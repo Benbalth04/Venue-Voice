@@ -5,6 +5,7 @@ Queries are company-scoped and survey-scoped.
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from collections import defaultdict
 from datetime import datetime, timedelta, date as _date
@@ -35,6 +36,12 @@ from ..schemas.pydantic_model import (
     SurveyDashboardResponse,
 )
 from ..core.errors.exceptions import NotFoundError, PermissionError
+from ..integrations.supabase_storage import (
+    get_supabase_service_client,
+    generate_photo_signed_url,
+)
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_DATE_RANGE_DAYS = 30
 _NUMERIC_TYPES = frozenset({"star", "nps"})
@@ -77,6 +84,7 @@ def get_dashboard_data(
     questions = _execute_aggregations(
         db, target_stable_ids, question_meta, resolved_filters, survey_id
     )
+    _attach_photo_signed_urls(questions)
     questions.sort(key=lambda q: q.position)
     return SurveyDashboardResponse(
         survey_id=survey_id,
@@ -132,6 +140,7 @@ def get_old_questions_dashboard_data(
         resolved_filters,
         survey_id,
     )
+    _attach_photo_signed_urls(questions)
     # Sort by most recently responded (question with highest stable_question_id last seen)
     questions.sort(key=lambda q: q.total_responses, reverse=True)
     return OldQuestionsDashboardResponse(survey_id=survey_id, questions=questions)
@@ -426,6 +435,27 @@ def _execute_aggregations(
         row.stable_question_id: row.cnt for row in photo_rows
     }
 
+    # 5b. Photo storage paths for gallery (last 10 per question, most recent first)
+    photo_path_rows = db.execute(
+        select(
+            ab_sq.c.stable_question_id,
+            SurveyResponsePhotoORM.storage_path,
+            SurveyResponsePhotoORM.created_at,
+        )
+        .select_from(ab_sq)
+        .join(
+            SurveyResponsePhotoORM,
+            SurveyResponsePhotoORM.survey_response_id == ab_sq.c.response_id,
+        )
+        .where(ab_sq.c.question_type == _PHOTO_TYPE)
+        .order_by(ab_sq.c.stable_question_id, SurveyResponsePhotoORM.created_at.desc())
+    ).fetchall()
+    photo_paths_by_sq: dict[uuid.UUID, list[str]] = defaultdict(list)
+    for row in photo_path_rows:
+        paths = photo_paths_by_sq[row.stable_question_id]
+        if len(paths) < 10:
+            paths.append(row.storage_path)
+
     # Assemble results
     results: list[QuestionAggregation] = []
     for stable_id, meta in question_meta.items():
@@ -443,7 +473,7 @@ def _execute_aggregations(
         elif qtype in _COUNT_TYPES:
             agg = _assemble_count(meta, count_by_sq[stable_id], total)
         elif qtype == _PHOTO_TYPE:
-            agg = _assemble_photo(meta, photo_by_sq.get(stable_id, 0), total)
+            agg = _assemble_photo(meta, photo_by_sq.get(stable_id, 0), total, photo_paths_by_sq.get(stable_id, []))
         else:
             # Unknown type — emit minimal aggregation
             agg = QuestionAggregation(
@@ -544,17 +574,28 @@ def _assemble_choice(
     meta: QuestionORM, rows: list, total: int
 ) -> QuestionAggregation:
     """Handles multiple_choice and checkbox question types."""
-    # Overall distribution
+    is_checkbox = meta.question_type == "checkbox"
     overall: dict[str, int] = defaultdict(int)
-    # Daily: {date: {choice: count, _total: int}}
     daily_map: dict[_date, dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
     for row in rows:
-        key = row.choice_value or ""
+        raw_key = row.choice_value or ""
         cnt = int(row.cnt or 0)
-        overall[key] += cnt
-        daily_map[row.response_date][key] += cnt
-        daily_map[row.response_date]["_total"] += cnt
+
+        if is_checkbox:
+            # Checkbox values are stored as comma-separated strings (e.g. "opt1, opt2")
+            # by the _to_text helper in survey_public.py — split to count each option.
+            options = [o.strip() for o in raw_key.split(",") if o.strip()]
+            for option in options:
+                if option:
+                    overall[option] += cnt
+                    daily_map[row.response_date][option] += cnt
+            # _total counts responses (not individual option selections)
+            daily_map[row.response_date]["_total"] += cnt
+        else:
+            overall[raw_key] += cnt
+            daily_map[row.response_date][raw_key] += cnt
+            daily_map[row.response_date]["_total"] += cnt
 
     # Build daily distribution (% per option)
     daily: list[DailyDistributionPoint] = []
@@ -643,7 +684,10 @@ def _assemble_count(
 
 
 def _assemble_photo(
-    meta: QuestionORM, photo_count: int, total: int
+    meta: QuestionORM,
+    photo_count: int,
+    total: int,
+    storage_paths: list[str] | None = None,
 ) -> QuestionAggregation:
     """Handles photo question type."""
     return QuestionAggregation(
@@ -654,4 +698,31 @@ def _assemble_photo(
         position=meta.position,
         total_responses=total,
         photo_count=photo_count,
+        photo_urls=storage_paths or [],
     )
+
+
+def _attach_photo_signed_urls(questions: list[QuestionAggregation]) -> None:
+    """Replace storage paths in photo questions with signed URLs (best-effort)."""
+    photo_questions = [
+        q for q in questions if q.question_type == _PHOTO_TYPE and q.photo_urls
+    ]
+    if not photo_questions:
+        return
+    try:
+        client = get_supabase_service_client()
+    except Exception:
+        logger.warning("Supabase client unavailable; photo signed URLs will not be generated")
+        for q in photo_questions:
+            q.photo_urls = []
+        return
+    for q in photo_questions:
+        signed_urls: list[str] = []
+        for path in (q.photo_urls or []):
+            try:
+                signed_urls.append(
+                    generate_photo_signed_url(client=client, storage_path=path, expires_in=3600)
+                )
+            except Exception:
+                logger.warning("Failed to generate signed URL for photo path %s; skipping", path)
+        q.photo_urls = signed_urls
