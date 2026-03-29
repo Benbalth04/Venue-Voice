@@ -804,8 +804,8 @@ async def submit_survey(
             )
 
             if not meta.has_active_flow:
-                # a. No active non-broken flow — redirect to thank-you page.
-                pass
+                # a. No active non-broken flow — still run AI analysis in background.
+                background_tasks.add_task(run_ai_background, survey_response_id=response_id)
 
             elif not meta.has_redirect_action and not meta.requires_ai_sentiment:
                 # has flow, no redirect, no AI — run flow in background.
