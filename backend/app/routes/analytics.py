@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from ..auth.jwt import get_current_user
+from ..auth.subscription import require_active_subscription
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import User as UserORM
 from ..schemas.pydantic_model import (
@@ -38,7 +39,7 @@ from ..models.postgres_model import (
     SurveySession as SurveySessionORM,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_active_subscription)])
 
 
 def _shared_filter_params(

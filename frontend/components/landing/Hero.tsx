@@ -141,7 +141,7 @@ export default function Hero() {
             <motion.h1
               variants={item}
               className="text-5xl lg:text-6xl xl:text-7xl font-extrabold leading-[1.05] tracking-tight text-zinc-900"
-              style={{ fontFamily: 'var(--font-syne)' }}
+              // style={{ fontFamily: 'var(--font-syne)' }}
             >
               Capture real-time
               <br />
@@ -165,19 +165,6 @@ export default function Hero() {
               <WaitlistForm variant="hero" />
             </motion.div>
 
-            {/* Social proof */}
-            <motion.p
-              variants={item}
-              className="text-sm text-zinc-400 flex items-center gap-1.5"
-              style={{ fontFamily: 'var(--font-manrope)' }}
-            >
-              <span className="flex">
-                {[...Array(5)].map((_, i) => (
-                  <Star key={i} className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
-                ))}
-              </span>
-              Join 200+ businesses taking control of their customer experience
-            </motion.p>
           </motion.div>
 
           {/* Right — product screenshot (grid-breaking: overflows + tilted) */}

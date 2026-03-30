@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 logger = logging.getLogger(__name__)
 
 from ..auth.jwt import get_current_user
+from ..auth.subscription import require_active_subscription
 from ..core.errors.exceptions import NotFoundError, PermissionError, ValidationError
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import Company as CompanyORM
@@ -63,7 +64,7 @@ from ..services.rule_service import (
 )
 from ..services.flow_service import get_company_broken_flow_count
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_active_subscription)])
 
 
 def _parse_uuid(value: str, *, code: str, label: str) -> uuid.UUID:

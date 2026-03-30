@@ -14,6 +14,8 @@ from .routes.logic import router as logic_router
 from .routes.survey_public import router as survey_public_router
 from .routes.analytics import router as analytics_router
 from .routes.survey_dashboard import router as survey_dashboard_router
+from .routes.billing import router as billing_router
+from .routes.stripe_webhook import router as stripe_webhook_router
 from .core.errors.app_error import AppError
 from .core.errors.handlers import app_error_handler, generic_exception_handler
 from .tasks.email_reconciliation import start_scheduler, stop_scheduler
@@ -40,6 +42,9 @@ app.include_router(qr_public_router, prefix="/q", tags=["qr-redirect"])
 app.include_router(survey_public_router, prefix="/api/v1", tags=["survey-public"])
 app.include_router(analytics_router, prefix="/api/v1", tags=["analytics"])
 app.include_router(survey_dashboard_router, prefix="/api/v1", tags=["survey-dashboard"])
+app.include_router(billing_router, prefix="/api/v1", tags=["billing"])
+# Webhook endpoint has no JWT auth — Stripe-Signature header is used instead
+app.include_router(stripe_webhook_router, prefix="/api/v1", tags=["stripe-webhook"])
 
 # Inner: transforms IDs; outer: CORS (runs first on the request).
 app.add_middleware(

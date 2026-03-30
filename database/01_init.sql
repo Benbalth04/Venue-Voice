@@ -517,6 +517,26 @@ CREATE TABLE redirect_confirmations (
 );
 CREATE INDEX idx_redirect_confirmations_response_id ON redirect_confirmations(survey_response_id);
 
+--------------------------------------------------
+-- SUBSCRIPTIONS
+--------------------------------------------------
+CREATE TABLE subscriptions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    stripe_customer_id TEXT NOT NULL UNIQUE,
+    stripe_subscription_id TEXT UNIQUE,
+    status TEXT NOT NULL DEFAULT 'trialing' CHECK (
+        status IN ('trialing', 'active', 'past_due', 'canceled', 'incomplete', 'incomplete_expired', 'unpaid')
+    ),
+    trial_end TIMESTAMP NULL,
+    current_period_end TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX idx_subscriptions_user_id ON subscriptions(user_id);
+CREATE INDEX idx_subscriptions_stripe_customer_id ON subscriptions(stripe_customer_id);
+CREATE INDEX idx_subscriptions_stripe_subscription_id ON subscriptions(stripe_subscription_id);
+
 -- Survey Dashboard performance indexes
 CREATE INDEX IF NOT EXISTS idx_survey_responses_version_datetime
     ON survey_responses(survey_version_id, completion_datetime)

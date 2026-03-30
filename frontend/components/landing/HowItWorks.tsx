@@ -1,33 +1,33 @@
 'use client'
 
 import { motion } from 'framer-motion'
-import { QrCode, MessageSquare, Brain, Bell } from 'lucide-react'
+import { QrCode, MessageSquare, Bell, Brain } from 'lucide-react'
 
 const steps = [
   {
     number: '01',
     icon: QrCode,
-    title: 'Scan a QR code',
+    title: 'Scan a QR Code',
     desc: 'Customers scan a QR code displayed at your venue — on tables, receipts, or screens.',
   },
   {
     number: '02',
     icon: MessageSquare,
-    title: 'Leave feedback',
-    desc: 'A short, branded survey opens instantly. No app download, no login required.',
+    title: 'Leave Feedback',
+    desc: 'Your fully customised survey opens instantly. No app download, no login required.',
   },
   {
     number: '03',
     icon: Brain,
-    title: 'AI analyses sentiment',
-    desc: 'Every response is scored automatically. Themes surface in seconds, not weeks.',
+    title: 'AI Analyses Sentiment',
+    desc: 'Advanced AI models process text responses in real-time, uncovering clean insights from messy data.',
   },
   {
     number: '04',
     icon: Bell,
-    title: 'Alerts fire instantly',
-    desc: 'Your team is notified, reviewers are redirected, and workflows run on their own.',
-  },
+    title: 'Automations Activate',
+    desc: 'Set up custom workflows to route users to Google Reviews, or send alerts to your team for immediate action.',
+  }
 ]
 
 const containerVariants = {

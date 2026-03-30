@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.errors.exceptions import ConflictError, NotFoundError, PermissionError, StaleObjectError, ValidationError
 
 from app.auth.jwt import get_current_user
+from app.auth.subscription import require_active_subscription
 from app.db.postgres import get_db_connection
 from app.models.postgres_model import Survey as SurveyORM
 from app.models.postgres_model import User as UserORM
@@ -29,7 +30,7 @@ from app.schemas.pydantic_model import (
 )
 from app.services.survey_validation import validate_survey_schema as validate_survey_schema_service
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_active_subscription)])
 
 
 def _strip_tz(dt: datetime) -> datetime:

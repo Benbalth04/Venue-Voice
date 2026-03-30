@@ -1778,3 +1778,52 @@ export async function getSurveyDashboardOldQuestions<T = unknown>(
     { headers: authGetHeaders(token) }
   )
 }
+
+// ------------------------------------------------------------------
+// Billing
+// ------------------------------------------------------------------
+
+export interface SubscriptionResponse {
+  status: string
+  trial_end: string | null
+  current_period_end: string | null
+  stripe_customer_id: string | null
+  stripe_subscription_id: string | null
+  is_active: boolean
+}
+
+export async function fetchSubscription(
+  accessToken: string
+): Promise<SubscriptionResponse> {
+  return apiFetch<SubscriptionResponse>(
+    `${BACKEND_BASE}/api/v1/billing/subscription`,
+    { headers: authGetHeaders(accessToken) }
+  )
+}
+
+export async function createCheckoutSession(
+  accessToken: string
+): Promise<{ checkout_url: string }> {
+  return apiFetch<{ checkout_url: string }>(
+    `${BACKEND_BASE}/api/v1/billing/checkout`,
+    { method: "POST", headers: authHeaders(accessToken) }
+  )
+}
+
+export async function createPortalSession(
+  accessToken: string
+): Promise<{ portal_url: string }> {
+  return apiFetch<{ portal_url: string }>(
+    `${BACKEND_BASE}/api/v1/billing/portal`,
+    { method: "POST", headers: authHeaders(accessToken) }
+  )
+}
+
+export async function recordCheckoutFailed(
+  accessToken: string
+): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(
+    `${BACKEND_BASE}/api/v1/billing/checkout-failed`,
+    { method: "POST", headers: authHeaders(accessToken) }
+  )
+}

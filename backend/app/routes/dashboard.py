@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from fastapi import APIRouter, Depends, Query
 
 from ..auth.jwt import get_current_user
+from ..auth.subscription import require_active_subscription
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import (
     Company as CompanyORM,
@@ -27,7 +28,7 @@ from ..schemas.pydantic_model import (
     DashboardTrendPoint,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_active_subscription)])
 
 
 def _get_user_company(user: UserORM, db: Session) -> CompanyORM | None:

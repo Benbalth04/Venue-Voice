@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from ..core.errors.exceptions import ConflictError, NotFoundError, StaleObjectError, ValidationError
 
 from ..auth.jwt import get_current_user
+from ..auth.subscription import require_active_subscription
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import (
     Company as CompanyORM,
@@ -34,7 +35,7 @@ def _strip_tz(dt: datetime) -> datetime:
         return dt.astimezone(timezone.utc).replace(tzinfo=None)
     return dt
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_active_subscription)])
 
 
 def _get_company(user: UserORM, db: Session) -> CompanyORM:

@@ -6,11 +6,13 @@ import Link from "next/link"
 import { supabase } from "@/lib/supabase/client"
 import { confirmEmail, fetchUser } from "@/lib/api/client"
 import { Card } from "@/components/ui/card"
+import { useAuth } from "@/contexts/AuthContext"
 
 type CallbackState = "loading" | "error" | "success"
 
 export default function AuthCallbackPage() {
   const router = useRouter()
+  const { user } = useAuth()
   const [state, setState] = useState<CallbackState>("loading")
   const [errorMessage, setErrorMessage] = useState<string>("")
 
@@ -24,6 +26,14 @@ export default function AuthCallbackPage() {
       const errorDescription = params.get("error_description")
 
       if (error) {
+        // If the user is already logged in and verified, the link is simply
+        // stale — redirect silently to the dashboard instead of showing an
+        // error (fixes Gap #7: re-clicking an already-used confirmation link).
+        if (user?.email_verified) {
+          router.replace("/dashboard")
+          return
+        }
+
         const msg =
           error === "access_denied"
             ? errorDescription?.includes("expired") || errorDescription?.includes("invalid")

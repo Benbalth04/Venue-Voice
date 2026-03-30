@@ -63,6 +63,41 @@ class User(SoftDeleteMixin, Base):
     )
 
     companies = relationship("Company", back_populates="owner")
+    subscription = relationship("Subscription", back_populates="user", uselist=False)
+
+
+# --------------------------------------------------
+# SUBSCRIPTIONS
+# --------------------------------------------------
+
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.uuid_generate_v4()
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    stripe_customer_id: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    stripe_subscription_id: Mapped[str | None] = mapped_column(Text, unique=True, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String,
+        nullable=False,
+        default="trialing",
+    )
+    trial_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    current_period_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    user = relationship("User", back_populates="subscription")
 
 
 # --------------------------------------------------

@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from ..auth.jwt import get_current_user
+from ..auth.subscription import require_active_subscription
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import Company as CompanyORM, User as UserORM
 from ..schemas.pydantic_model import (
@@ -24,7 +25,7 @@ from ..services.survey_dashboard_service import (
 )
 from ..core.errors.exceptions import NotFoundError
 
-router = APIRouter(prefix="/surveys", tags=["survey-dashboard"])
+router = APIRouter(prefix="/surveys", tags=["survey-dashboard"], dependencies=[Depends(require_active_subscription)])
 
 
 def _get_company(user: UserORM, db: Session) -> CompanyORM:

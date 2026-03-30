@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 logger = logging.getLogger(__name__)
@@ -33,16 +34,31 @@ def reconciliation_job() -> None:
 
 
 def start_scheduler() -> None:
-    """Register the reconciliation job and start the scheduler."""
+    """Register all recurring jobs and start the scheduler."""
+    from .stripe_reconciliation import stripe_reconciliation_job
+
     scheduler.add_job(
         reconciliation_job,
         IntervalTrigger(minutes=5),
         id="email_reconciliation",
         replace_existing=True,
-        max_instances=1,  # Prevent overlapping runs
+        max_instances=1,
     )
+
+    # Stripe subscription reconciliation — daily at 12:00 AM AEST (14:00 UTC)
+    scheduler.add_job(
+        stripe_reconciliation_job,
+        CronTrigger(hour=14, minute=0, timezone="UTC"),
+        id="stripe_reconciliation",
+        replace_existing=True,
+        max_instances=1,
+    )
+
     scheduler.start()
-    logger.info("Email reconciliation scheduler started (interval: 5 min)")
+    logger.info(
+        "Scheduler started: email_reconciliation (5 min), "
+        "stripe_reconciliation (daily 14:00 UTC / 12:00 AM AEST)"
+    )
 
 
 def stop_scheduler() -> None:

@@ -47,7 +47,7 @@ export default function SignupPage() {
         email,
         password,
         options: {
-          emailRedirectTo: "http://localhost:3000/auth/callback",
+          emailRedirectTo: `${process.env.NEXT_PUBLIC_APP_ORIGIN}/auth/callback`,
           data: {
             first_name: firstName,
             last_name: lastName,
@@ -79,9 +79,16 @@ export default function SignupPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 px-4">
-      <Card className="w-full max-w-md p-6">
-        <h1 className="text-xl font-semibold text-zinc-900">Create account</h1>
+    <div className="flex min-h-screen items-center justify-center bg-zinc-50 px-4 py-12">
+      <div className="w-full max-w-md">
+        {/* Brand header */}
+        <div className="mb-8 text-center">
+          <h1 className="text-2xl font-bold text-zinc-900">Venue Voice</h1>
+          <p className="mt-1 text-sm text-zinc-500">Customer feedback that actually does something</p>
+        </div>
+
+      <Card className="p-6">
+        <h2 className="text-xl font-semibold text-zinc-900">Create your account</h2>
         <p className="mt-1 text-sm text-zinc-600">
           Already have an account?{" "}
           <Link className="font-medium text-violet-700" href="/login">
@@ -177,6 +184,7 @@ export default function SignupPage() {
           </Button>
         </form>
       </Card>
+      </div>
     </div>
   )
 }

@@ -1,9 +1,8 @@
 import type { ReactNode } from "react"
 import { DashboardLayout } from "@/components/layout/DashboardLayout"
 import { AuthGuard } from "@/components/auth/AuthGuard"
-import { EmailVerifiedGuard } from "@/components/auth/EmailVerifiedGuard"
+import { DashboardAccessGuard } from "@/components/auth/DashboardAccessGuard"
 import { SettingsSchemaProvider } from "@/contexts/SettingsSchemaContext"
-import { OnboardingGuard } from "@/components/auth/OnboardingGuard"
 
 export default function DashboardRootLayout({
   children,
@@ -12,13 +11,11 @@ export default function DashboardRootLayout({
 }) {
   return (
     <AuthGuard>
-      <EmailVerifiedGuard>
-        <OnboardingGuard>
-          <SettingsSchemaProvider>
-            <DashboardLayout>{children}</DashboardLayout>
-          </SettingsSchemaProvider>
-        </OnboardingGuard>
-      </EmailVerifiedGuard>
+      <DashboardAccessGuard>
+        <SettingsSchemaProvider>
+          <DashboardLayout>{children}</DashboardLayout>
+        </SettingsSchemaProvider>
+      </DashboardAccessGuard>
     </AuthGuard>
   )
 }

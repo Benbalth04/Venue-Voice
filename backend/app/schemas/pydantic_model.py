@@ -6,6 +6,35 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 from typing import Any, Literal
 
 
+class SubscriptionStatus(str, PyEnum):
+    trialing = "trialing"
+    active = "active"
+    past_due = "past_due"
+    canceled = "canceled"
+    incomplete = "incomplete"
+    incomplete_expired = "incomplete_expired"
+    unpaid = "unpaid"
+
+
+class SubscriptionResponse(BaseModel):
+    status: str
+    trial_end: datetime | None = None
+    current_period_end: datetime | None = None
+    stripe_customer_id: str | None = None
+    stripe_subscription_id: str | None = None
+    is_active: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CheckoutSessionResponse(BaseModel):
+    checkout_url: str
+
+
+class PortalSessionResponse(BaseModel):
+    portal_url: str
+
+
 class DeleteRequest(BaseModel):
     updated_at: datetime
 

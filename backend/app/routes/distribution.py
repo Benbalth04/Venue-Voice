@@ -9,6 +9,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from ..auth.jwt import get_current_user
+from ..auth.subscription import require_active_subscription
 from ..core.errors.exceptions import ConflictError, ExternalAPIError, NotFoundError, RateLimitExceededError, StaleObjectError, ValidationError
 from ..core.rate_limit import check_rate_limit, check_qr_rate_limit
 from ..db.postgres import get_db_connection
@@ -43,7 +44,7 @@ from ..services.qr_code_service import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_active_subscription)])
 public_router = APIRouter()
 
 
