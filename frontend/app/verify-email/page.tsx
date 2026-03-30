@@ -1,6 +1,7 @@
 "use client"
 
 import { Suspense, useEffect, useState } from "react"
+import { CrispChat } from "@/components/crisp/CrispChat"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { supabase } from "@/lib/supabase/client"
@@ -111,8 +112,11 @@ function VerifyEmailContent() {
 
 export default function VerifyEmailPage() {
   return (
-    <Suspense>
-      <VerifyEmailContent />
-    </Suspense>
+    <>
+      <CrispChat />
+      <Suspense>
+        <VerifyEmailContent />
+      </Suspense>
+    </>
   )
 }

@@ -1,6 +1,7 @@
 "use client"
 
 import { Fragment, useEffect, useState } from "react"
+import { CrispChat } from "@/components/crisp/CrispChat"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/contexts/AuthContext"
 import { AuthGuard } from "@/components/auth/AuthGuard"
@@ -186,12 +187,15 @@ function SubscribePageContent() {
 
 export default function SubscribePage() {
   return (
-    <AuthGuard>
-      <EmailVerifiedGuard>
-        <OnboardingGuard>
-          <SubscribePageContent />
-        </OnboardingGuard>
-      </EmailVerifiedGuard>
-    </AuthGuard>
+    <>
+      <CrispChat />
+      <AuthGuard>
+        <EmailVerifiedGuard>
+          <OnboardingGuard>
+            <SubscribePageContent />
+          </OnboardingGuard>
+        </EmailVerifiedGuard>
+      </AuthGuard>
+    </>
   )
 }

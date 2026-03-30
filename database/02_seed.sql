@@ -292,3 +292,4 @@ INSERT INTO survey_response_photos (id, survey_response_id, question_id, storage
 -- PostgreSQL database dump complete
 --
 
+INSERT INTO subscriptions (id, user_id, stripe_customer_id, stripe_subscription_id, status, trial_end, current_period_end, created_at, updated_at) VALUES ("ff30861e-9173-466d-919f-4518a32696cc", "8567b7dc-6049-415e-97d8-740a6483c1b6", "cus_UF02MbFCg8u8i4", "sub_1TGW2QByUVVeu9caV8xXGrYq", "trialing", "2026-04-06 02:58:48", "2026-03-30 02:58:30.701676", "2026-03-30 02:58:53.137566");

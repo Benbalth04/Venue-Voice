@@ -1,6 +1,7 @@
 "use client"
 
 import { Fragment, useState } from "react"
+import { CrispChat } from "@/components/crisp/CrispChat"
 import { useRouter } from "next/navigation"
 import { AuthGuard } from "@/components/auth/AuthGuard"
 import { EmailVerifiedGuard } from "@/components/auth/EmailVerifiedGuard"
@@ -404,12 +405,15 @@ function OnboardingPageContent() {
 
 export default function OnboardingPage() {
   return (
-    <AuthGuard>
-      <EmailVerifiedGuard>
-        <OnboardingIncompleteGuard>
-          <OnboardingPageContent />
-        </OnboardingIncompleteGuard>
-      </EmailVerifiedGuard>
-    </AuthGuard>
+    <>
+      <CrispChat />
+      <AuthGuard>
+        <EmailVerifiedGuard>
+          <OnboardingIncompleteGuard>
+            <OnboardingPageContent />
+          </OnboardingIncompleteGuard>
+        </EmailVerifiedGuard>
+      </AuthGuard>
+    </>
   )
 }
