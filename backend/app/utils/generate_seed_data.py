@@ -27,11 +27,17 @@ except ImportError:
     _TEXTBLOB_AVAILABLE = False
 
 # ── Fixed base entity IDs (from database/02_seed.sql) ────────────────────────
-COMPANY_ID        = "02238978-8b23-408a-a5e4-a0399578229a"
-LOCATION_ID       = "87ff1d9a-d62a-425f-a378-06bab8438eb7"
-SURVEY_VERSION_ID = "c8894ef5-0110-46ad-a87f-52f7c40d7253"  # survey version 3 (latest)
-QR_CODE_ID        = "9b32692f-3ed4-4c48-89fa-f076b57e42c3"
-LOCATION_NAME     = "Main Venue"
+COMPANY_ID = '02238978-8b23-408a-a5e4-a0399578229a'
+
+# Key is location id
+LOCATION_QR_CODE_MAP = {
+    '87ff1d9a-d62a-425f-a378-06bab8438eb7': {"location_name": 'Main Venue', "qr_code_id": '9b32692f-3ed4-4c48-89fa-f076b57e42c3'},
+    '3d2e93eb-440f-4b08-81bb-2bdd2a8b2595': {"location_name": 'Venue 1', "qr_code_id": 'b56aebcc-f7b4-4fdb-88d6-b25251dd2873'},
+    '32dd0259-a813-4df5-b6c5-6d2101a8e907': {"location_name": 'Venue 2', "qr_code_id": 'd8c564c4-9a4d-40c1-9499-fed1e2031869'},
+    '38c2a937-9f6f-4d28-9aed-03f2670f5bb1': {"location_name": 'Venue 3', "qr_code_id": '63a3692e-e922-499c-bc0e-143874178b80'},
+}
+
+SURVEY_VERSION_ID = 'c8894ef5-0110-46ad-a87f-52f7c40d7253'
 
 # ── Question definitions for survey version 3 ────────────────────────────────
 # q_id = questions.id (PK), stable_q_id = questions.stable_question_id
@@ -627,11 +633,16 @@ def _response_sql(
     session_id = str(uuid.uuid4())
     resp_id    = str(uuid.uuid4())
 
+
+    location_id = random.choice(list(LOCATION_QR_CODE_MAP.keys()))
+    location_name = (LOCATION_QR_CODE_MAP.get(location_id)).get("location_name")
+    qr_code_id = (LOCATION_QR_CODE_MAP.get(location_id)).get("qr_code_id")
+
     # 1. location_snapshots
     lines.append(
         f"INSERT INTO location_snapshots "
         f"(id, location_id, name, state, country, created_at, deleted_at) VALUES ("
-        f"'{snap_id}', '{LOCATION_ID}', '{LOCATION_NAME}', NULL, NULL, "
+        f"'{snap_id}', '{location_id}', '{location_name}', NULL, NULL, "
         f"'{_fmt_ts(scan_ts)}', NULL);"
     )
 
@@ -640,7 +651,7 @@ def _response_sql(
         f"INSERT INTO scan_events "
         f"(id, qr_code_id, company_id, location_snapshot_id, scanned_at, "
         f"ip_address, user_agent, session_id, deleted_at) VALUES ("
-        f"'{scan_id}', '{QR_CODE_ID}', '{COMPANY_ID}', '{snap_id}', "
+        f"'{scan_id}', '{qr_code_id}', '{COMPANY_ID}', '{snap_id}', "
         f"'{_fmt_ts(scan_ts)}', '{ip}', '{_sql_escape(ua_str)}', '{session_id}', NULL);"
     )
 
@@ -649,7 +660,7 @@ def _response_sql(
         f"INSERT INTO survey_sessions "
         f"(id, scan_id, survey_version_id, qr_code_id, company_id, location_snapshot_id, "
         f"start_time, end_time, abandoned, device_type, browser, hashed_ip_address, deleted_at) VALUES ("
-        f"'{session_id}', '{scan_id}', '{SURVEY_VERSION_ID}', '{QR_CODE_ID}', "
+        f"'{session_id}', '{scan_id}', '{SURVEY_VERSION_ID}', '{qr_code_id}', "
         f"'{COMPANY_ID}', '{snap_id}', "
         f"'{_fmt_ts(scan_ts)}', '{_fmt_ts(end_ts)}', FALSE, "
         f"'{device_type}', '{browser}', '{hashed_ip}', NULL);"
@@ -691,7 +702,7 @@ def _response_sql(
         f"(id, survey_version_id, session_id, qr_code_id, location_snapshot_id, "
         f"answers, completion_datetime, time_taken_seconds, "
         f"device_type, browser, hashed_ip_address, deleted_at) VALUES ("
-        f"'{resp_id}', '{SURVEY_VERSION_ID}', '{session_id}', '{QR_CODE_ID}', "
+        f"'{resp_id}', '{SURVEY_VERSION_ID}', '{session_id}', '{qr_code_id}', "
         f"'{snap_id}', {_sql_jsonb(answers_dict)}, "
         f"'{_fmt_ts(end_ts)}', {time_taken_secs}, "
         f"'{device_type}', '{browser}', '{hashed_ip}', NULL);"
@@ -726,7 +737,7 @@ def _response_sql(
             f"prompt, raw_response, analysis, sentiment, sentiment_score, "
             f"model, model_version, analysis_version, status, processing_time_ms, "
             f"error, created_at, deleted_at) VALUES ("
-            f"'{uuid.uuid4()}', '{COMPANY_ID}', '{LOCATION_ID}', '{resp_id}', '{stable_q_id}', "
+            f"'{uuid.uuid4()}', '{COMPANY_ID}', '{location_id}', '{resp_id}', '{stable_q_id}', "
             f"'{_sql_escape(full_prompt)}', "
             f"'{_sql_escape(raw_response_value)}', "
             f"{_sql_jsonb(analysis_dict)}, "
@@ -802,5 +813,5 @@ if __name__ == "__main__":
             "9cf65c3b-296e-49e7-a6c1-038d67ee1773/f0de0f8b-bf88-45c4-8d41-8d04757918a6.png",
             "e2921e21-43f2-4ecd-984f-96b1e64fc126/6ecff156-d8c0-4d45-9c8c-17ca4336e3e2.jpg",
         ],
-        output_file="database/03_demo_seed.sql",
+        output_file="database/test_data/04_demo_seed.sql",
     )

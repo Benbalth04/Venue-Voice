@@ -24,7 +24,7 @@ async function getToken(): Promise<string | null> {
   return data.session?.access_token ?? null;
 }
 
-function buildAPIParams(filters: FilterState, dates: { dateStart: Date; dateEnd: Date }): SurveyDashboardAPIParams {
+export function buildAPIParams(filters: FilterState, dates: { dateStart: Date; dateEnd: Date }): SurveyDashboardAPIParams {
   return {
     location_ids: filters.locationIds.length > 0 ? filters.locationIds : undefined,
     qr_code_ids: filters.qrCodeIds.length > 0 ? filters.qrCodeIds : undefined,

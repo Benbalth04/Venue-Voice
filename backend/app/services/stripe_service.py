@@ -2,17 +2,6 @@
 
 All direct Stripe API calls are isolated here so that billing.py, the webhook
 handler, and the reconciliation job share one consistent layer.
-
-CLI → Production webhook migration
------------------------------------
-Currently you are using `stripe listen --forward-to localhost:5000/api/v1/webhooks/stripe`
-which signs events with the secret printed by the CLI (whsec_...).  Set that
-value as STRIPE_WEBHOOK_SECRET in your .env.
-
-When you go to production:
-  1. Register the endpoint in the Stripe Dashboard (Developers → Webhooks).
-  2. Copy the signing secret from the dashboard into STRIPE_WEBHOOK_SECRET.
-  3. No code changes required — the verification logic is identical.
 """
 from __future__ import annotations
 
@@ -33,7 +22,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
 _BASIC_PLAN_PRICE_ID = os.getenv("BASIC_PLAN_PRICE_ID")
-_FREE_TRIAL_DAYS = int(os.getenv("BASIC_PLAN_FREE_TRIAL_DAYS"))
+_FREE_TRIAL_DAYS = int(os.getenv("DEFAULT_FREE_TRIAL_DAYS"))
 _APP_ORIGIN = os.getenv("FRONTEND_ORIGIN")
 
 if _STRIPE_SECRET_KEY:

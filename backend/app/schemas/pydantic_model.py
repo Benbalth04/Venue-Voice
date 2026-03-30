@@ -1240,14 +1240,56 @@ class QuestionAggregation(BaseModel):
     photo_urls: list[str] | None = None
 
 
+class DailyCompletionPoint(BaseModel):
+    date: _date  # serialised to "YYYY-MM-DD"
+    scans: int
+    completions: int
+    rate: float | None  # None when scans == 0
+
+
+class EngagementData(BaseModel):
+    total_scans: int
+    total_completions: int
+    daily_completion_rate: list[DailyCompletionPoint]
+
+
 class SurveyDashboardResponse(BaseModel):
     survey_id: uuid.UUID
     survey_name: str
     date_start: datetime
     date_end: datetime
     questions: list[QuestionAggregation]
+    engagement: EngagementData
 
 
 class OldQuestionsDashboardResponse(BaseModel):
     survey_id: uuid.UUID
     questions: list[QuestionAggregation]
+
+
+# ── Breakdown (expanded chart drill-down) ─────────────────────────────────────
+
+
+class BreakdownSeries(BaseModel):
+    series_id: uuid.UUID
+    series_name: str
+    aggregation: QuestionAggregation
+
+
+class QuestionBreakdownResponse(BaseModel):
+    stable_question_id: str
+    breakdown_by: Literal["location", "qr_code"]
+    series: list[BreakdownSeries]
+
+
+class EngagementBreakdownSeries(BaseModel):
+    series_id: uuid.UUID
+    series_name: str
+    total_scans: int
+    total_completions: int
+    daily_completion_rate: list[DailyCompletionPoint]
+
+
+class EngagementBreakdownResponse(BaseModel):
+    breakdown_by: Literal["location", "qr_code"]
+    series: list[EngagementBreakdownSeries]

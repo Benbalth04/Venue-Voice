@@ -6,7 +6,7 @@ import { LineChart } from "@/components/charts/LineChart";
 import { PieChart } from "@/components/charts/PieChart";
 import { StackedBarChart } from "@/components/charts/StackedBarChart";
 import { transformQuestion } from "@/lib/dashboard/transformers";
-import type { QuestionAggregation } from "@/lib/dashboard/types";
+import type { ExpandChartContext, QuestionAggregation } from "@/lib/dashboard/types";
 import { ChartCard } from "./ChartCard";
 
 const TYPE_LABELS: Record<string, string> = {
@@ -24,10 +24,21 @@ const TYPE_LABELS: Record<string, string> = {
 
 interface Props {
   question: QuestionAggregation;
+  /** When provided, each ChartCard gets an expand button. Not passed for old questions. */
+  onExpand?: (context: ExpandChartContext, title: string) => void;
 }
 
-export function QuestionRow({ question }: Props) {
+export function QuestionRow({ question, onExpand }: Props) {
   const chartData = useMemo(() => transformQuestion(question), [question]);
+
+  type QuestionSubChart = Extract<ExpandChartContext, { kind: "question" }>["subChart"];
+  const expand = onExpand
+    ? (subChart: QuestionSubChart, title: string) =>
+        onExpand(
+          { kind: "question", stableQuestionId: question.stable_question_id, subChart },
+          title
+        )
+    : undefined;
 
   const isEmptyNumerics = (arr?: { count: number }[]) =>
     !arr || arr.length === 0 || arr.every((p) => p.count === 0);
@@ -60,6 +71,7 @@ export function QuestionRow({ question }: Props) {
                 !question.rating_distribution ||
                 question.rating_distribution.total === 0
               }
+              onExpand={expand ? () => expand("distribution", "Rating Distribution") : undefined}
             >
               <BarChart {...chartData.histogramProps} />
             </ChartCard>
@@ -89,6 +101,7 @@ export function QuestionRow({ question }: Props) {
                 !question.sentiment_distribution ||
                 question.sentiment_distribution.total === 0
               }
+              onExpand={expand ? () => expand("sentiment_bar", "Sentiment Distribution") : undefined}
             >
               <BarChart {...chartData.sentimentBarProps} />
             </ChartCard>
@@ -109,12 +122,14 @@ export function QuestionRow({ question }: Props) {
                 !question.choice_distribution ||
                 question.choice_distribution.total === 0
               }
+              onExpand={expand ? () => expand("choice_distribution", "Selection Distribution") : undefined}
             >
               <BarChart {...chartData.distributionBarProps} />
             </ChartCard>
             <ChartCard
               title="Selection Split Over Time"
               isEmpty={!question.daily_choices || question.daily_choices.length === 0}
+              onExpand={expand ? () => expand("stacked", "Selection Split Over Time") : undefined}
             >
               <StackedBarChart {...chartData.stackedTimeProps} />
             </ChartCard>
@@ -129,6 +144,7 @@ export function QuestionRow({ question }: Props) {
                 !question.yes_no_distribution ||
                 question.yes_no_distribution.total === 0
               }
+              onExpand={expand ? () => expand("pie", "Yes / No Distribution") : undefined}
             >
               <PieChart {...chartData.pieProps} />
             </ChartCard>

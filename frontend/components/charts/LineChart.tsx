@@ -12,6 +12,7 @@ import {
   Legend,
   type ChartOptions,
 } from "chart.js";
+import ChartDataLabels from "chartjs-plugin-datalabels";
 import type { LineChartProps } from "@/lib/dashboard/transformers";
 
 ChartJS.register(
@@ -21,12 +22,26 @@ ChartJS.register(
   LineElement,
   Filler,
   Tooltip,
-  Legend
+  Legend,
+  ChartDataLabels
 );
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function fmtTick(value: number | string): string {
+  const n = Number(value);
+  if (n >= 10000) return Math.round(n / 1000) + "k";
+  if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, "") + "k";
+  if (n % 1 !== 0) return n.toFixed(1);
+  return String(n);
+}
+
+// ── Chart defaults ────────────────────────────────────────────────────────────
 
 const DEFAULT_OPTIONS: ChartOptions<"line"> = {
   responsive: true,
   maintainAspectRatio: false,
+  layout: { padding: { top: 20 } },
   interaction: { mode: "index", intersect: false },
   plugins: {
     legend: { display: false },
@@ -39,6 +54,9 @@ const DEFAULT_OPTIONS: ChartOptions<"line"> = {
       padding: 10,
       cornerRadius: 8,
     },
+    // Data labels are intentionally off for line charts — time-series are too
+    // dense and the labels clutter the chart more than they help.
+    datalabels: { display: false },
   },
   scales: {
     x: {
@@ -49,7 +67,13 @@ const DEFAULT_OPTIONS: ChartOptions<"line"> = {
     y: {
       border: { display: false },
       grid: { color: "#f4f4f5" },
-      ticks: { display: false },
+      ticks: {
+        display: true,
+        color: "#d4d4d8",
+        font: { size: 10 },
+        maxTicksLimit: 5,
+        callback: (v) => fmtTick(v),
+      },
       beginAtZero: true,
     },
   },
@@ -59,10 +83,14 @@ const DEFAULT_OPTIONS: ChartOptions<"line"> = {
   },
 };
 
+// ── Component ─────────────────────────────────────────────────────────────────
+
 interface Props extends LineChartProps {
   options?: ChartOptions<"line">;
   showLegend?: boolean;
   height?: number;
+  /** Rotate x-axis tick labels 45° — useful in wider expanded chart modals. */
+  xLabelAngled?: boolean;
 }
 
 export function LineChart({
@@ -71,6 +99,7 @@ export function LineChart({
   options,
   showLegend = false,
   height = 260,
+  xLabelAngled,
 }: Props) {
   const data = { labels, datasets };
   const merged: ChartOptions<"line"> = {
@@ -86,6 +115,14 @@ export function LineChart({
       },
     },
   };
+  if (xLabelAngled) {
+    const baseX = (merged.scales?.["x"] ?? {}) as Record<string, unknown>;
+    const baseTicks = (baseX["ticks"] ?? {}) as Record<string, unknown>;
+    merged.scales = {
+      ...merged.scales,
+      x: { ...baseX, ticks: { ...baseTicks, maxRotation: 45, minRotation: 45 } },
+    } as ChartOptions<"line">["scales"];
+  }
   return (
     <div style={{ height }}>
       <Line data={data} options={merged} />

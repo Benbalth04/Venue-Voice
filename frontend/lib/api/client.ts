@@ -1779,6 +1779,33 @@ export async function getSurveyDashboardOldQuestions<T = unknown>(
   )
 }
 
+export async function getQuestionBreakdown<T = unknown>(
+  token: string,
+  surveyId: string,
+  params: SurveyDashboardAPIParams & { question_id: string; breakdown_by: "location" | "qr_code" }
+): Promise<T> {
+  const p = new URLSearchParams(buildDashboardQueryString(params))
+  p.set("question_id", params.question_id)
+  p.set("breakdown_by", params.breakdown_by)
+  return apiFetch<T>(
+    `${BACKEND_BASE}/api/v1/surveys/${surveyId}/dashboard/question-breakdown?${p.toString()}`,
+    { headers: authGetHeaders(token) }
+  )
+}
+
+export async function getEngagementBreakdown<T = unknown>(
+  token: string,
+  surveyId: string,
+  params: SurveyDashboardAPIParams & { breakdown_by: "location" | "qr_code" }
+): Promise<T> {
+  const p = new URLSearchParams(buildDashboardQueryString(params))
+  p.set("breakdown_by", params.breakdown_by)
+  return apiFetch<T>(
+    `${BACKEND_BASE}/api/v1/surveys/${surveyId}/dashboard/engagement-breakdown?${p.toString()}`,
+    { headers: authGetHeaders(token) }
+  )
+}
+
 // ------------------------------------------------------------------
 // Billing
 // ------------------------------------------------------------------

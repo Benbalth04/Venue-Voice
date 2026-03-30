@@ -15,8 +15,12 @@ from sqlalchemy.orm import Session
 
 from ..models.postgres_model import (
     AIAnalysis as AIAnalysisORM,
+    Location as LocationORM,
     LocationSnapshot as LocationSnapshotORM,
+    LocationSurvey as LocationSurveyORM,
+    QRCode as QRCodeORM,
     Question as QuestionORM,
+    ScanEvent as ScanEventORM,
     Survey as SurveyORM,
     SurveyResponse as SurveyResponseORM,
     SurveyResponseAnswer as SurveyResponseAnswerORM,
@@ -24,18 +28,24 @@ from ..models.postgres_model import (
     SurveyVersion as SurveyVersionORM,
 )
 from ..schemas.pydantic_model import (
+    BreakdownSeries,
     ChoiceDistribution,
+    DailyCompletionPoint,
     DailyDistributionPoint,
     DailyNumericPoint,
     DailySentimentPoint,
     DashboardFilterParams,
+    EngagementBreakdownResponse,
+    EngagementBreakdownSeries,
+    EngagementData,
     OldQuestionsDashboardResponse,
     QuestionAggregation,
+    QuestionBreakdownResponse,
     RatingDistribution,
     SentimentDistribution,
     SurveyDashboardResponse,
 )
-from ..core.errors.exceptions import NotFoundError, PermissionError
+from ..core.errors.exceptions import NotFoundError, PermissionError, ValidationError
 from ..integrations.supabase_storage import (
     get_supabase_service_client,
     generate_photo_signed_url,
@@ -62,6 +72,13 @@ def get_dashboard_data(
 ) -> SurveyDashboardResponse:
     survey = _verify_survey_ownership(db, survey_id, company_id)
     date_start, date_end = _resolve_date_range(filters)
+    resolved_filters = DashboardFilterParams(
+        location_ids=filters.location_ids,
+        qr_code_ids=filters.qr_code_ids,
+        date_start=date_start,
+        date_end=date_end,
+    )
+    engagement = get_engagement_data(db, survey_id, resolved_filters)
     active_questions = _get_active_questions(db, survey_id)
     if not active_questions:
         return SurveyDashboardResponse(
@@ -70,17 +87,12 @@ def get_dashboard_data(
             date_start=date_start,
             date_end=date_end,
             questions=[],
+            engagement=engagement,
         )
     question_meta: dict[uuid.UUID, QuestionORM] = {
         q.stable_question_id: q for q in active_questions
     }
     target_stable_ids = list(question_meta.keys())
-    resolved_filters = DashboardFilterParams(
-        location_ids=filters.location_ids,
-        qr_code_ids=filters.qr_code_ids,
-        date_start=date_start,
-        date_end=date_end,
-    )
     questions = _execute_aggregations(
         db, target_stable_ids, question_meta, resolved_filters, survey_id
     )
@@ -92,6 +104,7 @@ def get_dashboard_data(
         date_start=date_start,
         date_end=date_end,
         questions=questions,
+        engagement=engagement,
     )
 
 
@@ -146,7 +159,394 @@ def get_old_questions_dashboard_data(
     return OldQuestionsDashboardResponse(survey_id=survey_id, questions=questions)
 
 
+def get_engagement_data(
+    db: Session,
+    survey_id: uuid.UUID,
+    filters: DashboardFilterParams,
+) -> EngagementData:
+    """Return scan/completion totals and daily completion rate for a survey."""
+    # ── Daily scans: ScanEvent → QRCode → LocationSurvey scoped to survey ──
+    scans_stmt = (
+        select(
+            cast(ScanEventORM.scanned_at, Date).label("scan_date"),
+            func.count(ScanEventORM.id).label("cnt"),
+        )
+        .join(QRCodeORM, QRCodeORM.id == ScanEventORM.qr_code_id)
+        .join(LocationSurveyORM, LocationSurveyORM.id == QRCodeORM.location_survey_id)
+        .where(
+            LocationSurveyORM.survey_id == survey_id,
+            ScanEventORM.deleted_at.is_(None),
+            QRCodeORM.deleted_at.is_(None),
+            LocationSurveyORM.deleted_at.is_(None),
+            ScanEventORM.scanned_at >= filters.date_start,
+            ScanEventORM.scanned_at < filters.date_end,
+        )
+    )
+    if filters.qr_code_ids:
+        scans_stmt = scans_stmt.where(ScanEventORM.qr_code_id.in_(filters.qr_code_ids))
+    if filters.location_ids:
+        scans_stmt = scans_stmt.where(QRCodeORM.location_id.in_(filters.location_ids))
+    scans_stmt = scans_stmt.group_by(cast(ScanEventORM.scanned_at, Date))
+
+    scan_rows = db.execute(scans_stmt).fetchall()
+    daily_scans: dict[_date, int] = {row.scan_date: int(row.cnt) for row in scan_rows}
+    total_scans = sum(daily_scans.values())
+
+    # ── Daily completions: reuse filtered responses subquery ──
+    fr_sq = _build_filtered_responses_subquery(db, survey_id, filters)
+    comp_rows = db.execute(
+        select(
+            cast(fr_sq.c.completion_datetime, Date).label("comp_date"),
+            func.count(fr_sq.c.id).label("cnt"),
+        ).group_by(cast(fr_sq.c.completion_datetime, Date))
+    ).fetchall()
+    daily_completions: dict[_date, int] = {row.comp_date: int(row.cnt) for row in comp_rows}
+    total_completions = sum(daily_completions.values())
+
+    # ── Merge by date and compute rate ──
+    all_dates = sorted(daily_scans.keys() | daily_completions.keys())
+    daily_points: list[DailyCompletionPoint] = []
+    for d in all_dates:
+        scans = daily_scans.get(d, 0)
+        completions = daily_completions.get(d, 0)
+        rate = round(completions / scans, 4) if scans > 0 else None
+        daily_points.append(
+            DailyCompletionPoint(date=d, scans=scans, completions=completions, rate=rate)
+        )
+
+    return EngagementData(
+        total_scans=total_scans,
+        total_completions=total_completions,
+        daily_completion_rate=daily_points,
+    )
+
+
+def get_question_breakdown(
+    db: Session,
+    survey_id: uuid.UUID,
+    company_id: uuid.UUID,
+    stable_question_id: uuid.UUID,
+    breakdown_by: str,
+    filters: DashboardFilterParams,
+) -> QuestionBreakdownResponse:
+    """Return per-location or per-QR-code aggregations for a single question."""
+    _verify_survey_ownership(db, survey_id, company_id)
+    date_start, date_end = _resolve_date_range(filters)
+    resolved_filters = DashboardFilterParams(
+        location_ids=filters.location_ids,
+        qr_code_ids=filters.qr_code_ids,
+        date_start=date_start,
+        date_end=date_end,
+    )
+
+    # Look up the most recent question row for this stable_question_id in this survey
+    question_meta_row = (
+        db.query(QuestionORM)
+        .join(SurveyVersionORM, SurveyVersionORM.id == QuestionORM.survey_version_id)
+        .filter(
+            SurveyVersionORM.survey_id == survey_id,
+            QuestionORM.stable_question_id == stable_question_id,
+            SurveyVersionORM.deleted_at.is_(None),
+            QuestionORM.deleted_at.is_(None),
+        )
+        .order_by(QuestionORM.id.desc())
+        .first()
+    )
+    if not question_meta_row:
+        raise ValidationError(
+            code="QUESTION_NOT_FOUND",
+            message="Question not found in this survey",
+            details={"stable_question_id": str(stable_question_id)},
+        )
+
+    # Find distinct entities (locations or QR codes) with ≥1 answer for this question
+    if breakdown_by == "location":
+        entity_rows = _get_question_entities_by_location(
+            db, survey_id, stable_question_id, resolved_filters
+        )
+    else:
+        entity_rows = _get_question_entities_by_qr_code(
+            db, survey_id, stable_question_id, resolved_filters
+        )
+
+    # For each entity, run aggregation with a narrowed filter
+    series: list[BreakdownSeries] = []
+    question_meta_map = {question_meta_row.stable_question_id: question_meta_row}
+
+    for entity_id, entity_name in entity_rows:
+        if breakdown_by == "location":
+            entity_filter = DashboardFilterParams(
+                location_ids=[entity_id],
+                qr_code_ids=resolved_filters.qr_code_ids,
+                date_start=resolved_filters.date_start,
+                date_end=resolved_filters.date_end,
+            )
+        else:
+            entity_filter = DashboardFilterParams(
+                location_ids=resolved_filters.location_ids,
+                qr_code_ids=[entity_id],
+                date_start=resolved_filters.date_start,
+                date_end=resolved_filters.date_end,
+            )
+        aggs = _execute_aggregations(
+            db,
+            [stable_question_id],
+            question_meta_map,
+            entity_filter,
+            survey_id,
+        )
+        if aggs:
+            series.append(
+                BreakdownSeries(
+                    series_id=entity_id,
+                    series_name=entity_name,
+                    aggregation=aggs[0],
+                )
+            )
+
+    return QuestionBreakdownResponse(
+        stable_question_id=str(stable_question_id),
+        breakdown_by=breakdown_by,
+        series=series,
+    )
+
+
+def get_engagement_breakdown(
+    db: Session,
+    survey_id: uuid.UUID,
+    company_id: uuid.UUID,
+    breakdown_by: str,
+    filters: DashboardFilterParams,
+) -> EngagementBreakdownResponse:
+    """Return per-location or per-QR-code engagement data for a survey."""
+    _verify_survey_ownership(db, survey_id, company_id)
+    date_start, date_end = _resolve_date_range(filters)
+    resolved_filters = DashboardFilterParams(
+        location_ids=filters.location_ids,
+        qr_code_ids=filters.qr_code_ids,
+        date_start=date_start,
+        date_end=date_end,
+    )
+
+    if breakdown_by == "location":
+        entity_rows = _get_engagement_entities_by_location(db, survey_id, resolved_filters)
+    else:
+        entity_rows = _get_engagement_entities_by_qr_code(db, survey_id, resolved_filters)
+
+    series: list[EngagementBreakdownSeries] = []
+    for entity_id, entity_name in entity_rows:
+        if breakdown_by == "location":
+            entity_filter = DashboardFilterParams(
+                location_ids=[entity_id],
+                qr_code_ids=resolved_filters.qr_code_ids,
+                date_start=resolved_filters.date_start,
+                date_end=resolved_filters.date_end,
+            )
+        else:
+            entity_filter = DashboardFilterParams(
+                location_ids=resolved_filters.location_ids,
+                qr_code_ids=[entity_id],
+                date_start=resolved_filters.date_start,
+                date_end=resolved_filters.date_end,
+            )
+        engagement = get_engagement_data(db, survey_id, entity_filter)
+        series.append(
+            EngagementBreakdownSeries(
+                series_id=entity_id,
+                series_name=entity_name,
+                total_scans=engagement.total_scans,
+                total_completions=engagement.total_completions,
+                daily_completion_rate=engagement.daily_completion_rate,
+            )
+        )
+
+    return EngagementBreakdownResponse(breakdown_by=breakdown_by, series=series)
+
+
 # ── Internal helpers ──────────────────────────────────────────────────────────
+
+def _get_question_entities_by_location(
+    db: Session,
+    survey_id: uuid.UUID,
+    stable_question_id: uuid.UUID,
+    filters: DashboardFilterParams,
+) -> list[tuple[uuid.UUID, str]]:
+    """Distinct locations with ≥1 answer for the given question in the filter window."""
+    stmt = (
+        select(LocationSnapshotORM.location_id, LocationORM.name)
+        .select_from(SurveyResponseAnswerORM)
+        .join(SurveyResponseORM, SurveyResponseORM.id == SurveyResponseAnswerORM.survey_response_id)
+        .join(SurveyVersionORM, SurveyVersionORM.id == SurveyResponseORM.survey_version_id)
+        .join(LocationSnapshotORM, LocationSnapshotORM.id == SurveyResponseORM.location_snapshot_id)
+        .join(LocationORM, LocationORM.id == LocationSnapshotORM.location_id)
+        .where(
+            SurveyVersionORM.survey_id == survey_id,
+            SurveyResponseAnswerORM.question_id == stable_question_id,
+            SurveyResponseORM.deleted_at.is_(None),
+            SurveyResponseAnswerORM.deleted_at.is_(None),
+            SurveyResponseORM.completion_datetime >= filters.date_start,
+            SurveyResponseORM.completion_datetime < filters.date_end,
+        )
+        .group_by(LocationSnapshotORM.location_id, LocationORM.name)
+        .order_by(LocationORM.name)
+    )
+    if filters.location_ids:
+        stmt = stmt.where(LocationSnapshotORM.location_id.in_(filters.location_ids))
+    if filters.qr_code_ids:
+        stmt = stmt.where(SurveyResponseORM.qr_code_id.in_(filters.qr_code_ids))
+    rows = db.execute(stmt).fetchall()
+    return [(row[0], row[1]) for row in rows]
+
+
+def _get_question_entities_by_qr_code(
+    db: Session,
+    survey_id: uuid.UUID,
+    stable_question_id: uuid.UUID,
+    filters: DashboardFilterParams,
+) -> list[tuple[uuid.UUID, str]]:
+    """Distinct QR codes with ≥1 answer for the given question in the filter window."""
+    stmt = (
+        select(SurveyResponseORM.qr_code_id, QRCodeORM.title)
+        .select_from(SurveyResponseAnswerORM)
+        .join(SurveyResponseORM, SurveyResponseORM.id == SurveyResponseAnswerORM.survey_response_id)
+        .join(SurveyVersionORM, SurveyVersionORM.id == SurveyResponseORM.survey_version_id)
+        .join(QRCodeORM, QRCodeORM.id == SurveyResponseORM.qr_code_id)
+        .where(
+            SurveyVersionORM.survey_id == survey_id,
+            SurveyResponseAnswerORM.question_id == stable_question_id,
+            SurveyResponseORM.deleted_at.is_(None),
+            SurveyResponseAnswerORM.deleted_at.is_(None),
+            SurveyResponseORM.completion_datetime >= filters.date_start,
+            SurveyResponseORM.completion_datetime < filters.date_end,
+        )
+        .group_by(SurveyResponseORM.qr_code_id, QRCodeORM.title)
+        .order_by(QRCodeORM.title)
+    )
+    if filters.qr_code_ids:
+        stmt = stmt.where(SurveyResponseORM.qr_code_id.in_(filters.qr_code_ids))
+    if filters.location_ids:
+        stmt = (
+            stmt
+            .join(LocationSnapshotORM, LocationSnapshotORM.id == SurveyResponseORM.location_snapshot_id)
+            .where(LocationSnapshotORM.location_id.in_(filters.location_ids))
+        )
+    rows = db.execute(stmt).fetchall()
+    return [(row[0], row[1]) for row in rows]
+
+
+def _get_engagement_entities_by_location(
+    db: Session,
+    survey_id: uuid.UUID,
+    filters: DashboardFilterParams,
+) -> list[tuple[uuid.UUID, str]]:
+    """Distinct locations with scan or completion activity for this survey."""
+    # Locations from completions
+    comp_stmt = (
+        select(LocationSnapshotORM.location_id, LocationORM.name)
+        .select_from(SurveyResponseORM)
+        .join(SurveyVersionORM, SurveyVersionORM.id == SurveyResponseORM.survey_version_id)
+        .join(LocationSnapshotORM, LocationSnapshotORM.id == SurveyResponseORM.location_snapshot_id)
+        .join(LocationORM, LocationORM.id == LocationSnapshotORM.location_id)
+        .where(
+            SurveyVersionORM.survey_id == survey_id,
+            SurveyResponseORM.deleted_at.is_(None),
+            SurveyResponseORM.completion_datetime >= filters.date_start,
+            SurveyResponseORM.completion_datetime < filters.date_end,
+            LocationSnapshotORM.deleted_at.is_(None),
+            LocationORM.deleted_at.is_(None),
+        )
+        .group_by(LocationSnapshotORM.location_id, LocationORM.name)
+    )
+    if filters.location_ids:
+        comp_stmt = comp_stmt.where(LocationSnapshotORM.location_id.in_(filters.location_ids))
+    if filters.qr_code_ids:
+        comp_stmt = comp_stmt.where(SurveyResponseORM.qr_code_id.in_(filters.qr_code_ids))
+
+    # Locations from scans
+    scan_stmt = (
+        select(QRCodeORM.location_id, LocationORM.name)
+        .select_from(ScanEventORM)
+        .join(QRCodeORM, QRCodeORM.id == ScanEventORM.qr_code_id)
+        .join(LocationSurveyORM, LocationSurveyORM.id == QRCodeORM.location_survey_id)
+        .join(LocationORM, LocationORM.id == QRCodeORM.location_id)
+        .where(
+            LocationSurveyORM.survey_id == survey_id,
+            ScanEventORM.deleted_at.is_(None),
+            QRCodeORM.deleted_at.is_(None),
+            LocationSurveyORM.deleted_at.is_(None),
+            LocationORM.deleted_at.is_(None),
+            ScanEventORM.scanned_at >= filters.date_start,
+            ScanEventORM.scanned_at < filters.date_end,
+        )
+        .group_by(QRCodeORM.location_id, LocationORM.name)
+    )
+    if filters.location_ids:
+        scan_stmt = scan_stmt.where(QRCodeORM.location_id.in_(filters.location_ids))
+    if filters.qr_code_ids:
+        scan_stmt = scan_stmt.where(ScanEventORM.qr_code_id.in_(filters.qr_code_ids))
+
+    seen: dict[uuid.UUID, str] = {}
+    for row in db.execute(comp_stmt).fetchall() + db.execute(scan_stmt).fetchall():
+        if row[0] not in seen:
+            seen[row[0]] = row[1]
+    return sorted(seen.items(), key=lambda x: x[1])
+
+
+def _get_engagement_entities_by_qr_code(
+    db: Session,
+    survey_id: uuid.UUID,
+    filters: DashboardFilterParams,
+) -> list[tuple[uuid.UUID, str]]:
+    """Distinct QR codes with scan or completion activity for this survey."""
+    # QR codes from completions
+    comp_stmt = (
+        select(SurveyResponseORM.qr_code_id, QRCodeORM.title)
+        .select_from(SurveyResponseORM)
+        .join(SurveyVersionORM, SurveyVersionORM.id == SurveyResponseORM.survey_version_id)
+        .join(QRCodeORM, QRCodeORM.id == SurveyResponseORM.qr_code_id)
+        .where(
+            SurveyVersionORM.survey_id == survey_id,
+            SurveyResponseORM.deleted_at.is_(None),
+            SurveyResponseORM.completion_datetime >= filters.date_start,
+            SurveyResponseORM.completion_datetime < filters.date_end,
+            QRCodeORM.deleted_at.is_(None),
+        )
+        .group_by(SurveyResponseORM.qr_code_id, QRCodeORM.title)
+    )
+    if filters.qr_code_ids:
+        comp_stmt = comp_stmt.where(SurveyResponseORM.qr_code_id.in_(filters.qr_code_ids))
+
+    # QR codes from scans
+    scan_stmt = (
+        select(ScanEventORM.qr_code_id, QRCodeORM.title)
+        .select_from(ScanEventORM)
+        .join(QRCodeORM, QRCodeORM.id == ScanEventORM.qr_code_id)
+        .join(LocationSurveyORM, LocationSurveyORM.id == QRCodeORM.location_survey_id)
+        .where(
+            LocationSurveyORM.survey_id == survey_id,
+            ScanEventORM.deleted_at.is_(None),
+            QRCodeORM.deleted_at.is_(None),
+            LocationSurveyORM.deleted_at.is_(None),
+            ScanEventORM.scanned_at >= filters.date_start,
+            ScanEventORM.scanned_at < filters.date_end,
+        )
+        .group_by(ScanEventORM.qr_code_id, QRCodeORM.title)
+    )
+    if filters.qr_code_ids:
+        scan_stmt = scan_stmt.where(ScanEventORM.qr_code_id.in_(filters.qr_code_ids))
+    if filters.location_ids:
+        scan_stmt = (
+            scan_stmt
+            .join(LocationORM, LocationORM.id == QRCodeORM.location_id)
+            .where(QRCodeORM.location_id.in_(filters.location_ids))
+        )
+
+    seen: dict[uuid.UUID, str] = {}
+    for row in db.execute(comp_stmt).fetchall() + db.execute(scan_stmt).fetchall():
+        if row[0] not in seen:
+            seen[row[0]] = row[1]
+    return sorted(seen.items(), key=lambda x: x[1])
+
 
 def _verify_survey_ownership(
     db: Session, survey_id: uuid.UUID, company_id: uuid.UUID

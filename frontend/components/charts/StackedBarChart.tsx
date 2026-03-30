@@ -14,6 +14,14 @@ import type { StackedBarChartProps } from "@/lib/dashboard/transformers";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Tooltip, Legend);
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function fmtPctTick(value: number | string): string {
+  return `${value}%`;
+}
+
+// ── Chart defaults ────────────────────────────────────────────────────────────
+
 const DEFAULT_OPTIONS: ChartOptions<"bar"> = {
   responsive: true,
   maintainAspectRatio: false,
@@ -31,6 +39,8 @@ const DEFAULT_OPTIONS: ChartOptions<"bar"> = {
       padding: 10,
       cornerRadius: 8,
     },
+    // Disable per-segment labels on stacked bars — too cluttered for small segments.
+    datalabels: { display: false },
   },
   scales: {
     x: {
@@ -43,7 +53,13 @@ const DEFAULT_OPTIONS: ChartOptions<"bar"> = {
       stacked: true,
       border: { display: false },
       grid: { color: "#f4f4f5" },
-      ticks: { display: false },
+      ticks: {
+        display: true,
+        color: "#d4d4d8",
+        font: { size: 10 },
+        maxTicksLimit: 5,
+        callback: (v) => fmtPctTick(v),
+      },
       beginAtZero: true,
       max: 100,
     },
@@ -52,6 +68,8 @@ const DEFAULT_OPTIONS: ChartOptions<"bar"> = {
     bar: { borderRadius: 4 },
   },
 };
+
+// ── Component ─────────────────────────────────────────────────────────────────
 
 interface Props extends StackedBarChartProps {
   options?: ChartOptions<"bar">;

@@ -7,11 +7,14 @@ import { supabase } from "@/lib/supabase/client";
 import { fetchAnalyticsFilters, fetchSurveysList, type AnalyticsFilterOption, type SurveyListItem } from "@/lib/api/client";
 import type { FilterState, SurveyDashboardResponse } from "@/lib/dashboard/types";
 import { useDashboardFilters } from "./hooks/useDashboardFilters";
-import { useDashboardData } from "./hooks/useDashboardData";
+import { useDashboardData, buildAPIParams } from "./hooks/useDashboardData";
 import { SurveySelector } from "./components/SurveySelector";
 import { DashboardFilterBar } from "./components/DashboardFilterBar";
+import { EngagementSection } from "./components/EngagementSection";
+import { ExpandedChartModal } from "./components/ExpandedChartModal";
 import { QuestionRow } from "./components/QuestionRow";
 import { OldQuestionsAccordion } from "./components/OldQuestionsAccordion";
+import type { ExpandChartContext } from "@/lib/dashboard/types";
 
 const REFRESH_COOLDOWN_SECONDS = 60;
 const REGENERATE_COOLDOWN_SECONDS = 30;
@@ -58,6 +61,7 @@ function SurveyDashboardInner() {
   const [appliedFilters, setAppliedFilters] = useState<FilterState>(filters);
   const [appliedDates, setAppliedDates] = useState<{ dateStart: Date; dateEnd: Date }>(resolvedDates);
   const [lastGenerated, setLastGenerated] = useState<number | null>(null);
+  const [expandedChart, setExpandedChart] = useState<{ context: ExpandChartContext; title: string } | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -89,6 +93,10 @@ function SurveyDashboardInner() {
     setAppliedDates(resolvedDates);
     setLastGenerated(Date.now());
   }, [filters, resolvedDates]);
+
+  const handleExpandChart = useCallback((context: ExpandChartContext, title: string) => {
+    setExpandedChart({ context, title });
+  }, []);
 
   const { data, isLoading, error, lastFetched, refetch } = useDashboardData(
     generated,
@@ -171,8 +179,8 @@ function SurveyDashboardInner() {
         </div>
       )}
 
-      {/* Empty state */}
-      {!isLoading && !error && data && data.questions.length === 0 && (
+      {/* Empty state — no scans and no questions */}
+      {!isLoading && !error && data && data.questions.length === 0 && (data.engagement?.total_scans ?? 0) === 0 && (
         <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-6 py-12 text-center">
           <p className="text-sm font-medium text-zinc-600">No submissions found</p>
           <p className="mt-1 text-xs text-zinc-400">
@@ -182,7 +190,7 @@ function SurveyDashboardInner() {
       )}
 
       {/* Dashboard content */}
-      {!isLoading && !error && data && data.questions.length > 0 && (
+      {!isLoading && !error && data && (data.questions.length > 0 || (data.engagement?.total_scans ?? 0) > 0) && (
         <>
           <DashboardMeta
             data={data}
@@ -190,17 +198,51 @@ function SurveyDashboardInner() {
             isRefreshing={isLoading}
             onRefresh={refetch}
           />
-          <div className="flex flex-col gap-8">
-            {data.questions.map((q) => (
-              <QuestionRow key={q.stable_question_id} question={q} />
-            ))}
-          </div>
+
+          {/* Engagement section */}
+          {data.engagement && (
+            <EngagementSection
+              engagement={data.engagement}
+              onExpandScanCompletion={() =>
+                handleExpandChart({ kind: "engagement", subChart: "scan_completion" }, "Scans vs Completions")
+              }
+              onExpandCompletionRate={() =>
+                handleExpandChart({ kind: "engagement", subChart: "completion_rate" }, "Completion Rate Over Time")
+              }
+            />
+          )}
+
+          {data.questions.length > 0 && (
+            <div className="flex flex-col gap-8">
+              {data.questions.map((q) => (
+                <QuestionRow
+                  key={q.stable_question_id}
+                  question={q}
+                  onExpand={handleExpandChart}
+                />
+              ))}
+            </div>
+          )}
+
           <OldQuestionsAccordion
             surveyId={data.survey_id}
             filters={appliedFilters}
             resolvedDates={appliedDates}
           />
         </>
+      )}
+
+      {/* Expanded chart modal */}
+      {expandedChart && generated && (
+        <ExpandedChartModal
+          surveyId={generated}
+          context={expandedChart.context}
+          title={expandedChart.title}
+          filters={buildAPIParams(appliedFilters, appliedDates)}
+          availableLocations={locations}
+          availableQrCodes={qrCodes}
+          onClose={() => setExpandedChart(null)}
+        />
       )}
 
       {/* Initial empty state */}

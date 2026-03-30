@@ -66,18 +66,79 @@ export interface QuestionAggregation {
   photo_urls?: string[];
 }
 
+export interface DailyCompletionPoint {
+  date: string; // "YYYY-MM-DD"
+  scans: number;
+  completions: number;
+  rate: number | null; // null when scans === 0
+}
+
+export interface EngagementData {
+  total_scans: number;
+  total_completions: number;
+  daily_completion_rate: DailyCompletionPoint[];
+}
+
 export interface SurveyDashboardResponse {
   survey_id: string;
   survey_name: string;
   date_start: string;
   date_end: string;
   questions: QuestionAggregation[];
+  engagement: EngagementData;
 }
 
 export interface OldQuestionsDashboardResponse {
   survey_id: string;
   questions: QuestionAggregation[];
 }
+
+// ── Breakdown (expanded chart drill-down) ────────────────────────────────────
+
+export interface BreakdownSeries {
+  series_id: string;
+  series_name: string;
+  aggregation: QuestionAggregation;
+}
+
+export interface QuestionBreakdownResponse {
+  stable_question_id: string;
+  breakdown_by: string;
+  series: BreakdownSeries[];
+}
+
+export interface EngagementBreakdownSeries {
+  series_id: string;
+  series_name: string;
+  total_scans: number;
+  total_completions: number;
+  daily_completion_rate: DailyCompletionPoint[];
+}
+
+export interface EngagementBreakdownResponse {
+  breakdown_by: string;
+  series: EngagementBreakdownSeries[];
+}
+
+export type ExpandChartContext =
+  | {
+      kind: "question";
+      stableQuestionId: string;
+      subChart:
+        | "distribution"        // star rating histogram
+        | "choice_distribution" // checkbox / multiple_choice bar
+        | "timeseries"          // star avg / NPS avg over time
+        | "yes_pct_line"        // yes_no % yes over time
+        | "sentiment_bar"
+        | "sentiment_line"
+        | "stacked"
+        | "pie"
+        | "count_line";
+    }
+  | {
+      kind: "engagement";
+      subChart: "scan_completion" | "completion_rate";
+    };
 
 export type QuestionType =
   | "star"
