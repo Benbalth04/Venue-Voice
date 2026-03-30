@@ -7,6 +7,8 @@ import { Topbar } from "@/components/layout/Topbar"
 import { UnreadResponsesProvider } from "@/components/layout/UnreadResponsesContext"
 import { BrokenRulesProvider } from "@/components/layout/BrokenRulesContext"
 import { BrokenFlowsProvider } from "@/components/layout/BrokenFlowsContext"
+import { OnboardingTourProvider } from "@/contexts/OnboardingTourContext"
+import { OnboardingTourOverlay } from "@/components/onboarding/OnboardingTourOverlay"
 
 export function DashboardLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname()
@@ -32,6 +34,7 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
     <UnreadResponsesProvider>
       <BrokenRulesProvider>
       <BrokenFlowsProvider>
+      <OnboardingTourProvider>
       <div className="flex min-h-screen bg-zinc-50">
         <Sidebar />
         <div className="flex min-h-screen min-w-0 flex-1 flex-col">
@@ -49,6 +52,8 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
           </main>
         </div>
       </div>
+      <OnboardingTourOverlay />
+      </OnboardingTourProvider>
       </BrokenFlowsProvider>
       </BrokenRulesProvider>
     </UnreadResponsesProvider>

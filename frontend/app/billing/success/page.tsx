@@ -30,7 +30,7 @@ export default function BillingSuccessPage() {
 
   useEffect(() => {
     if (countdown === 0) {
-      router.replace("/dashboard")
+      router.replace("/dashboard?tour=1")
     }
   }, [countdown, router])
 

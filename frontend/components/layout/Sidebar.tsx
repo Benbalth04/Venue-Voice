@@ -28,6 +28,7 @@ type NavChild = {
   showUnreadCount?: boolean
   showBrokenFlowCount?: boolean
   showBrokenRuleCount?: boolean
+  tourId?: string
 }
 
 type NavItem = {
@@ -37,6 +38,7 @@ type NavItem = {
   disabled?: boolean
   exact?: boolean
   children?: NavChild[]
+  tourId?: string
 }
 
 const items: NavItem[] = [
@@ -51,16 +53,18 @@ const items: NavItem[] = [
         label: "View Responses",
         exact: true,
         showUnreadCount: true,
+        tourId: "tour-view-responses",
       },
       {
         href: "/dashboard/analytics/survey_dashboard",
         label: "Survey Dashboards",
         exact: true,
+        tourId: "tour-survey-dashboards",
       },
     ],
   },
-  { href: "/dashboard/surveys", label: "Surveys", icon: MessageSquare },
-  { href: "/dashboard/locations", label: "Locations", icon: MapPin },
+  { href: "/dashboard/surveys", label: "Surveys", icon: MessageSquare, tourId: "tour-surveys" },
+  { href: "/dashboard/locations", label: "Locations", icon: MapPin, tourId: "tour-locations" },
   {
     href: "/dashboard/distribution/assign_surveys",
     label: "Distribution",
@@ -70,11 +74,13 @@ const items: NavItem[] = [
         href: "/dashboard/distribution/assign_surveys",
         label: "Assign Surveys",
         exact: true,
+        tourId: "tour-assign-surveys",
       },
       {
         href: "/dashboard/distribution/qr_codes",
         label: "QR Codes",
         exact: true,
+        tourId: "tour-qr-codes",
       },
     ],
   },
@@ -83,8 +89,8 @@ const items: NavItem[] = [
     label: "Automations",
     icon: Zap,
     children: [
-      { href: "/dashboard/automations/flows", label: "Flows", exact: true, showBrokenFlowCount: true },
-      { href: "/dashboard/automations/rules", label: "Rules", exact: true, showBrokenRuleCount: true },
+      { href: "/dashboard/automations/flows", label: "Flows", exact: true, showBrokenFlowCount: true, tourId: "tour-flows" },
+      { href: "/dashboard/automations/rules", label: "Rules", exact: true, showBrokenRuleCount: true, tourId: "tour-rules" },
       {
         href: "/dashboard/automations/notification_groups",
         label: "Notification Groups",
@@ -157,6 +163,7 @@ export function Sidebar() {
               ) : item.href ? (
                 <Link
                   href={item.href}
+                  id={item.tourId}
                   className={[
                     "flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-small transition-colors",
                     active ? "bg-violet-50 text-violet-700" : "text-zinc-700 hover:bg-zinc-50",
@@ -175,6 +182,7 @@ export function Sidebar() {
                       <Link
                         key={child.href}
                         href={child.href}
+                        id={child.tourId}
                         className={[
                           "flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-small transition-colors",
                           childActive
