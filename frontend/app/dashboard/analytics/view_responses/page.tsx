@@ -5,15 +5,12 @@ import {
   Camera,
   ChevronLeft,
   ChevronRight,
-  Download,
-  FileSpreadsheet,
   Filter,
   Loader2,
   X,
 } from "lucide-react"
 import { supabase } from "@/lib/supabase/client"
 import {
-  downloadAnalyticsExport,
   fetchAnalyticsFilters,
   fetchAnalyticsResponseDetail,
   fetchAnalyticsResponses,
@@ -24,6 +21,7 @@ import {
   type AnalyticsFilters,
   type AnalyticsResponseRow,
 } from "@/lib/api/client"
+import { AiAnalysisInfoTooltip } from "@/components/analytics/AiAnalysisInfoTooltip"
 import { DataTable } from "@/components/ui/DataTable"
 import { useUnreadResponses } from "@/components/layout/UnreadResponsesContext"
 
@@ -47,6 +45,27 @@ function formatDate(iso: string): string {
 async function getToken(): Promise<string | null> {
   const { data } = await supabase.auth.getSession()
   return data.session?.access_token ?? null
+}
+
+function sentimentPillClass(sentiment: string): string {
+  const s = sentiment.toLowerCase()
+  if (s === "positive") return "bg-emerald-50 text-emerald-700"
+  if (s === "negative") return "bg-red-50 text-red-700"
+  return "bg-zinc-100 text-zinc-600"
+}
+
+function formatSentimentLabel(sentiment: string): string {
+  const s = sentiment.toLowerCase()
+  if (s === "positive" || s === "negative" || s === "neutral") {
+    return s.charAt(0).toUpperCase() + s.slice(1)
+  }
+  return sentiment
+}
+
+function showSentimentPill(a: AnalyticsAnswerDetail): boolean {
+  const t = a.question_type
+  if (t !== "text" && t !== "long_text") return false
+  return Boolean(a.sentiment && String(a.sentiment).trim())
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -156,10 +175,11 @@ function ReviewModal({
           )}
           {!loading && !error && answers.length > 0 && (() => {
             const sorted = [...answers].sort((a, b) => {
-              const cmp =
-                sortKey === "question"
-                  ? a.question_text.localeCompare(b.question_text)
-                  : (a.answer_value ?? "").localeCompare(b.answer_value ?? "")
+              if (sortKey === "question") {
+                const cmp = a.position - b.position
+                return sortDir === "asc" ? cmp : -cmp
+              }
+              const cmp = (a.answer_value ?? "").localeCompare(b.answer_value ?? "")
               return sortDir === "asc" ? cmp : -cmp
             })
             return (
@@ -171,7 +191,28 @@ function ReviewModal({
                     label: "Question",
                     sortable: true,
                     align: "left",
-                    render: (a) => <span className="text-zinc-700">{a.question_text}</span>,
+                    render: (a) => {
+                      const isText =
+                        a.question_type === "text" || a.question_type === "long_text"
+                      return (
+                        <span className="flex flex-wrap items-center gap-2 text-zinc-700">
+                          <span>{a.question_text}</span>
+                          {showSentimentPill(a) && a.sentiment ? (
+                            <span
+                              className={[
+                                "inline-flex shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold",
+                                sentimentPillClass(a.sentiment),
+                              ].join(" ")}
+                            >
+                              {formatSentimentLabel(a.sentiment)}
+                            </span>
+                          ) : null}
+                          {isText ? (
+                            <AiAnalysisInfoTooltip variant="past" />
+                          ) : null}
+                        </span>
+                      )
+                    },
                   },
                   {
                     key: "answer",
@@ -213,13 +254,16 @@ function ReviewModal({
                           </button>
                         )
                       }
+                      const text = a.answer_value ?? ""
                       return (
-                        <span className="font-medium text-zinc-900">{a.answer_value || "—"}</span>
+                        <span className="font-medium text-zinc-900">
+                          {text === "" ? "—" : text}
+                        </span>
                       )
                     },
                   },
                 ]}
-                getRowKey={(a) => `${a.question_text}-${a.answer_value ?? ""}`}
+                getRowKey={(a) => a.question_id ?? `p-${a.position}-${a.question_text}`}
                 sortKey={sortKey}
                 sortDir={sortDir}
                 onSort={(key) => {
@@ -422,7 +466,6 @@ export default function AnalyticsPage() {
   const [filtersError, setFiltersError] = useState<string | null>(null)
 
   const [reviewId, setReviewId] = useState<string | null>(null)
-  const [exporting, setExporting] = useState<"csv" | "excel" | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
 
@@ -505,19 +548,6 @@ export default function AnalyticsPage() {
     }))
   }
 
-  async function handleExport(format: "csv" | "excel") {
-    setExporting(format)
-    try {
-      const token = await getToken()
-      if (!token) throw new Error("Not authenticated")
-      await downloadAnalyticsExport(token, format, buildApiFilters())
-    } catch (e) {
-      alert(extractErrorMessage(e, "Export failed"))
-    } finally {
-      setExporting(null)
-    }
-  }
-
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
 
   const handleMarkResponseRead = useCallback(
@@ -533,40 +563,9 @@ export default function AnalyticsPage() {
   return (
     <div className="flex flex-col gap-4 p-6">
       {/* Page header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold text-zinc-900">Analytics</h1>
-          <p className="text-sm text-zinc-500">Survey response data across your company.</p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => handleExport("csv")}
-            disabled={exporting != null}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
-          >
-            {exporting === "csv" ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Download className="h-3.5 w-3.5" />
-            )}
-            Export CSV
-          </button>
-          <button
-            type="button"
-            onClick={() => handleExport("excel")}
-            disabled={exporting != null}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
-          >
-            {exporting === "excel" ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <FileSpreadsheet className="h-3.5 w-3.5" />
-            )}
-            Export Excel
-          </button>
-        </div>
+      <div>
+        <h1 className="text-xl font-semibold text-zinc-900">Analytics</h1>
+        <p className="text-sm text-zinc-500">Survey response data across your company.</p>
       </div>
 
       {/* Filters */}

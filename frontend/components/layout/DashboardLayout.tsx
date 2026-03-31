@@ -7,6 +7,7 @@ import { Topbar } from "@/components/layout/Topbar"
 import { UnreadResponsesProvider } from "@/components/layout/UnreadResponsesContext"
 import { BrokenRulesProvider } from "@/components/layout/BrokenRulesContext"
 import { BrokenFlowsProvider } from "@/components/layout/BrokenFlowsContext"
+import { QRSubmissionBlockedProvider } from "@/components/layout/QRSubmissionBlockedContext"
 import { OnboardingTourProvider } from "@/contexts/OnboardingTourContext"
 import { OnboardingTourOverlay } from "@/components/onboarding/OnboardingTourOverlay"
 
@@ -23,7 +24,9 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
       <UnreadResponsesProvider>
         <BrokenRulesProvider>
           <BrokenFlowsProvider>
-            <main className="mx-auto flex-1 w-[80%] max-w-6xl py-8">{children}</main>
+            <QRSubmissionBlockedProvider>
+              <main className="mx-auto flex-1 w-[80%] max-w-6xl py-8">{children}</main>
+            </QRSubmissionBlockedProvider>
           </BrokenFlowsProvider>
         </BrokenRulesProvider>
       </UnreadResponsesProvider>
@@ -34,6 +37,7 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
     <UnreadResponsesProvider>
       <BrokenRulesProvider>
       <BrokenFlowsProvider>
+      <QRSubmissionBlockedProvider>
       <OnboardingTourProvider>
       <div className="flex min-h-screen bg-zinc-50">
         <Sidebar />
@@ -54,6 +58,7 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
       </div>
       <OnboardingTourOverlay />
       </OnboardingTourProvider>
+      </QRSubmissionBlockedProvider>
       </BrokenFlowsProvider>
       </BrokenRulesProvider>
     </UnreadResponsesProvider>

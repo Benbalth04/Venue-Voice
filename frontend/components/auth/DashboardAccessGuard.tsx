@@ -95,13 +95,15 @@ export function DashboardAccessGuard({ children }: { children: ReactNode }) {
   const [checking, setChecking] = useState(true)
   const [blockReason, setBlockReason] = useState<BlockReason | null>(null)
 
+  /* eslint-disable react-hooks/set-state-in-effect -- sync guard branches before async fetchSubscription */
   useEffect(() => {
     if (authLoading) return
 
     // AuthGuard (above this in the tree) handles unauthenticated users.
     // If we reach here without a session, just stop checking — AuthGuard
     // will redirect to /login.
-    if (!user || !session?.access_token) {
+    const token = session?.access_token ?? null
+    if (!user || !token) {
       setChecking(false)
       return
     }
@@ -118,13 +120,17 @@ export function DashboardAccessGuard({ children }: { children: ReactNode }) {
       return
     }
 
-    fetchSubscription(session.access_token)
+    fetchSubscription(token)
       .then((sub) => {
         if (!sub.is_active) setBlockReason("subscription")
+        else setBlockReason(null)
       })
       .catch(() => setBlockReason("sub_error"))
       .finally(() => setChecking(false))
-  }, [authLoading, user, session])
+    // Depends on `session.access_token` (string), not session object identity, so we re-check
+    // after JWT refresh (e.g. tab return) without spurious runs on unrelated session updates.
+  }, [authLoading, user, session?.access_token])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // Show spinner while AuthContext or subscription check is in progress
   if (authLoading || checking) {

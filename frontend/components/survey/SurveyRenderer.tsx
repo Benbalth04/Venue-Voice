@@ -271,35 +271,45 @@ function NpsQuestion({
   onChange: (v: number | null) => void
 }) {
   const selectedColor = settings.selected_colour ?? "#7C3AED"
+  const count = Math.max(1, Math.min(10, settings.max_score ?? 10)) + 1
+  const minLabel = settings.minLabel ?? settings.min_label ?? "Not likely"
+  const maxLabel = settings.maxLabel ?? settings.max_label ?? "Extremely likely"
+
   return (
-    <div>
-      <div className="flex flex-wrap gap-1">
-        {Array.from(
-          { length: Math.max(1, Math.min(10, settings.max_score ?? 10)) + 1 },
-          (_, i) => {
-            const score = i
-            return (
-          <button
-            key={score}
-            type="button"
-            onClick={() => onChange(value === score ? null : score)}
-            style={(value === score) ? { borderColor: selectedColor, backgroundColor: selectedColor } : undefined}
-            className={[
-              "h-9 w-9 rounded-lg text-sm font-medium border transition-colors",
-              value === score
-                ? "border-current text-white"
-                : "border-zinc-200 bg-white text-zinc-700 hover:border-violet-300 hover:bg-zinc-50",
-            ].join(" ")}
-          >
-            {score}
-          </button>
-            )
-          },
-        )}
+    <div className="w-full max-w-full">
+      <div className="mb-1.5 flex justify-between gap-2 text-[11px] text-zinc-400">
+        <span className="min-w-0 shrink text-left">{minLabel}</span>
+        <span className="min-w-0 shrink text-right">{maxLabel}</span>
       </div>
-      <div className="mt-1 flex justify-between text-[11px] text-zinc-400">
-        <span>{settings.minLabel ?? settings.min_label ?? "Not likely"}</span>
-        <span>{settings.maxLabel ?? settings.max_label ?? "Extremely likely"}</span>
+      <div
+        className="grid w-full gap-1"
+        style={{ gridTemplateColumns: `repeat(${count}, minmax(0, 1fr))` }}
+        role="group"
+        aria-label="NPS score"
+      >
+        {Array.from({ length: count }, (_, i) => {
+          const score = i
+          return (
+            <button
+              key={score}
+              type="button"
+              onClick={() => onChange(value === score ? null : score)}
+              style={
+                value === score
+                  ? { borderColor: selectedColor, backgroundColor: selectedColor }
+                  : undefined
+              }
+              className={[
+                "flex min-h-9 min-w-0 w-full items-center justify-center rounded-lg border text-sm font-medium transition-colors",
+                value === score
+                  ? "border-current text-white"
+                  : "border-zinc-200 bg-white text-zinc-700 hover:border-violet-300 hover:bg-zinc-50",
+              ].join(" ")}
+            >
+              {score}
+            </button>
+          )
+        })}
       </div>
     </div>
   )

@@ -32,6 +32,7 @@ from ..schemas.pydantic_model import (
 from ..services.location_survey_service import (
     derive_location_survey_status,
     derive_qr_code_status,
+    get_company_submission_blocked_active_qr_count,
     utc_now,
 )
 from ..services.qr_code_service import (
@@ -203,6 +204,19 @@ def list_qr_codes(
         .all()
     )
     return [_to_response(qr) for qr in qrs]
+
+
+@router.get("/qr-codes/submission-blocked-summary")
+def get_qr_codes_submission_blocked_summary(
+    user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    company = _get_company(user, db)
+    return {
+        "submission_blocked_active_qr_count": get_company_submission_blocked_active_qr_count(
+            db, company.id
+        ),
+    }
 
 
 @router.get("/qr-codes/{qr_id}", response_model=QRCodeResponse)

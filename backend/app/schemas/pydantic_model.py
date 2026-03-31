@@ -416,6 +416,9 @@ class AnalyticsAnswerDetail(BaseModel):
     answer_value: str
     has_photo: bool = False
     question_id: str | None = None
+    position: int
+    question_type: str | None = None
+    sentiment: str | None = None
 
 
 class AnalyticsResponseDetail(BaseModel):

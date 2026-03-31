@@ -20,6 +20,7 @@ import { supabase } from "@/lib/supabase/client"
 import { useUnreadResponses } from "@/components/layout/UnreadResponsesContext"
 import { useBrokenRules } from "@/components/layout/BrokenRulesContext"
 import { useBrokenFlows } from "@/components/layout/BrokenFlowsContext"
+import { useQRSubmissionBlocked } from "@/components/layout/QRSubmissionBlockedContext"
 
 type NavChild = {
   href: string
@@ -28,6 +29,7 @@ type NavChild = {
   showUnreadCount?: boolean
   showBrokenFlowCount?: boolean
   showBrokenRuleCount?: boolean
+  showSubmissionBlockedQrCount?: boolean
   tourId?: string
 }
 
@@ -80,6 +82,7 @@ const items: NavItem[] = [
         href: "/dashboard/distribution/qr_codes",
         label: "QR Codes",
         exact: true,
+        showSubmissionBlockedQrCount: true,
         tourId: "tour-qr-codes",
       },
     ],
@@ -113,6 +116,7 @@ export function Sidebar() {
   const { unreadCount } = useUnreadResponses()
   const { brokenRuleCount } = useBrokenRules()
   const { brokenFlowCount } = useBrokenFlows()
+  const { submissionBlockedActiveQrCount } = useQRSubmissionBlocked()
 
   async function onLogout() {
     supabase.auth.signOut().catch((err) => {
@@ -217,6 +221,16 @@ export function Sidebar() {
                           >
                             <title>
                               {`${brokenRuleCount} broken rule${brokenRuleCount === 1 ? "" : "s"}`}
+                            </title>
+                          </AlertTriangle>
+                        ) : null}
+                        {child.showSubmissionBlockedQrCount && submissionBlockedActiveQrCount > 0 ? (
+                          <AlertTriangle
+                            className="h-3 w-3 shrink-0 text-amber-500"
+                            aria-label={`${submissionBlockedActiveQrCount} active QR code${submissionBlockedActiveQrCount === 1 ? "" : "s"} not accepting submissions`}
+                          >
+                            <title>
+                              {`${submissionBlockedActiveQrCount} active QR code${submissionBlockedActiveQrCount === 1 ? "" : "s"} not accepting submissions`}
                             </title>
                           </AlertTriangle>
                         ) : null}

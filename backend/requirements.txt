@@ -6,7 +6,6 @@ pydantic[email]
 SQLAlchemy
 python-jose[cryptography]
 itsdangerous
-openpyxl
 openai
 segno
 Pillow

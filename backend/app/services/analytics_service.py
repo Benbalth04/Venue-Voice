@@ -5,7 +5,6 @@ No route logic lives here – only data access.
 """
 from __future__ import annotations
 
-import io
 import uuid
 from datetime import datetime
 from typing import Any
@@ -14,6 +13,7 @@ from sqlalchemy import func, case, literal_column, and_, or_
 from sqlalchemy.orm import Session
 
 from ..models.postgres_model import (
+    AIAnalysis as AIAnalysisORM,
     Company as CompanyORM,
     Location as LocationORM,
     LocationSnapshot as LocationSnapshotORM,
@@ -350,6 +350,20 @@ def get_analytics_filters(*, user_id: uuid.UUID, db: Session) -> AnalyticsFilter
     )
 
 
+_ORPHAN_POSITION_BASE = 10_000
+
+
+def _answer_value_from_norm_answer(a: SurveyResponseAnswerORM, *, has_photo: bool) -> str:
+    """String value for display; preserves numeric 0 (Decimal(0) is falsy — do not use `or`)."""
+    if has_photo:
+        return "Photo uploaded"
+    if a.text_value is not None:
+        return str(a.text_value)
+    if a.numeric_value is not None:
+        return str(a.numeric_value)
+    return ""
+
+
 def get_response_detail(
     *, response_id: uuid.UUID, user_id: uuid.UUID, db: Session
 ) -> AnalyticsResponseDetail:
@@ -430,45 +444,138 @@ def get_response_detail(
         str(p.question_id) for p in photo_rows if p.question_id is not None
     }
 
+    sentiment_rows = (
+        db.query(AIAnalysisORM.question_id, AIAnalysisORM.sentiment)
+        .filter(
+            AIAnalysisORM.survey_response_id == response_id,
+            AIAnalysisORM.deleted_at.is_(None),
+        )
+        .all()
+    )
+    sentiment_by_qid: dict[str, str] = {}
+    for qid, sent in sentiment_rows:
+        if qid is not None and sent:
+            sentiment_by_qid[str(qid)] = sent
+
     answer_details: list[AnalyticsAnswerDetail] = []
 
     if norm_answers:
+        answers_by_qid: dict[str, SurveyResponseAnswerORM] = {}
         for a in norm_answers:
-            q_text = "Unknown question"
+            if a.question_id is not None:
+                answers_by_qid[str(a.question_id)] = a
+
+        consumed_qids: set[str] = set()
+        for q in questions:
+            sid = str(q.stable_question_id)
+            if sid not in answers_by_qid:
+                continue
+            consumed_qids.add(sid)
+            a = answers_by_qid[sid]
+            has_photo = sid in photo_question_ids
+            answer_details.append(
+                AnalyticsAnswerDetail(
+                    question_text=q.question_text,
+                    answer_value=_answer_value_from_norm_answer(a, has_photo=has_photo),
+                    has_photo=has_photo,
+                    question_id=sid,
+                    position=q.position,
+                    question_type=q.question_type,
+                    sentiment=sentiment_by_qid.get(sid),
+                )
+            )
+
+        orphan_i = 0
+        for a in norm_answers:
             q_id_str = str(a.question_id) if a.question_id else None
+            if q_id_str and q_id_str in consumed_qids:
+                continue
+            orphan_i += 1
+            pos = _ORPHAN_POSITION_BASE + orphan_i
+            q_text = "Unknown question"
+            q_type: str | None = None
             if q_id_str and q_id_str in q_by_id:
-                q_text = q_by_id[q_id_str].question_text
-
+                oq = q_by_id[q_id_str]
+                q_text = oq.question_text
+                q_type = oq.question_type
             has_photo = q_id_str is not None and q_id_str in photo_question_ids
-            if has_photo:
-                # Don't expose the raw storage path — show a friendly placeholder
-                answer_value = "Photo uploaded"
-            else:
-                answer_value = str(a.text_value) if a.text_value is not None else str(a.numeric_value or "")
-
             answer_details.append(
                 AnalyticsAnswerDetail(
                     question_text=q_text,
-                    answer_value=answer_value,
+                    answer_value=_answer_value_from_norm_answer(a, has_photo=has_photo),
                     has_photo=has_photo,
                     question_id=q_id_str,
+                    position=pos,
+                    question_type=q_type,
+                    sentiment=sentiment_by_qid.get(q_id_str) if q_id_str else None,
                 )
             )
     else:
         # Fall back to JSONB answers field keyed by question id/key
         raw_answers: dict = resp.answers or {}
-        for q_key, val in raw_answers.items():
+        consumed_raw_keys: set[str] = set()
+
+        for q in questions:
+            sid = str(q.stable_question_id)
+            val = None
+            if q.question_key in raw_answers:
+                val = raw_answers[q.question_key]
+                consumed_raw_keys.add(q.question_key)
+            elif sid in raw_answers:
+                val = raw_answers[sid]
+                consumed_raw_keys.add(sid)
+            else:
+                continue
+
+            has_photo = sid in photo_question_ids
+            display = _format_answer(val)
+            if has_photo:
+                display = "Photo uploaded"
+            answer_details.append(
+                AnalyticsAnswerDetail(
+                    question_text=q.question_text,
+                    answer_value=display,
+                    has_photo=has_photo,
+                    question_id=sid,
+                    position=q.position,
+                    question_type=q.question_type,
+                    sentiment=sentiment_by_qid.get(sid),
+                )
+            )
+
+        orphan_i = 0
+        for raw_key, val in raw_answers.items():
+            if raw_key in consumed_raw_keys:
+                continue
+            orphan_i += 1
+            pos = _ORPHAN_POSITION_BASE + orphan_i
             q_text = "Unknown question"
-            if q_key in q_by_key:
-                q_text = q_by_key[q_key].question_text
-            elif q_key in q_by_id:
-                q_text = q_by_id[q_key].question_text
+            q_type: str | None = None
+            q_stable: str | None = None
+            if raw_key in q_by_key:
+                oq = q_by_key[raw_key]
+                q_text = oq.question_text
+                q_type = oq.question_type
+                q_stable = str(oq.stable_question_id)
+            elif raw_key in q_by_id:
+                oq = q_by_id[raw_key]
+                q_text = oq.question_text
+                q_type = oq.question_type
+                q_stable = raw_key
+
+            has_photo = q_stable is not None and q_stable in photo_question_ids
+            display = _format_answer(val)
+            if has_photo:
+                display = "Photo uploaded"
             answer_details.append(
                 AnalyticsAnswerDetail(
                     question_text=q_text,
-                    answer_value=_format_answer(val),
-                    has_photo=False,
-                    question_id=None,
+                    answer_value=display,
+                    has_photo=has_photo,
+                    question_id=q_stable,
+                    position=pos,
+                    question_type=q_type,
+                    sentiment=sentiment_by_qid.get(q_stable) if q_stable else None,
                 )
             )
 
@@ -485,64 +592,3 @@ def _format_answer(val: Any) -> str:
     if isinstance(val, list):
         return ", ".join(str(v) for v in val)
     return str(val)
-
-
-def build_csv_bytes(rows: list[AnalyticsResponseRow]) -> bytes:
-    import csv
-
-    buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow([
-        "Response ID", "Survey", "QR Code", "Location",
-        "Scan Time", "Completed", "Time to Complete (s)", "Questions Answered",
-    ])
-    for r in rows:
-        writer.writerow([
-            str(r.response_id) if r.response_id is not None else "",
-            r.survey_name,
-            r.qr_code_name,
-            r.location_name or "No Location",
-            r.scan_time,
-            "Yes" if r.completed else "No",
-            r.time_to_complete_seconds if r.time_to_complete_seconds is not None else "",
-            r.questions_answered,
-        ])
-    return buf.getvalue().encode("utf-8-sig")
-
-
-def build_excel_bytes(rows: list[AnalyticsResponseRow]) -> bytes:
-    try:
-        import openpyxl
-    except ImportError:
-        raise AppError(
-            category=ErrorCategory.EXTERNAL,
-            code="EXCEL_EXPORT_UNAVAILABLE",
-            message="Excel export unavailable: openpyxl not installed",
-            status_code=500,
-        )
-
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Analytics"
-
-    headers = [
-        "Response ID", "Survey", "QR Code", "Location",
-        "Scan Time", "Completed", "Time to Complete (s)", "Questions Answered",
-    ]
-    ws.append(headers)
-
-    for r in rows:
-        ws.append([
-            str(r.response_id) if r.response_id is not None else "",
-            r.survey_name,
-            r.qr_code_name,
-            r.location_name or "No Location",
-            r.scan_time,
-            "Yes" if r.completed else "No",
-            r.time_to_complete_seconds,
-            r.questions_answered,
-        ])
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()

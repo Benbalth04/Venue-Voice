@@ -30,10 +30,12 @@ import { deleteSurveyDraft, loadSurveyDraft, saveSurveyDraft } from "@/lib/surve
 import type { Question, Survey } from "@/lib/survey/types"
 import { SurveyEditor, type EditorSelection } from "@/components/survey/SurveyEditor"
 import { SettingsPanel } from "@/components/survey/SettingsPanel"
-import { SurveyPreview } from "@/components/survey/SurveyPreview"
+import { SurveyPreviewViewport } from "@/components/survey/SurveyPreviewViewport"
 import { Toolbar } from "@/components/survey/Toolbar"
 import { useConfirm } from "@/components/ui/ConfirmDialog"
 import { useSettingsSchema } from "@/contexts/SettingsSchemaContext"
+import { useBrokenFlows } from "@/components/layout/BrokenFlowsContext"
+import { useBrokenRules } from "@/components/layout/BrokenRulesContext"
 
 const AUTOSAVE_DELAY_MS = 2_000
 const LEAVE_MESSAGE = "You have unsaved changes. Are you sure you want to leave?"
@@ -43,6 +45,8 @@ function serializeSurvey(value: Survey): string {
 }
 
 export default function SurveyEditorPage() {
+  const { refreshBrokenFlowCount } = useBrokenFlows()
+  const { refreshBrokenRuleCount } = useBrokenRules()
   const params = useParams()
   const router = useRouter()
   const surveyId = params.id as string
@@ -119,13 +123,19 @@ export default function SurveyEditorPage() {
         setSurveyMeta(data)
         setLastSaved(new Date(data.updated_at))
 
-        const draft = loadSurveyDraft(surveyId)
-        if (draft && draft.lastDatabaseVersion === data.latest_version) {
-          setPendingDraft(draft.schema)
-          setLastDraftSavedAt(new Date(draft.updatedAt))
-        } else if (draft) {
+        if (data.status === "active") {
           deleteSurveyDraft(surveyId)
+          setPendingDraft(null)
           setLastDraftSavedAt(null)
+        } else {
+          const draft = loadSurveyDraft(surveyId)
+          if (draft && draft.lastDatabaseVersion === data.latest_version) {
+            setPendingDraft(draft.schema)
+            setLastDraftSavedAt(new Date(draft.updatedAt))
+          } else if (draft) {
+            deleteSurveyDraft(surveyId)
+            setLastDraftSavedAt(null)
+          }
         }
       } catch (err) {
         setLoadError(extractErrorMessage(err, "Failed to load survey"))
@@ -149,12 +159,13 @@ export default function SurveyEditorPage() {
 
   useEffect(() => {
     if (isFirstLoad.current || loading) return
+    if (surveyMeta?.status === "active") return
     const dirty = serializeSurvey(schema) !== serializeSurvey(latestDbSchema)
     if (!dirty) return
     setSaveError(null)
     if (autosaveTimer.current) clearTimeout(autosaveTimer.current)
     autosaveTimer.current = setTimeout(persistDraft, AUTOSAVE_DELAY_MS)
-  }, [schema, latestDbSchema, loading, persistDraft])
+  }, [schema, latestDbSchema, loading, persistDraft, surveyMeta?.status])
 
   useEffect(
     () => () => {
@@ -240,6 +251,8 @@ export default function SurveyEditorPage() {
       setLastSaved(new Date())
       setLastDraftSavedAt(null)
       deleteSurveyDraft(surveyId)
+      void refreshBrokenFlowCount()
+      void refreshBrokenRuleCount()
     } catch (err) {
       if (err instanceof SurveyStructureValidationError) {
         setValidationErrors(err.schemaErrors)
@@ -258,7 +271,7 @@ export default function SurveyEditorPage() {
     } finally {
       setIsSaving(false)
     }
-  }, [isDirty, surveyId])
+  }, [isDirty, surveyId, refreshBrokenFlowCount, refreshBrokenRuleCount])
 
   function addQuestion(type: string) {
     const id = crypto.randomUUID()
@@ -374,7 +387,9 @@ export default function SurveyEditorPage() {
     )
   }
 
-  if (isMobileViewport) {
+  const isPublishedReadOnly = surveyMeta?.status === "active"
+
+  if (isMobileViewport && !isPublishedReadOnly) {
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 bg-zinc-50 p-6">
         <div className="max-w-md rounded-2xl border border-zinc-200 bg-white p-6 text-center shadow-sm">
@@ -405,49 +420,64 @@ export default function SurveyEditorPage() {
             <ArrowLeft className="h-4 w-4" />
           </Link>
           <div className="min-w-0">
-            <p className="text-[11px] uppercase tracking-wide text-zinc-400">Survey Editor</p>
+            <p className="text-[11px] uppercase tracking-wide text-zinc-400">
+              {isPublishedReadOnly ? "Survey preview" : "Survey Editor"}
+            </p>
             <h1 className="truncate text-sm font-semibold text-zinc-900">
               {surveyMeta?.title ?? "Loading..."}
             </h1>
           </div>
           <StatusBadge />
-          {surveyMeta?.status === "active" && (
+          {isPublishedReadOnly && (
             <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
-              Editing Draft of Active Survey
+              View only
             </span>
           )}
         </div>
 
         <div className="flex flex-shrink-0 items-center gap-3">
-          <SaveStatus />
+          {!isPublishedReadOnly && <SaveStatus />}
 
+          {!isPublishedReadOnly && (
+            <button
+              onClick={() => setShowPreview((v) => !v)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50"
+            >
+              {showPreview ? (
+                <>
+                  <EyeOff className="h-3 w-3" /> Editor
+                </>
+              ) : (
+                <>
+                  <Eye className="h-3 w-3" /> Preview
+                </>
+              )}
+            </button>
+          )}
 
-          <button
-            onClick={() => setShowPreview((v) => !v)}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50"
-          >
-            {showPreview ? (
-              <>
-                <EyeOff className="h-3 w-3" /> Editor
-              </>
-            ) : (
-              <>
-                <Eye className="h-3 w-3" /> Preview
-              </>
-            )}
-          </button>
-
-          <button
-            onClick={doSave}
-            disabled={isSaving}
-            className="rounded-xl bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-40"
-          >
-            Save now
-          </button>
+          {!isPublishedReadOnly && (
+            <button
+              onClick={doSave}
+              disabled={isSaving}
+              className="rounded-xl bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-40"
+            >
+              Save now
+            </button>
+          )}
         </div>
       </div>
 
-      {validationErrors.length > 0 && (
+      {isPublishedReadOnly && (
+        <div className="border-b border-amber-200 bg-amber-50 px-4 py-2.5 text-xs leading-relaxed text-amber-950">
+          This survey is published and live. Preview only here — unpublish from the{" "}
+          <Link href="/dashboard/surveys" className="font-semibold underline hover:text-amber-900">
+            survey list
+          </Link>{" "}
+          to make changes.
+        </div>
+      )}
+
+      {!isPublishedReadOnly && validationErrors.length > 0 && (
         <div className="border-b border-red-200 bg-red-50 px-4 py-3">
           <p className="mb-2 text-sm font-semibold text-red-800">Validation errors – fix these before saving:</p>
           <ul className="list-inside list-disc space-y-1 text-xs text-red-700">
@@ -484,7 +514,7 @@ export default function SurveyEditorPage() {
         </div>
       )}
 
-      {isDirty && !isSaving && (
+      {!isPublishedReadOnly && isDirty && !isSaving && (
         <div className="flex items-center justify-between border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs">
           <span className="text-amber-700">You have unsaved changes</span>
           <button onClick={doSave} className="font-semibold text-amber-800 underline">
@@ -493,12 +523,8 @@ export default function SurveyEditorPage() {
         </div>
       )}
 
-      {showPreview ? (
-        <div className="flex-1 overflow-y-auto bg-zinc-100 p-4 md:p-6">
-          <div className="mx-auto w-full max-w-2xl rounded-2xl bg-white p-6 shadow-md">
-            <SurveyPreview survey={schema} />
-          </div>
-        </div>
+      {isPublishedReadOnly || showPreview ? (
+        <SurveyPreviewViewport survey={schema} className="flex-1 bg-zinc-50" />
       ) : (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden xl:flex-row">
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row">

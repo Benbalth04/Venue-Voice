@@ -1,6 +1,7 @@
 "use client"
 
 import { GripVertical, Trash2 } from "lucide-react"
+import { AiAnalysisInfoTooltip } from "@/components/analytics/AiAnalysisInfoTooltip"
 import { Card } from "@/components/ui/card"
 import { DropdownSelect, SingleSelectDropdown } from "@/components/ui/DropdownSelect"
 import type { LogicQuestionOption, RuleConditionType, RuleOperatorApi } from "@/lib/api/client"
@@ -319,7 +320,10 @@ export function RuleConditionCard({
             )}
             {valueElement != null && (
               <div className={showOperator ? undefined : "w-full"}>
-                <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Value</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Value</span>
+                  {ct === "sentiment" && <AiAnalysisInfoTooltip variant="present" />}
+                </div>
                 <div className="mt-1">{valueElement}</div>
               </div>
             )}

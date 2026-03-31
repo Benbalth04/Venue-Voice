@@ -8,7 +8,6 @@ from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
-from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from ..auth.jwt import get_current_user
@@ -22,8 +21,6 @@ from ..schemas.pydantic_model import (
     PhotoSignedUrlResponse,
 )
 from ..services.analytics_service import (
-    build_csv_bytes,
-    build_excel_bytes,
     get_analytics_filters,
     get_analytics_responses,
     get_response_detail,
@@ -257,68 +254,3 @@ def analytics_response_photo_signed_url(
         )
 
     return PhotoSignedUrlResponse(signed_url=signed_url, expires_in_seconds=expires_in)
-
-
-# ------------------------------------------------------------------
-# GET /analytics/responses/export/csv
-# ------------------------------------------------------------------
-@router.get("/analytics/responses/export/csv")
-def export_csv(
-    params: dict = Depends(_shared_filter_params),
-    current_user: UserORM = Depends(get_current_user),
-    db: Session = Depends(get_db_connection),
-):
-    """Export filtered responses as CSV."""
-    try:
-        # Export all rows (no pagination limit)
-        data = get_analytics_responses(
-            user_id=current_user.id, db=db,
-            **{**params, "page": 1, "page_size": 10_000},
-        )
-        content = build_csv_bytes(data.rows)
-        return StreamingResponse(
-            iter([content]),
-            media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=analytics_responses.csv"},
-        )
-    except AppError:
-        raise
-    except Exception:
-        raise AppError(
-            category=ErrorCategory.UNKNOWN,
-            code="INTERNAL_SERVER_ERROR",
-            message="Failed to generate CSV export",
-            status_code=500,
-        )
-
-
-# ------------------------------------------------------------------
-# GET /analytics/responses/export/excel
-# ------------------------------------------------------------------
-@router.get("/analytics/responses/export/excel")
-def export_excel(
-    params: dict = Depends(_shared_filter_params),
-    current_user: UserORM = Depends(get_current_user),
-    db: Session = Depends(get_db_connection),
-):
-    """Export filtered responses as Excel (.xlsx)."""
-    try:
-        data = get_analytics_responses(
-            user_id=current_user.id, db=db,
-            **{**params, "page": 1, "page_size": 10_000},
-        )
-        content = build_excel_bytes(data.rows)
-        return StreamingResponse(
-            iter([content]),
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": "attachment; filename=analytics_responses.xlsx"},
-        )
-    except AppError:
-        raise
-    except Exception:
-        raise AppError(
-            category=ErrorCategory.UNKNOWN,
-            code="INTERNAL_SERVER_ERROR",
-            message="Failed to generate Excel export",
-            status_code=500,
-        )

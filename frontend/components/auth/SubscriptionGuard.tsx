@@ -11,16 +11,18 @@ export function SubscriptionGuard({ children }: { children: ReactNode }) {
   const [checking, setChecking] = useState(true)
   const [isActive, setIsActive] = useState(false)
 
+  /* eslint-disable react-hooks/set-state-in-effect -- sync guard before async fetchSubscription */
   useEffect(() => {
     if (authLoading) return
-    if (!session?.access_token) {
+    const token = session?.access_token ?? null
+    if (!session?.user?.id || !token) {
       // AuthGuard (which runs before this) handles the redirect to /login.
       // Just stop checking so we don't flash a redirect to /subscribe.
       setChecking(false)
       return
     }
 
-    fetchSubscription(session.access_token)
+    fetchSubscription(token)
       .then((sub: SubscriptionResponse) => {
         if (sub.is_active) {
           setIsActive(true)
@@ -33,7 +35,8 @@ export function SubscriptionGuard({ children }: { children: ReactNode }) {
         router.replace("/subscribe")
       })
       .finally(() => setChecking(false))
-  }, [authLoading, session, router])
+  }, [authLoading, session?.user?.id, session?.access_token, router])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   if (authLoading || checking) {
     return (

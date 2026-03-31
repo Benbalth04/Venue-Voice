@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { AiAnalysisInfoTooltip } from "@/components/analytics/AiAnalysisInfoTooltip";
 import { BarChart } from "@/components/charts/BarChart";
 import { LineChart } from "@/components/charts/LineChart";
 import { PieChart } from "@/components/charts/PieChart";
@@ -47,8 +48,12 @@ export function QuestionRow({ question, onExpand }: Props) {
     <div className="flex flex-col gap-3">
       {/* Question header */}
       <div className="flex items-center gap-3">
-        <span className="font-medium text-zinc-900 text-sm flex-1">
+        <span className="flex flex-1 items-center gap-2 font-medium text-sm text-zinc-900">
           {question.question_text}
+          {(question.question_type === "text" ||
+            question.question_type === "long_text") && (
+            <AiAnalysisInfoTooltip variant="past" />
+          )}
         </span>
         <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-700">
           {TYPE_LABELS[question.question_type] ?? question.question_type}

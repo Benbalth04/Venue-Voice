@@ -387,12 +387,6 @@ def get_survey_latest(
     db: Session = Depends(get_db_connection),
 ):
     survey = _get_survey_or_404(survey_id, current_user, db)
-    if survey.status == SurveyStatus.active:
-        raise ValidationError(
-            code="SURVEY_ACTIVE_NO_EDIT",
-            message="Cannot edit an active survey. Unpublish it first to make changes.",
-            status_code=422,
-        )
     sv = _get_latest_version_or_404(survey.id, db)
     last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)
     return _to_survey_with_schema(survey, sv, last_edited_by)

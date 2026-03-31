@@ -4,7 +4,11 @@ import uuid
 from datetime import datetime, timezone
 from typing import Iterable
 
+from sqlalchemy.orm import Session, joinedload
+
 from ..core.errors.exceptions import ValidationError
+from ..models.postgres_model import LocationSurvey as LocationSurveyORM
+from ..models.postgres_model import QRCode as QRCodeORM
 from ..models.postgres_model import SurveyStatus
 
 
@@ -58,6 +62,32 @@ def derive_qr_code_status(qr) -> str:
     if not getattr(qr, "is_active", False):
         return "inactive"
     return "active"
+
+
+def get_company_submission_blocked_active_qr_count(db: Session, company_id: uuid.UUID) -> int:
+    """Count non-deleted, active QR codes whose linked assignment is not accepting submissions."""
+    now = utc_now()
+    qrs = (
+        db.query(QRCodeORM)
+        .options(
+            joinedload(QRCodeORM.location_survey).joinedload(LocationSurveyORM.location),
+            joinedload(QRCodeORM.location_survey).joinedload(LocationSurveyORM.survey),
+        )
+        .filter(
+            QRCodeORM.company_id == company_id,
+            QRCodeORM.deleted_at.is_(None),
+            QRCodeORM.is_active.is_(True),
+        )
+        .all()
+    )
+    blocked = 0
+    for qr in qrs:
+        ls = qr.location_survey
+        if ls is None:
+            continue
+        if derive_location_survey_status(ls, ls.location, ls.survey, now) != "active":
+            blocked += 1
+    return blocked
 
 
 def validate_qr_scan_access(qr, now: datetime):

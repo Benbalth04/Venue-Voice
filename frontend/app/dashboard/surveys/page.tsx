@@ -8,6 +8,7 @@ import {
   Plus,
   FileText,
   Edit,
+  Eye,
   Pencil,
   Copy,
   Globe,
@@ -16,10 +17,12 @@ import {
   CheckCircle2,
   Clock,
   XCircle,
+  X,
 } from "lucide-react"
 import { supabase } from "@/lib/supabase/client"
 import {
   fetchSurveysList,
+  fetchSurveyLatest,
   createSurvey,
   extractErrorMessage,
   isStaleObjectError,
@@ -31,10 +34,16 @@ import {
   updateSurveyMeta,
   type SurveyListItem,
 } from "@/lib/api/client"
+import { surveyFromApi } from "@/lib/survey/richText"
+import type { Survey } from "@/lib/survey/types"
+import { SurveyPreviewViewport } from "@/components/survey/SurveyPreviewViewport"
+import { LoadingSpinner } from "@/components/ui/LoadingSpinner"
 import { defaultSurvey } from "@/lib/survey/defaultSurvey"
 import { surveyToApi } from "@/lib/survey/richText"
 import { useConfirm } from "@/components/ui/ConfirmDialog"
 import { DataTable, type DataTableColumn } from "@/components/ui/DataTable"
+import { useBrokenFlows } from "@/components/layout/BrokenFlowsContext"
+import { useBrokenRules } from "@/components/layout/BrokenRulesContext"
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; cls: string; icon: React.ReactNode }> = {
@@ -67,6 +76,7 @@ function StatusBadge({ status }: { status: string }) {
 
 function ActionsMenu({
   survey,
+  onPreview,
   onPublish,
   onDuplicate,
   onConfirmUnpublish,
@@ -74,6 +84,7 @@ function ActionsMenu({
   onConfirmUnarchive,
 }: {
   survey: SurveyListItem
+  onPreview: (survey: SurveyListItem) => void
   onPublish: (id: string) => Promise<void>
   onDuplicate: (id: string) => Promise<void>
   onConfirmUnpublish: (id: string) => Promise<void>
@@ -109,9 +120,18 @@ function ActionsMenu({
           <>
             <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} aria-hidden />
             <div
-              className="fixed z-20 w-44 rounded-xl border border-zinc-200 bg-white py-1 shadow-lg"
+              className="fixed z-20 w-48 rounded-xl border border-zinc-200 bg-white py-1 shadow-lg"
               style={{ top: position.top, right: position.right }}
             >
+            <button
+              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50"
+              onClick={() => {
+                setOpen(false)
+                onPreview(survey)
+              }}
+            >
+              <Eye className="h-4 w-4" /> Preview
+            </button>
             <button
               className={`flex w-full items-center gap-2 px-3 py-2 text-sm ${
                 survey.status === "active"
@@ -191,6 +211,8 @@ function ActionsMenu({
 }
 
 export default function SurveysListPage() {
+  const { refreshBrokenFlowCount } = useBrokenFlows()
+  const { refreshBrokenRuleCount } = useBrokenRules()
   const router = useRouter()
   const pathname = usePathname()
   const [surveys, setSurveys] = useState<SurveyListItem[]>([])
@@ -207,7 +229,17 @@ export default function SurveysListPage() {
   const [renaming, setRenaming] = useState(false)
   const [renameError, setRenameError] = useState<string | null>(null)
 
+  const [previewTarget, setPreviewTarget] = useState<{ id: string; title: string } | null>(null)
+  const [previewSurvey, setPreviewSurvey] = useState<Survey | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewError, setPreviewError] = useState<string | null>(null)
+
   const { confirm, ConfirmDialogRender } = useConfirm()
+
+  function refreshFlowAndRuleWarnings() {
+    void refreshBrokenFlowCount()
+    void refreshBrokenRuleCount()
+  }
 
   async function getToken() {
     const {
@@ -229,9 +261,25 @@ export default function SurveysListPage() {
     }
   }, [])
 
+  const closePreviewModal = useCallback(() => {
+    setPreviewTarget(null)
+    setPreviewSurvey(null)
+    setPreviewError(null)
+    setPreviewLoading(false)
+  }, [])
+
   useEffect(() => {
     if (pathname === "/dashboard/surveys") load()
   }, [pathname, load])
+
+  useEffect(() => {
+    if (!previewTarget) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closePreviewModal()
+    }
+    document.addEventListener("keydown", onKey)
+    return () => document.removeEventListener("keydown", onKey)
+  }, [previewTarget, closePreviewModal])
 
   async function handleCreate() {
     const title = newTitle.trim()
@@ -243,6 +291,7 @@ export default function SurveysListPage() {
     setCreateError(null)
     try {
       const survey = await createSurvey(token, title, surveyToApi(defaultSurvey) as Record<string, unknown>)
+      refreshFlowAndRuleWarnings()
       router.push(`/dashboard/surveys/${survey.id}`)
     } catch (err) {
       setCreateError(extractErrorMessage(err, "Failed to create survey"))
@@ -258,6 +307,7 @@ export default function SurveysListPage() {
     try {
       const updated = await publishSurvey(token, id, survey.updated_at)
       setSurveys((prev) => prev.map((s) => (s.id === id ? { ...s, ...updated } : s)))
+      refreshFlowAndRuleWarnings()
     } catch (err) {
       if (isStaleObjectError(err)) {
         await load()
@@ -276,6 +326,7 @@ export default function SurveysListPage() {
     try {
       const updated = await archiveSurvey(token, id, survey.updated_at)
       setSurveys((prev) => prev.map((s) => (s.id === id ? { ...s, ...updated } : s)))
+      refreshFlowAndRuleWarnings()
     } catch (err) {
       if (isStaleObjectError(err)) {
         await load()
@@ -294,6 +345,7 @@ export default function SurveysListPage() {
     try {
       const updated = await unpublishSurvey(token, id, survey.updated_at)
       setSurveys((prev) => prev.map((s) => (s.id === id ? { ...s, ...updated } : s)))
+      refreshFlowAndRuleWarnings()
     } catch (err) {
       if (isStaleObjectError(err)) {
         await load()
@@ -312,6 +364,7 @@ export default function SurveysListPage() {
     try {
       const updated = await unarchiveSurvey(token, id, survey.updated_at)
       setSurveys((prev) => prev.map((s) => (s.id === id ? { ...s, ...updated } : s)))
+      refreshFlowAndRuleWarnings()
     } catch (err) {
       if (isStaleObjectError(err)) {
         await load()
@@ -354,10 +407,32 @@ export default function SurveysListPage() {
     if (ok) await handleUnarchive(id)
   }
 
+  async function openSurveyPreview(s: SurveyListItem) {
+    setPreviewTarget({ id: s.id, title: s.title })
+    setPreviewLoading(true)
+    setPreviewError(null)
+    setPreviewSurvey(null)
+    const token = await getToken()
+    if (!token) {
+      setPreviewError("You must be signed in to preview.")
+      setPreviewLoading(false)
+      return
+    }
+    try {
+      const data = await fetchSurveyLatest(token, s.id)
+      setPreviewSurvey(surveyFromApi(data.survey_schema_json as Record<string, unknown>))
+    } catch (err) {
+      setPreviewError(extractErrorMessage(err, "Failed to load survey"))
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
   async function handleDuplicate(id: string) {
     const token = await getToken()
     if (!token) return
     const copy = await duplicateSurvey(token, id)
+    refreshFlowAndRuleWarnings()
     router.push(`/dashboard/surveys/${copy.id}`)
   }
 
@@ -381,6 +456,7 @@ export default function SurveysListPage() {
     try {
       await updateSurveyMeta(token, editingSurvey.id, { title: nextTitle, updated_at: editingSurvey.updated_at })
       await load()
+      refreshFlowAndRuleWarnings()
       setEditingSurvey(null)
     } catch (err) {
       if (isStaleObjectError(err)) {
@@ -503,6 +579,7 @@ export default function SurveysListPage() {
       render: (s) => (
         <ActionsMenu
           survey={s}
+          onPreview={openSurveyPreview}
           onPublish={handlePublish}
           onDuplicate={handleDuplicate}
           onConfirmUnpublish={handleConfirmUnpublish}
@@ -626,6 +703,51 @@ export default function SurveysListPage() {
               >
                 {creating ? "Creating…" : "Create Survey"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {previewTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3 sm:p-4"
+          onClick={closePreviewModal}
+          role="presentation"
+        >
+          <div
+            className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="survey-preview-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3">
+              <h2 id="survey-preview-title" className="min-w-0 truncate text-base font-semibold text-zinc-900">
+                Preview: {previewTarget.title}
+              </h2>
+              <button
+                type="button"
+                onClick={closePreviewModal}
+                className="flex-shrink-0 rounded-lg p-2 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800"
+                aria-label="Close preview"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="flex min-h-[min(50vh,400px)] flex-1 flex-col overflow-hidden">
+              {previewLoading && (
+                <div className="flex flex-1 items-center justify-center py-16">
+                  <LoadingSpinner size="lg" />
+                </div>
+              )}
+              {!previewLoading && previewError && (
+                <div className="m-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                  {previewError}
+                </div>
+              )}
+              {!previewLoading && !previewError && previewSurvey && (
+                <SurveyPreviewViewport survey={previewSurvey} className="min-h-[50vh]" />
+              )}
             </div>
           </div>
         </div>

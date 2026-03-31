@@ -10,6 +10,7 @@ import { DataTable, type DataTableColumn } from "@/components/ui/DataTable"
 import { LoadingBlock } from "@/components/ui/LoadingSpinner"
 import { SingleSelectDropdown } from "@/components/ui/DropdownSelect"
 import { supabase } from "@/lib/supabase/client"
+import { useQRSubmissionBlocked } from "@/components/layout/QRSubmissionBlockedContext"
 import {
   createQRCode,
   deleteQRCode,
@@ -335,6 +336,7 @@ type QRSortKey = "title" | "survey" | "location" | "status"
 type SortDir = "asc" | "desc"
 
 export default function DistributionPage() {
+  const { refreshSubmissionBlockedQrCount } = useQRSubmissionBlocked()
   const { confirm, ConfirmDialogRender } = useConfirm()
   const [qrCodes, setQRCodes] = useState<QRCodeResponse[]>([])
   const [locationSurveys, setLocationSurveys] = useState<LocationSurveyResponse[]>([])
@@ -403,6 +405,7 @@ export default function DistributionPage() {
         setQRCodes((prev) => [created, ...prev])
       }
       setModalOpen(false)
+      void refreshSubmissionBlockedQrCount()
     } catch (err) {
       if (isStaleObjectError(err)) {
         setFormError("This QR code was updated. Please try again.")
@@ -420,6 +423,7 @@ export default function DistributionPage() {
     try {
       const updated = await updateQRCode(token, qr.id, { is_active: !qr.is_active, updated_at: qr.updated_at })
       setQRCodes((prev) => prev.map((q) => (q.id === updated.id ? updated : q)))
+      void refreshSubmissionBlockedQrCount()
     } catch (err) {
       if (isStaleObjectError(err)) {
         setError("This QR code was updated. Please refresh.")
@@ -442,6 +446,7 @@ export default function DistributionPage() {
     try {
       await deleteQRCode(token, qr.id, qr.updated_at)
       setQRCodes((prev) => prev.filter((q) => q.id !== qr.id))
+      void refreshSubmissionBlockedQrCount()
     } catch (err) {
       if (isStaleObjectError(err)) {
         setError("This QR code was updated. Please refresh.")

@@ -92,6 +92,7 @@ export interface UserResponse {
   email: string
   first_name: string
   last_name: string
+  email_verified: boolean
   onboarding_complete: boolean
   company_name?: string | null
   user_display_name?: string | null
@@ -847,6 +848,9 @@ export interface AnalyticsAnswerDetail {
   answer_value: string
   has_photo?: boolean
   question_id?: string | null
+  position: number
+  question_type?: string | null
+  sentiment?: string | null
 }
 
 export interface PhotoSignedUrlResponse {
@@ -1206,6 +1210,15 @@ export async function fetchQRCodes(accessToken: string): Promise<QRCodeResponse[
   return apiFetch<QRCodeResponse[]>(`${BACKEND_BASE}/api/v1/qr-codes`, {
     headers: authGetHeaders(accessToken),
   })
+}
+
+export async function fetchQRSubmissionBlockedSummary(
+  accessToken: string,
+): Promise<{ submission_blocked_active_qr_count: number }> {
+  return apiFetch<{ submission_blocked_active_qr_count: number }>(
+    `${BACKEND_BASE}/api/v1/qr-codes/submission-blocked-summary`,
+    { headers: authGetHeaders(accessToken) },
+  )
 }
 
 export async function fetchQRCode(accessToken: string, id: string): Promise<QRCodeResponse> {
@@ -1692,48 +1705,6 @@ export function fetchPhotoSignedUrl(
     token,
     `/analytics/response/${responseId}/photo/${questionId}`,
   )
-}
-
-export function analyticsExportUrl(
-  token: string,
-  format: "csv" | "excel",
-  filters: AnalyticsFilters,
-): string {
-  const params = _buildAnalyticsParams(filters)
-  return `${BACKEND_BASE}/api/v1/analytics/responses/export/${format}?${params}`
-}
-
-export async function downloadAnalyticsExport(
-  token: string,
-  format: "csv" | "excel",
-  filters: AnalyticsFilters,
-): Promise<void> {
-  const params = _buildAnalyticsParams(filters)
-  const url = `${BACKEND_BASE}/api/v1/analytics/responses/export/${format}?${params}`
-
-  let res: Response
-  try {
-    res = await fetch(url, { headers: authGetHeaders(token) })
-  } catch (err) {
-    throw normalizeUnknownError(err)
-  }
-
-  if (!res.ok) {
-    let data: unknown = null
-    try {
-      data = await res.json()
-    } catch {
-      // empty body
-    }
-    throw normalizeApiError(data, res.status)
-  }
-
-  const blob = await res.blob()
-  const a = document.createElement("a")
-  a.href = URL.createObjectURL(blob)
-  a.download = format === "csv" ? "analytics_responses.csv" : "analytics_responses.xlsx"
-  a.click()
-  URL.revokeObjectURL(a.href)
 }
 
 // ------------------------------------------------------------------
