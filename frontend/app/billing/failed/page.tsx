@@ -1,27 +1,28 @@
 "use client"
 
-import { useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { Suspense, useEffect } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/contexts/AuthContext"
 import { recordCheckoutFailed } from "@/lib/api/client"
 import { Button } from "@/components/ui/button"
 
-export default function BillingFailedPage() {
+function BillingFailedContent() {
   const router = useRouter()
+  const params = useSearchParams()
   const { session } = useAuth()
+  const sessionId = params.get("session_id")
 
   useEffect(() => {
-    // Record the abandoned/failed checkout if the user is authenticated
-    if (session?.access_token) {
-      recordCheckoutFailed(session.access_token).catch(() => {/* ignore */})
+    if (sessionId && session?.access_token) {
+      recordCheckoutFailed(session.access_token).catch(() => {
+        /* ignore */
+      })
     }
-  }, [session])
+  }, [sessionId, session?.access_token])
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-zinc-50 px-4">
       <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-10 shadow-sm text-center">
-
-        {/* Error icon */}
         <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-red-100">
           <svg className="h-8 w-8 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -47,5 +48,19 @@ export default function BillingFailedPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+export default function BillingFailedPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-zinc-50">
+          Loading...
+        </div>
+      }
+    >
+      <BillingFailedContent />
+    </Suspense>
   )
 }

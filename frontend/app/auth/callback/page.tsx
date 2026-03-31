@@ -6,19 +6,36 @@ import Link from "next/link"
 import { supabase } from "@/lib/supabase/client"
 import { confirmEmail, fetchUser } from "@/lib/api/client"
 import { Card } from "@/components/ui/card"
-import { useAuth } from "@/contexts/AuthContext"
 
 type CallbackState = "loading" | "error" | "success"
 
+function decodeJwtSub(accessToken: string): string | null {
+  try {
+    const parts = accessToken.split(".")
+    if (parts.length < 2) return null
+    const base64Url = parts[1]
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/")
+    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=")
+    const json = decodeURIComponent(
+      atob(padded)
+        .split("")
+        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
+        .join("")
+    )
+    const payload = JSON.parse(json) as { sub?: string }
+    return typeof payload.sub === "string" ? payload.sub : null
+  } catch {
+    return null
+  }
+}
+
 export default function AuthCallbackPage() {
   const router = useRouter()
-  const { user } = useAuth()
   const [state, setState] = useState<CallbackState>("loading")
   const [errorMessage, setErrorMessage] = useState<string>("")
 
   useEffect(() => {
     async function handleCallback() {
-      // Parse hash params — Supabase puts tokens/errors in the URL hash
       const hash = window.location.hash.slice(1)
       const params = new URLSearchParams(hash)
 
@@ -26,10 +43,10 @@ export default function AuthCallbackPage() {
       const errorDescription = params.get("error_description")
 
       if (error) {
-        // If the user is already logged in and verified, the link is simply
-        // stale — redirect silently to the dashboard instead of showing an
-        // error (fixes Gap #7: re-clicking an already-used confirmation link).
-        if (user?.email_verified) {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession()
+        if (session?.user?.email_confirmed_at) {
           router.replace("/dashboard")
           return
         }
@@ -38,29 +55,55 @@ export default function AuthCallbackPage() {
           error === "access_denied"
             ? errorDescription?.includes("expired") || errorDescription?.includes("invalid")
               ? "This verification link has already been used or has expired. Please request a new one."
-              : errorDescription ?? "Verification failed."
-            : errorDescription ?? "Verification failed."
+              : (errorDescription ?? "Verification failed.")
+            : (errorDescription ?? "Verification failed.")
         setErrorMessage(msg)
         setState("error")
         return
       }
 
-      // Supabase SDK auto-processes the access_token from the hash via detectSessionInUrl.
-      // Wait for the session to be established.
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) {
-        // Give the SDK a moment to process the hash tokens
-        await new Promise((resolve) => setTimeout(resolve, 500))
-        const { data: { session: retried } } = await supabase.auth.getSession()
-        if (!retried) {
+      const access_token = params.get("access_token")
+      const refresh_token = params.get("refresh_token")
+
+      const {
+        data: { session: existing },
+      } = await supabase.auth.getSession()
+
+      if (access_token && refresh_token) {
+        const newSub = decodeJwtSub(access_token)
+        if (existing?.user?.id && newSub && existing.user.id !== newSub) {
+          await supabase.auth.signOut()
+        }
+        const { error: setErr } = await supabase.auth.setSession({
+          access_token,
+          refresh_token,
+        })
+        if (setErr) {
+          setErrorMessage(setErr.message ?? "Could not establish a session. The link may have expired.")
+          setState("error")
+          return
+        }
+      } else {
+        let found = (await supabase.auth.getSession()).data.session
+        if (!found) {
+          await new Promise((resolve) => setTimeout(resolve, 500))
+          found = (await supabase.auth.getSession()).data.session
+        }
+        if (!found) {
+          await new Promise((resolve) => setTimeout(resolve, 500))
+          found = (await supabase.auth.getSession()).data.session
+        }
+        if (!found) {
           setErrorMessage("Could not establish a session. The link may have expired.")
           setState("error")
           return
         }
       }
 
-      const finalSession = (await supabase.auth.getSession()).data.session
-      if (!finalSession) {
+      const {
+        data: { session: finalSession },
+      } = await supabase.auth.getSession()
+      if (!finalSession?.access_token) {
         setErrorMessage("Could not establish a session. The link may have expired.")
         setState("error")
         return
@@ -77,7 +120,7 @@ export default function AuthCallbackPage() {
       }
     }
 
-    handleCallback()
+    void handleCallback()
   }, [router])
 
   if (state === "loading") {
@@ -121,6 +164,5 @@ export default function AuthCallbackPage() {
     )
   }
 
-  // success — router.replace already called, render nothing while navigating
   return null
 }

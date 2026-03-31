@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 import stripe
 from sqlalchemy.orm import Session
 
-from ..core.errors.exceptions import ExternalAPIError, NotFoundError
+from ..core.errors.exceptions import ExternalAPIError, NotFoundError, PermissionError, ValidationError
 from ..models.postgres_model import Subscription, User
 
 logger = logging.getLogger(__name__)
@@ -169,9 +169,9 @@ def create_checkout_session(user: User, db: Session, plan: str, billing_interval
             mode="subscription",
             line_items=[{"price": price_id, "quantity": 1}],
             subscription_data=subscription_data,
+            metadata={"user_id": str(user.id)},
             success_url=f"{_APP_ORIGIN}/billing/success?session_id={{CHECKOUT_SESSION_ID}}",
-            cancel_url=f"{_APP_ORIGIN}/billing/failed"
-            # Prevent a second free trial at the Stripe level too
+            cancel_url=f"{_APP_ORIGIN}/billing/failed?session_id={{CHECKOUT_SESSION_ID}}",
         )
     except stripe.StripeError as exc:
         raise ExternalAPIError(
@@ -180,6 +180,65 @@ def create_checkout_session(user: User, db: Session, plan: str, billing_interval
         ) from exc
 
     return session.url
+
+
+def verify_checkout_session_for_user(session_id: str, user: User) -> None:
+    """Ensure a Stripe Checkout Session is complete and owned by ``user``.
+
+    Raises ``ValidationError`` or ``PermissionError`` on failure.
+    """
+    sid = (session_id or "").strip()
+    if not sid:
+        raise ValidationError(
+            code="MISSING_SESSION_ID",
+            message="session_id is required",
+        )
+
+    try:
+        co = stripe.checkout.Session.retrieve(sid)
+    except stripe.InvalidRequestError as exc:
+        raise ValidationError(
+            code="INVALID_CHECKOUT_SESSION",
+            message="Could not retrieve checkout session.",
+        ) from exc
+    except stripe.StripeError as exc:
+        raise ExternalAPIError(
+            service_name="Stripe",
+            error_message=f"Failed to verify checkout session: {exc}",
+        ) from exc
+
+    if getattr(co, "status", None) != "complete":
+        raise ValidationError(
+            code="CHECKOUT_NOT_COMPLETE",
+            message="Checkout session is not complete.",
+        )
+
+    if getattr(co, "mode", None) != "subscription":
+        raise ValidationError(
+            code="INVALID_CHECKOUT_MODE",
+            message="Invalid checkout session mode.",
+        )
+
+    raw_meta = getattr(co, "metadata", None)
+    uid = None
+    if raw_meta:
+        uid = raw_meta.get("user_id") if hasattr(raw_meta, "get") else raw_meta["user_id"]
+    if not uid:
+        raw_customer = getattr(co, "customer", None)
+        customer_id = raw_customer if isinstance(raw_customer, str) else getattr(raw_customer, "id", None)
+        if customer_id:
+            try:
+                cust = stripe.Customer.retrieve(customer_id)
+                cm = dict(getattr(cust, "metadata", None) or {})
+                uid = cm.get("user_id")
+            except stripe.StripeError:
+                uid = None
+
+    if not uid or str(user.id) != str(uid):
+        raise PermissionError(
+            code="CHECKOUT_SESSION_USER_MISMATCH",
+            message="This checkout does not belong to your account.",
+        )
 
 
 # ---------------------------------------------------------------------------

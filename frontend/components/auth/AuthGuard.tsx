@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation"
 import { useEffect, type ReactNode } from "react"
 import { useAuth } from "@/contexts/AuthContext"
+import { CrispChat } from "@/components/crisp/CrispChat"
 
 export function AuthGuard({ children }: { children: ReactNode }) {
   const { loading, session } = useAuth()
@@ -22,5 +23,10 @@ export function AuthGuard({ children }: { children: ReactNode }) {
     )
   }
 
-  return children
+  return (
+    <>
+      <CrispChat />
+      {children}
+    </>
+  )
 }

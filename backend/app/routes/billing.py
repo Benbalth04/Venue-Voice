@@ -12,12 +12,14 @@ from ..schemas.pydantic_model import (
     CheckoutSessionResponse,
     PortalSessionResponse,
     SubscriptionResponse,
+    VerifyCheckoutSessionResponse,
 )
 from ..services.stripe_service import (
     create_checkout_session,
     create_portal_session,
     get_subscription,
     is_subscription_active,
+    verify_checkout_session_for_user,
 )
 
 router = APIRouter(prefix="/billing", tags=["billing"])
@@ -43,6 +45,16 @@ def get_subscription_status(
         stripe_subscription_id=sub.stripe_subscription_id,
         is_active=is_subscription_active(sub),
     )
+
+
+@router.get("/verify-checkout-session", response_model=VerifyCheckoutSessionResponse)
+def verify_checkout_session(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Confirm the Stripe Checkout Session is complete and tied to the current user."""
+    verify_checkout_session_for_user(session_id, current_user)
+    return VerifyCheckoutSessionResponse(ok=True)
 
 
 @router.post("/checkout", response_model=CheckoutSessionResponse)

@@ -1871,3 +1871,14 @@ export async function recordCheckoutFailed(
     { method: "POST", headers: authHeaders(accessToken) }
   )
 }
+
+export async function verifyCheckoutSession(
+  accessToken: string,
+  sessionId: string
+): Promise<{ ok: boolean }> {
+  const q = new URLSearchParams({ session_id: sessionId })
+  return apiFetch<{ ok: boolean }>(
+    `${BACKEND_BASE}/api/v1/billing/verify-checkout-session?${q.toString()}`,
+    { headers: authGetHeaders(accessToken) }
+  )
+}

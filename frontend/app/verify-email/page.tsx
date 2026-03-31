@@ -1,32 +1,24 @@
 "use client"
 
-import { Suspense, useEffect, useState } from "react"
-import { CrispChat } from "@/components/crisp/CrispChat"
-import { useRouter, useSearchParams } from "next/navigation"
+import { Suspense, useState } from "react"
+import { useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { supabase } from "@/lib/supabase/client"
 import { useAuth } from "@/contexts/AuthContext"
+import { AuthGuard } from "@/components/auth/AuthGuard"
+import { UnverifiedEmailGuard } from "@/components/auth/UnverifiedEmailGuard"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 
 function VerifyEmailContent() {
-  const router = useRouter()
   const params = useSearchParams()
-  const { loading, user, session } = useAuth()
+  const { user, session } = useAuth()
 
   const emailParam = params.get("email") ?? ""
-  // If the user is logged in we can get their email from the session
   const displayEmail = user?.email ?? emailParam
 
   const [resendState, setResendState] = useState<"idle" | "sending" | "sent" | "error">("idle")
   const [resendError, setResendError] = useState("")
-
-  // If the user is already verified, send them along
-  useEffect(() => {
-    if (!loading && user?.email_verified) {
-      router.replace(user.onboarding_complete ? "/dashboard" : "/onboarding")
-    }
-  }, [loading, user, router])
 
   async function handleResend() {
     const email = displayEmail || session?.user?.email
@@ -112,11 +104,12 @@ function VerifyEmailContent() {
 
 export default function VerifyEmailPage() {
   return (
-    <>
-      <CrispChat />
-      <Suspense>
-        <VerifyEmailContent />
-      </Suspense>
-    </>
+    <AuthGuard>
+      <UnverifiedEmailGuard>
+        <Suspense>
+          <VerifyEmailContent />
+        </Suspense>
+      </UnverifiedEmailGuard>
+    </AuthGuard>
   )
 }

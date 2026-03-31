@@ -40,6 +40,10 @@ class PortalSessionResponse(BaseModel):
     portal_url: str
 
 
+class VerifyCheckoutSessionResponse(BaseModel):
+    ok: bool = True
+
+
 class DeleteRequest(BaseModel):
     updated_at: datetime
 
