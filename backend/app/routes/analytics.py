@@ -4,14 +4,15 @@ Analytics routes – all require authenticated user, company-scoped.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from ..auth.jwt import get_current_user
 from ..auth.subscription import require_active_subscription
+from ..auth.user_timezone import get_user_zoneinfo
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import User as UserORM
 from ..schemas.pydantic_model import (
@@ -46,13 +47,11 @@ def _shared_filter_params(
     qr_code_id: str | None = Query(None),
     location_id: str | None = Query(None, description="UUID or '__none__' for no-location rows"),
     completed: bool | None = Query(None),
-    date_start: datetime | None = Query(None),
-    date_end: datetime | None = Query(None),
+    date_start: str | None = Query(None, description="YYYY-MM-DD in user's saved timezone"),
+    date_end: str | None = Query(None, description="YYYY-MM-DD in user's saved timezone"),
     sort_column: str = Query("scan_time"),
     sort_direction: Literal["asc", "desc"] = Query("desc"),
 ):
-    if date_start and date_end and date_start > date_end:
-        raise ValidationError(code="INVALID_DATE_RANGE", message="date_start must be before date_end")
     return dict(
         page=page,
         page_size=page_size,
@@ -129,11 +128,14 @@ def analytics_filters(
 def analytics_responses(
     params: dict = Depends(_shared_filter_params),
     current_user: UserORM = Depends(get_current_user),
+    user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
     """Paginated, filterable, sortable list of survey sessions."""
     try:
-        return get_analytics_responses(user_id=current_user.id, db=db, **params)
+        return get_analytics_responses(
+            user_id=current_user.id, db=db, user_tz=user_tz, **params
+        )
     except AppError:
         raise
     except Exception as exc:

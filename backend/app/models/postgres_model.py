@@ -5,6 +5,7 @@ from sqlalchemy import (
     String,
     Text,
     DateTime,
+    text,
     ForeignKey,
     Enum,
     Boolean,
@@ -14,7 +15,6 @@ from sqlalchemy import (
     CheckConstraint,
     UniqueConstraint,
     func,
-    text,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -54,6 +54,11 @@ class User(SoftDeleteMixin, Base):
     last_name: Mapped[str] = mapped_column(String, nullable=False)
     onboarding_complete: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    timezone: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+        server_default=text("'Australia/Sydney'"),
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
@@ -92,6 +97,7 @@ class Subscription(Base):
     )
     trial_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     current_period_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    plan_display_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 

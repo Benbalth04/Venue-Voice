@@ -23,7 +23,11 @@ import {
 } from "@/lib/api/client"
 import { AiAnalysisInfoTooltip } from "@/components/analytics/AiAnalysisInfoTooltip"
 import { DataTable } from "@/components/ui/DataTable"
+import { DatePicker } from "@/components/ui/DatePicker"
 import { useUnreadResponses } from "@/components/layout/UnreadResponsesContext"
+import { useAuth } from "@/contexts/AuthContext"
+import { formatIsoInUserTimeZone } from "@/lib/datetime/formatInUserTz"
+import { DEFAULT_USER_TIMEZONE } from "@/lib/timezone/australia"
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -32,14 +36,6 @@ function formatSeconds(s: number | null | undefined): string {
   const m = Math.floor(s / 60)
   const sec = s % 60
   return `${m}:${String(sec).padStart(2, "0")}`
-}
-
-function formatDate(iso: string): string {
-  if (!iso) return "—"
-  return new Date(iso).toLocaleString(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  })
 }
 
 async function getToken(): Promise<string | null> {
@@ -424,22 +420,22 @@ function FiltersPanel({
         {/* Date start */}
         <div>
           <label className="mb-1 block text-xs font-medium text-zinc-600">From date</label>
-          <input
-            type="date"
+          <DatePicker
+            className="w-full"
             value={filters.date_start}
-            onChange={(e) => onChange("date_start", e.target.value)}
-            className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-800 focus:outline-none focus:ring-2 focus:ring-violet-400"
+            onChange={(next) => onChange("date_start", next)}
+            placeholder="Any"
           />
         </div>
 
         {/* Date end */}
         <div>
           <label className="mb-1 block text-xs font-medium text-zinc-600">To date</label>
-          <input
-            type="date"
+          <DatePicker
+            className="w-full"
             value={filters.date_end}
-            onChange={(e) => onChange("date_end", e.target.value)}
-            className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-800 focus:outline-none focus:ring-2 focus:ring-violet-400"
+            onChange={(next) => onChange("date_end", next)}
+            placeholder="Any"
           />
         </div>
       </div>
@@ -450,6 +446,8 @@ function FiltersPanel({
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function AnalyticsPage() {
+  const { user } = useAuth()
+  const userTimeZone = user?.timezone ?? DEFAULT_USER_TIMEZONE
   const { markResponseRead } = useUnreadResponses()
   const [rows, setRows] = useState<AnalyticsResponseRow[]>([])
   const [totalCount, setTotalCount] = useState(0)
@@ -655,7 +653,7 @@ export default function AnalyticsPage() {
             sortable: true,
             align: "left",
             cellClassName: "text-zinc-600",
-            render: (row) => formatDate(row.scan_time),
+            render: (row) => formatIsoInUserTimeZone(row.scan_time, userTimeZone),
           },
           {
             key: "completed",

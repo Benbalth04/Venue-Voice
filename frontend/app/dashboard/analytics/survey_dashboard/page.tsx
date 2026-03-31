@@ -5,6 +5,8 @@ import { RefreshCw } from "lucide-react";
 import { LoadingBlock } from "@/components/ui/LoadingSpinner";
 import { supabase } from "@/lib/supabase/client";
 import { fetchAnalyticsFilters, fetchSurveysList, type AnalyticsFilterOption, type SurveyListItem } from "@/lib/api/client";
+import { useAuth } from "@/contexts/AuthContext";
+import { DEFAULT_USER_TIMEZONE } from "@/lib/timezone/australia";
 import type { FilterState, SurveyDashboardResponse } from "@/lib/dashboard/types";
 import { useDashboardFilters } from "./hooks/useDashboardFilters";
 import { useDashboardData, buildAPIParams } from "./hooks/useDashboardData";
@@ -29,6 +31,7 @@ function useRefreshCooldown(lastFetched: number | null, cooldownSeconds = REFRES
 
   useEffect(() => {
     if (!lastFetched) {
+      /* eslint-disable-next-line react-hooks/set-state-in-effect -- sync derived countdown when no fetch yet */
       setSecondsLeft(0);
       return;
     }
@@ -50,6 +53,8 @@ function useRefreshCooldown(lastFetched: number | null, cooldownSeconds = REFRES
 }
 
 function SurveyDashboardInner() {
+  const { user } = useAuth();
+  const userTimeZone = user?.timezone ?? DEFAULT_USER_TIMEZONE;
   const { filters, resolvedDates, updateFilters } = useDashboardFilters();
 
   const [surveys, setSurveys] = useState<SurveyListItem[]>([]);
@@ -101,7 +106,8 @@ function SurveyDashboardInner() {
   const { data, isLoading, error, lastFetched, refetch } = useDashboardData(
     generated,
     appliedFilters,
-    appliedDates
+    appliedDates,
+    userTimeZone,
   );
 
   const filtersAreDirty = useMemo(() => {
@@ -194,6 +200,7 @@ function SurveyDashboardInner() {
         <>
           <DashboardMeta
             data={data}
+            userTimeZone={userTimeZone}
             secondsLeft={secondsLeft}
             isRefreshing={isLoading}
             onRefresh={refetch}
@@ -225,6 +232,7 @@ function SurveyDashboardInner() {
             surveyId={data.survey_id}
             filters={appliedFilters}
             resolvedDates={appliedDates}
+            userTimeZone={userTimeZone}
           />
         </>
       )}
@@ -235,7 +243,7 @@ function SurveyDashboardInner() {
           surveyId={generated}
           context={expandedChart.context}
           title={expandedChart.title}
-          filters={buildAPIParams(appliedFilters, appliedDates)}
+          filters={buildAPIParams(appliedFilters, appliedDates, userTimeZone)}
           availableLocations={locations}
           availableQrCodes={qrCodes}
           onClose={() => setExpandedChart(null)}
@@ -256,21 +264,25 @@ function SurveyDashboardInner() {
 
 function DashboardMeta({
   data,
+  userTimeZone,
   secondsLeft,
   isRefreshing,
   onRefresh,
 }: {
   data: SurveyDashboardResponse;
+  userTimeZone: string;
   secondsLeft: number;
   isRefreshing: boolean;
   onRefresh: () => void;
 }) {
-  const start = new Date(data.date_start).toLocaleDateString(undefined, {
-    month: "short", day: "numeric", year: "numeric",
-  });
-  const end = new Date(data.date_end).toLocaleDateString(undefined, {
-    month: "short", day: "numeric", year: "numeric",
-  });
+  const df: Intl.DateTimeFormatOptions = {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: userTimeZone,
+  };
+  const start = new Date(data.date_start).toLocaleDateString(undefined, df);
+  const end = new Date(data.date_end).toLocaleDateString(undefined, df);
 
   const canRefresh = secondsLeft === 0 && !isRefreshing;
 

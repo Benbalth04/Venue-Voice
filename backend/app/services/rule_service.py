@@ -9,7 +9,9 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy.orm import Session, joinedload
 
 from datetime import timezone
+from zoneinfo import ZoneInfo
 
+from ..core.datetime_user_tz import to_iso8601_zoned
 from ..core.errors.exceptions import ConflictError, NotFoundError, RuleValidationError, StaleObjectError, ValidationError
 from ..models.postgres_model import (
     AIAnalysis as AIAnalysisORM,
@@ -415,7 +417,7 @@ def _ensure_unique_rule_name(
             )
 
 
-def _rule_to_response(rule: RuleORM) -> dict[str, Any]:
+def _rule_to_response(rule: RuleORM, user_tz: ZoneInfo) -> dict[str, Any]:
     groups = sorted(rule.groups, key=lambda item: (item.created_at, item.id))
     conditions = sorted(rule.conditions, key=lambda item: (item.created_at, item.id))
     return {
@@ -431,7 +433,7 @@ def _rule_to_response(rule: RuleORM) -> dict[str, Any]:
             {
                 "id": group.id,
                 "operator": group.operator,
-                "created_at": group.created_at,
+                "created_at": to_iso8601_zoned(group.created_at, user_tz) or "",
             }
             for group in groups
         ],
@@ -443,17 +445,17 @@ def _rule_to_response(rule: RuleORM) -> dict[str, Any]:
                 "operator": condition.operator,
                 "value": _deserialize_condition_value(condition),
                 "group_id": condition.group_id,
-                "created_at": condition.created_at,
+                "created_at": to_iso8601_zoned(condition.created_at, user_tz) or "",
             }
             for condition in conditions
             if condition.deleted_at is None
         ],
-        "created_at": rule.created_at,
-        "updated_at": rule.updated_at,
+        "created_at": to_iso8601_zoned(rule.created_at, user_tz) or "",
+        "updated_at": to_iso8601_zoned(rule.updated_at, user_tz) or "",
     }
 
 
-def get_rule_bundle(db: Session, survey_id: uuid.UUID) -> dict[str, Any]:
+def get_rule_bundle(db: Session, survey_id: uuid.UUID, user_tz: ZoneInfo) -> dict[str, Any]:
     survey = _get_survey_or_404(db, survey_id)
     rules = (
         db.query(RuleORM)
@@ -471,11 +473,13 @@ def get_rule_bundle(db: Session, survey_id: uuid.UUID) -> dict[str, Any]:
     return {
         "survey_id": survey.id,
         "questions": _get_latest_question_options(db, survey),
-        "rules": [_rule_to_response(rule) for rule in rules],
+        "rules": [_rule_to_response(rule, user_tz) for rule in rules],
     }
 
 
-def create_rule(db: Session, survey_id: uuid.UUID, payload: "CreateRule") -> dict[str, Any]:
+def create_rule(
+    db: Session, survey_id: uuid.UUID, payload: "CreateRule", user_tz: ZoneInfo
+) -> dict[str, Any]:
     from .rule_validator import validate_rule as _validate_rule_status
 
     survey = _get_survey_or_404(db, survey_id)
@@ -527,10 +531,12 @@ def create_rule(db: Session, survey_id: uuid.UUID, payload: "CreateRule") -> dic
 
     db.commit()
     db.refresh(rule)
-    return _rule_to_response(_get_rule_or_404(db, survey_id, rule.id))
+    return _rule_to_response(_get_rule_or_404(db, survey_id, rule.id), user_tz)
 
 
-def update_rule(db: Session, survey_id: uuid.UUID, rule_id: uuid.UUID, payload: "UpdateRule") -> dict[str, Any]:
+def update_rule(
+    db: Session, survey_id: uuid.UUID, rule_id: uuid.UUID, payload: "UpdateRule", user_tz: ZoneInfo
+) -> dict[str, Any]:
     from .rule_validator import validate_rule as _validate_rule_status
 
     _validate_rule_payload(db, survey_id, payload)
@@ -599,7 +605,7 @@ def update_rule(db: Session, survey_id: uuid.UUID, rule_id: uuid.UUID, payload: 
         raise RuleValidationError(broken_reasons)
 
     db.commit()
-    return _rule_to_response(_get_rule_or_404(db, survey_id, rule.id))
+    return _rule_to_response(_get_rule_or_404(db, survey_id, rule.id), user_tz)
 
 
 def _rule_id_in_flow_branch_config(config: dict | None, rule_id: uuid.UUID) -> bool:

@@ -2,21 +2,29 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ..auth.jwt import get_current_user
+from ..core.timezone_australia import assert_allowed_timezone_string
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import Company as CompanyORM
 from ..models.postgres_model import Location as LocationORM
+from ..models.postgres_model import Subscription as SubscriptionORM
 from ..models.postgres_model import User as UserORM
-from ..schemas.pydantic_model import UserResponse, SetupAccountRequest
+from ..schemas.pydantic_model import (
+    SetupAccountRequest,
+    UpdateUserTimezoneRequest,
+    UserResponse,
+)
 
 router = APIRouter()
 
 
-@router.get("/user", response_model=UserResponse)
-def get_me(
-    user: UserORM = Depends(get_current_user),
-    db: Session = Depends(get_db_connection),
-):
-    """Return current user profile. Triggers auto-bootstrap if user does not exist."""
+def _subscription_plan_name(db: Session, user_id) -> str | None:
+    sub = db.query(SubscriptionORM).filter(SubscriptionORM.user_id == user_id).first()
+    if sub and sub.plan_display_name and str(sub.plan_display_name).strip():
+        return str(sub.plan_display_name).strip()
+    return None
+
+
+def _build_user_response(db: Session, user: UserORM) -> UserResponse:
     company_name = None
     if user.onboarding_complete:
         company = (
@@ -37,9 +45,32 @@ def get_me(
         last_name=user.last_name,
         onboarding_complete=user.onboarding_complete,
         email_verified=user.email_verified,
+        timezone=user.timezone,
+        subscription_plan_name=_subscription_plan_name(db, user.id),
         company_name=company_name,
         user_display_name=display_name,
     )
+
+
+@router.get("/user", response_model=UserResponse)
+def get_me(
+    user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    """Return current user profile. Triggers auto-bootstrap if user does not exist."""
+    return _build_user_response(db, user)
+
+
+@router.patch("/user/timezone", response_model=UserResponse)
+def patch_user_timezone(
+    payload: UpdateUserTimezoneRequest,
+    user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    user.timezone = assert_allowed_timezone_string(payload.timezone)
+    db.commit()
+    db.refresh(user)
+    return _build_user_response(db, user)
 
 
 @router.post("/user/confirm-email")
@@ -64,6 +95,9 @@ def setup_account(
     """Complete onboarding: create Company + Location, set onboarding_complete."""
     if user.onboarding_complete:
         return {"ok": True, "message": "Onboarding already complete"}
+
+    tz = assert_allowed_timezone_string(payload.timezone)
+    user.timezone = tz
 
     # UNIQUE on owner_user_id prevents duplicate companies on retries
     existing_company = (

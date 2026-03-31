@@ -6,8 +6,16 @@ No route logic lives here – only data access.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
+
+from ..core.datetime_user_tz import (
+    inclusive_local_date_range_to_utc_bounds,
+    local_date_start_utc,
+    naive_utc_for_sql,
+    to_iso8601_zoned,
+)
 
 from sqlalchemy import func, case, literal_column, and_, or_
 from sqlalchemy.orm import Session
@@ -43,6 +51,21 @@ _VALID_SORT_COLUMNS = {
     "scan_time", "time_to_complete", "questions_answered",
     "survey_name", "qr_code_name",
 }
+
+
+def _parse_analytics_filter_date(s: str | None) -> date | None:
+    if not s or not str(s).strip():
+        return None
+    t = str(s).strip()
+    if len(t) >= 10:
+        t = t[:10]
+    try:
+        return date.fromisoformat(t)
+    except ValueError as e:
+        raise ValidationError(
+            code="INVALID_DATE",
+            message="date_start and date_end must be YYYY-MM-DD",
+        ) from e
 
 
 def _get_company_or_403(user_id: uuid.UUID, db: Session) -> CompanyORM:
@@ -91,14 +114,15 @@ def get_analytics_responses(
     *,
     user_id: uuid.UUID,
     db: Session,
+    user_tz: ZoneInfo,
     page: int = 1,
     page_size: int = 100,
     survey_id: str | None = None,
     qr_code_id: str | None = None,
     location_id: str | None = None,
     completed: bool | None = None,
-    date_start: datetime | None = None,
-    date_end: datetime | None = None,
+    date_start: str | None = None,
+    date_end: str | None = None,
     sort_column: str = "scan_time",
     sort_direction: str = "desc",
     no_location: bool = False,
@@ -221,10 +245,21 @@ def get_analytics_responses(
     elif completed is False:
         q = q.filter(SurveyResponseORM.id.is_(None))
 
-    if date_start:
-        q = q.filter(SurveySessionORM.start_time >= date_start)
-    if date_end:
-        q = q.filter(SurveySessionORM.start_time <= date_end)
+    ds = _parse_analytics_filter_date(date_start)
+    de = _parse_analytics_filter_date(date_end)
+    if ds and de and ds > de:
+        raise ValidationError(code="INVALID_DATE_RANGE", message="date_start must be before date_end")
+    if ds is not None and de is not None:
+        utc_lo, utc_hi_excl = inclusive_local_date_range_to_utc_bounds(ds, de, user_tz)
+        q = q.filter(SurveySessionORM.start_time >= naive_utc_for_sql(utc_lo))
+        q = q.filter(SurveySessionORM.start_time < naive_utc_for_sql(utc_hi_excl))
+    elif ds is not None:
+        q = q.filter(SurveySessionORM.start_time >= naive_utc_for_sql(local_date_start_utc(ds, user_tz)))
+    elif de is not None:
+        q = q.filter(
+            SurveySessionORM.start_time
+            < naive_utc_for_sql(local_date_start_utc(de + timedelta(days=1), user_tz))
+        )
 
     # ------------------------------------------------------------------
     # Sorting
@@ -276,7 +311,7 @@ def get_analytics_responses(
             survey_name=r.survey_name or "",
             qr_code_name=r.qr_code_name or "",
             location_name=r.location_name,
-            scan_time=r.scan_time.isoformat() if r.scan_time else "",
+            scan_time=to_iso8601_zoned(r.scan_time, user_tz) or "",
             completed=bool(r.completed),
             time_to_complete_seconds=r.time_to_complete,
             questions_answered=int(r.questions_answered or 0),

@@ -94,6 +94,8 @@ export interface UserResponse {
   last_name: string
   email_verified: boolean
   onboarding_complete: boolean
+  timezone: string
+  subscription_plan_name?: string | null
   company_name?: string | null
   user_display_name?: string | null
 }
@@ -101,6 +103,7 @@ export interface UserResponse {
 export interface SetupAccountPayload {
   company_name: string
   location_name: string
+  timezone: string
   location_state?: string | null
   location_country?: string | null
   location_google_business_url?: string | null
@@ -1022,6 +1025,7 @@ export async function setupAccount(
     body: JSON.stringify({
       company_name: payload.company_name,
       location_name: payload.location_name,
+      timezone: payload.timezone,
       location_state: payload.location_state ?? undefined,
       location_country: payload.location_country ?? undefined,
       location_google_business_url: payload.location_google_business_url ?? undefined,
@@ -1030,6 +1034,17 @@ export async function setupAccount(
       location_count: payload.location_count ?? undefined,
       how_heard: payload.how_heard ?? undefined,
     }),
+  })
+}
+
+export async function patchUserTimezone(
+  accessToken: string,
+  timezone: string,
+): Promise<UserResponse> {
+  return apiFetch<UserResponse>(`${BACKEND_BASE}/api/v1/user/timezone`, {
+    method: "PATCH",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify({ timezone }),
   })
 }
 
@@ -1787,6 +1802,7 @@ export interface SubscriptionResponse {
   current_period_end: string | null
   stripe_customer_id: string | null
   stripe_subscription_id: string | null
+  plan_display_name: string | null
   is_active: boolean
 }
 

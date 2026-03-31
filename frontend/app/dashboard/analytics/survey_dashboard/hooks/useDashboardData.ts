@@ -18,25 +18,31 @@ import {
   getCache,
   setCache,
 } from "@/lib/dashboard/cache";
+import { formatCalendarDateInTimeZone } from "@/lib/datetime/formatInUserTz";
 
 async function getToken(): Promise<string | null> {
   const { data } = await supabase.auth.getSession();
   return data.session?.access_token ?? null;
 }
 
-export function buildAPIParams(filters: FilterState, dates: { dateStart: Date; dateEnd: Date }): SurveyDashboardAPIParams {
+export function buildAPIParams(
+  filters: FilterState,
+  dates: { dateStart: Date; dateEnd: Date },
+  userTimeZone: string,
+): SurveyDashboardAPIParams {
   return {
     location_ids: filters.locationIds.length > 0 ? filters.locationIds : undefined,
     qr_code_ids: filters.qrCodeIds.length > 0 ? filters.qrCodeIds : undefined,
-    date_start: dates.dateStart.toISOString(),
-    date_end: dates.dateEnd.toISOString(),
+    date_start: formatCalendarDateInTimeZone(dates.dateStart, userTimeZone),
+    date_end: formatCalendarDateInTimeZone(dates.dateEnd, userTimeZone),
   };
 }
 
 export function useDashboardData(
   surveyId: string | null,
   filters: FilterState,
-  resolvedDates: { dateStart: Date; dateEnd: Date }
+  resolvedDates: { dateStart: Date; dateEnd: Date },
+  userTimeZone: string,
 ): {
   data: SurveyDashboardResponse | null;
   isLoading: boolean;
@@ -51,13 +57,18 @@ export function useDashboardData(
   const fetchKey = useRef(0);
   const forceRefresh = useRef(false);
 
+  const ds = formatCalendarDateInTimeZone(resolvedDates.dateStart, userTimeZone);
+  const de = formatCalendarDateInTimeZone(resolvedDates.dateEnd, userTimeZone);
+  const locationIdsKey = [...filters.locationIds].sort().join(",");
+  const qrCodeIdsKey = [...filters.qrCodeIds].sort().join(",");
   const cacheKey = surveyId
     ? buildCacheKey(
         surveyId,
         filters.locationIds,
         filters.qrCodeIds,
-        resolvedDates.dateStart.toISOString(),
-        resolvedDates.dateEnd.toISOString(),
+        ds,
+        de,
+        userTimeZone,
       )
     : null;
 
@@ -84,7 +95,7 @@ export function useDashboardData(
     try {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");
-      const params = buildAPIParams(filters, resolvedDates);
+      const params = buildAPIParams(filters, resolvedDates, userTimeZone);
       const result = await getSurveyDashboard<SurveyDashboardResponse>(token, surveyId, params);
       if (fetchKey.current === key) {
         const fetchedAt = setCache(cacheKey, result);
@@ -98,12 +109,12 @@ export function useDashboardData(
     } finally {
       if (fetchKey.current === key) setIsLoading(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [surveyId, filters.locationIds.join(","), filters.qrCodeIds.join(","), resolvedDates.dateStart.toISOString(), resolvedDates.dateEnd.toISOString()]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keys capture filter inputs; `filters` is new ref each render from URL state
+  }, [surveyId, userTimeZone, cacheKey, locationIdsKey, qrCodeIdsKey, ds, de]);
 
   useEffect(() => {
     if (surveyId) fetch();
-  }, [fetch]);
+  }, [fetch, surveyId]);
 
   const refetch = useCallback(() => {
     if (cacheKey) deleteCache(cacheKey);
@@ -118,7 +129,8 @@ export function useOldQuestionsData(
   surveyId: string | null,
   filters: FilterState,
   resolvedDates: { dateStart: Date; dateEnd: Date },
-  enabled: boolean
+  userTimeZone: string,
+  enabled: boolean,
 ): {
   data: OldQuestionsDashboardResponse | null;
   isLoading: boolean;
@@ -127,30 +139,32 @@ export function useOldQuestionsData(
   const [data, setData] = useState<OldQuestionsDashboardResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const hasFetched = useRef(false);
   const fetchKey = useRef(0);
 
+  const ds = formatCalendarDateInTimeZone(resolvedDates.dateStart, userTimeZone);
+  const de = formatCalendarDateInTimeZone(resolvedDates.dateEnd, userTimeZone);
+  const locationIdsKey = [...filters.locationIds].sort().join(",");
+  const qrCodeIdsKey = [...filters.qrCodeIds].sort().join(",");
+
   useEffect(() => {
-    if (!enabled || !surveyId || hasFetched.current) return;
+    if (!enabled || !surveyId) return;
 
     const cacheKey = buildCacheKey(
       `old:${surveyId}`,
       filters.locationIds,
       filters.qrCodeIds,
-      resolvedDates.dateStart.toISOString(),
-      resolvedDates.dateEnd.toISOString(),
+      ds,
+      de,
+      userTimeZone,
     );
 
-    // Serve from module-level cache — persists across accordion open/close and page navigations
     const cached = getCache<OldQuestionsDashboardResponse>(cacheKey);
     if (cached) {
       setData(cached.data);
-      hasFetched.current = true;
       return;
     }
 
     const key = ++fetchKey.current;
-    hasFetched.current = true;
     setIsLoading(true);
     setError(null);
 
@@ -160,7 +174,7 @@ export function useOldQuestionsData(
         setIsLoading(false);
         return;
       }
-      const params = buildAPIParams(filters, resolvedDates);
+      const params = buildAPIParams(filters, resolvedDates, userTimeZone);
       return getSurveyDashboardOldQuestions<OldQuestionsDashboardResponse>(token, surveyId, params)
         .then((result) => {
           if (fetchKey.current === key) {
@@ -171,14 +185,14 @@ export function useOldQuestionsData(
         .catch((e: unknown) => {
           if (fetchKey.current === key) {
             setError(e instanceof Error ? e.message : "Failed to load old questions");
-            hasFetched.current = false; // allow retry on error
           }
         })
         .finally(() => {
           if (fetchKey.current === key) setIsLoading(false);
         });
     });
-  }, [enabled, surveyId]); // Only trigger on expand, not on filter change
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keys capture filter inputs; `filters` is new ref each render
+  }, [enabled, surveyId, userTimeZone, locationIdsKey, qrCodeIdsKey, ds, de]);
 
   return { data, isLoading, error };
 }

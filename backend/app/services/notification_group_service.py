@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session, joinedload
 
+from ..core.datetime_user_tz import to_iso8601_zoned
 from ..core.errors.exceptions import ConflictError, NotFoundError, StaleObjectError, ValidationError
 from ..models.postgres_model import (
     FlowNode as FlowNodeORM,
@@ -49,19 +51,19 @@ def _get_notification_group_or_404(
     return group
 
 
-def _to_response(group: NotificationGroupORM) -> dict:
+def _to_response(group: NotificationGroupORM, user_tz: ZoneInfo) -> dict:
     return {
         "id": group.id,
         "company_id": group.company_id,
         "name": group.name,
-        "created_at": group.created_at,
-        "updated_at": group.updated_at,
+        "created_at": to_iso8601_zoned(group.created_at, user_tz) or "",
+        "updated_at": to_iso8601_zoned(group.updated_at, user_tz) or "",
         "members": [
             {
                 "id": member.id,
                 "name": member.name,
                 "email": member.email,
-                "created_at": member.created_at,
+                "created_at": to_iso8601_zoned(member.created_at, user_tz) or "",
             }
             for member in group.members
             if member.deleted_at is None
@@ -96,7 +98,7 @@ def _ensure_unique_notification_group_name(
             )
 
 
-def list_notification_groups(db: Session, company_id: uuid.UUID) -> list[dict]:
+def list_notification_groups(db: Session, company_id: uuid.UUID, user_tz: ZoneInfo) -> list[dict]:
     rows = (
         db.query(NotificationGroupORM)
         .options(joinedload(NotificationGroupORM.members), joinedload(NotificationGroupORM.location_links))
@@ -107,10 +109,12 @@ def list_notification_groups(db: Session, company_id: uuid.UUID) -> list[dict]:
         .order_by(NotificationGroupORM.created_at.desc(), NotificationGroupORM.id.desc())
         .all()
     )
-    return [_to_response(row) for row in rows]
+    return [_to_response(row, user_tz) for row in rows]
 
 
-def create_notification_group(db: Session, company_id: uuid.UUID, name: str) -> dict:
+def create_notification_group(
+    db: Session, company_id: uuid.UUID, name: str, user_tz: ZoneInfo
+) -> dict:
     _ensure_unique_notification_group_name(db, company_id, name)
     group = NotificationGroupORM(
         company_id=company_id,
@@ -118,7 +122,7 @@ def create_notification_group(db: Session, company_id: uuid.UUID, name: str) -> 
     )
     db.add(group)
     db.commit()
-    return _to_response(_get_notification_group_or_404(db, company_id, group.id))
+    return _to_response(_get_notification_group_or_404(db, company_id, group.id), user_tz)
 
 
 def update_notification_group(
@@ -129,6 +133,7 @@ def update_notification_group(
     name: str,
     members: list[dict[str, str]],
     updated_at,
+    user_tz: ZoneInfo,
 ) -> dict:
     group = _get_notification_group_or_404(db, company_id, group_id)
     normalized_name = name.strip()
@@ -186,7 +191,7 @@ def update_notification_group(
         )
 
     db.commit()
-    return _to_response(_get_notification_group_or_404(db, company_id, group.id))
+    return _to_response(_get_notification_group_or_404(db, company_id, group.id), user_tz)
 
 
 def add_notification_group_member(
@@ -196,6 +201,7 @@ def add_notification_group_member(
     *,
     name: str,
     email: str,
+    user_tz: ZoneInfo,
 ) -> dict:
     group = _get_notification_group_or_404(db, company_id, group_id)
     member = NotificationGroupMemberORM(
@@ -205,7 +211,7 @@ def add_notification_group_member(
     )
     db.add(member)
     db.commit()
-    return _to_response(_get_notification_group_or_404(db, company_id, group.id))
+    return _to_response(_get_notification_group_or_404(db, company_id, group.id), user_tz)
 
 
 def assign_notification_group_to_location(
@@ -213,6 +219,7 @@ def assign_notification_group_to_location(
     company_id: uuid.UUID,
     location_id: uuid.UUID,
     group_id: uuid.UUID,
+    user_tz: ZoneInfo,
 ) -> dict:
     location = (
         db.query(LocationORM)
@@ -243,7 +250,7 @@ def assign_notification_group_to_location(
             )
         )
         db.commit()
-    return _to_response(_get_notification_group_or_404(db, company_id, group.id))
+    return _to_response(_get_notification_group_or_404(db, company_id, group.id), user_tz)
 
 
 def sync_location_notification_groups(
@@ -251,6 +258,7 @@ def sync_location_notification_groups(
     company_id: uuid.UUID,
     location_id: uuid.UUID,
     group_ids: list[uuid.UUID],
+    user_tz: ZoneInfo,
 ) -> list[dict]:
     location = (
         db.query(LocationORM)
@@ -301,7 +309,7 @@ def sync_location_notification_groups(
             db.add(LocationNotificationGroupORM(location_id=location_id, group_id=group_id))
 
     db.commit()
-    return list_notification_groups(db, company_id)
+    return list_notification_groups(db, company_id, user_tz)
 
 
 def delete_notification_group(db: Session, company_id: uuid.UUID, group_id: uuid.UUID, updated_at) -> None:

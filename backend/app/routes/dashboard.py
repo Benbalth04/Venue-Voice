@@ -1,4 +1,6 @@
-from datetime import datetime
+from datetime import date
+from zoneinfo import ZoneInfo
+
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -6,6 +8,12 @@ from fastapi import APIRouter, Depends, Query
 
 from ..auth.jwt import get_current_user
 from ..auth.subscription import require_active_subscription
+from ..auth.user_timezone import format_dt_for_user, get_user_zoneinfo
+from ..core.datetime_user_tz import (
+    inclusive_local_date_range_to_utc_bounds,
+    naive_utc_for_sql,
+    user_local_date_sql,
+)
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import (
     Company as CompanyORM,
@@ -45,6 +53,7 @@ def _get_user_company(user: UserORM, db: Session) -> CompanyORM | None:
 @router.get("/dashboard", response_model=DashboardData)
 def get_dashboard(
     user: UserORM = Depends(get_current_user),
+    user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
     """Return dashboard data for the current user's company."""
@@ -214,16 +223,17 @@ def get_dashboard(
         DashboardLocationSummary(id=l.id, name=l.name) for l in locations_orm
     ]
 
-    # Submission trend (by date)
+    sub_day = user_local_date_sql(SurveyResponseORM.completion_datetime, user_tz)
+    # Submission trend (by user-local calendar date)
     submission_trend_rows = (
         db.query(
-            func.date(SurveyResponseORM.completion_datetime).label("day"),
+            sub_day.label("day"),
             func.count(SurveyResponseORM.id).label("cnt"),
         )
         .filter(SurveyResponseORM.survey_version_id.in_(sv_ids))
         .filter(SurveyResponseORM.deleted_at.is_(None))
-        .group_by(func.date(SurveyResponseORM.completion_datetime))
-        .order_by(func.date(SurveyResponseORM.completion_datetime))
+        .group_by(sub_day)
+        .order_by(sub_day)
         .all()
         if sv_ids
         else []
@@ -235,17 +245,18 @@ def get_dashboard(
     # Scan trend (by date)
     scan_trend_rows = []
     if qr_ids:
+        scan_day = user_local_date_sql(ScanEventORM.scanned_at, user_tz)
         scan_trend_rows = (
             db.query(
-                func.date(ScanEventORM.scanned_at).label("day"),
+                scan_day.label("day"),
                 func.count(ScanEventORM.id).label("cnt"),
             )
             .filter(
                 ScanEventORM.qr_code_id.in_(qr_ids),
                 ScanEventORM.deleted_at.is_(None),
             )
-            .group_by(func.date(ScanEventORM.scanned_at))
-            .order_by(func.date(ScanEventORM.scanned_at))
+            .group_by(scan_day)
+            .order_by(scan_day)
             .all()
         )
     scan_trend = [DashboardTrendPoint(label=str(r.day), value=r.cnt) for r in scan_trend_rows]
@@ -268,8 +279,9 @@ def get_dashboard(
 
 @router.get("/dashboard/submissions", response_model=list[DashboardResponseSummary])
 def get_dashboard_submissions_by_date(
-    date: str = Query(..., description="Date in YYYY-MM-DD format"),
+    date: str = Query(..., description="Date in YYYY-MM-DD format (user's saved timezone)"),
     user: UserORM = Depends(get_current_user),
+    user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
     """Return submissions for a specific date."""
@@ -296,15 +308,17 @@ def get_dashboard_submissions_by_date(
         .all()
     ]
 
-    start = datetime.strptime(date, "%Y-%m-%d")
-    end = start.replace(hour=23, minute=59, second=59, microsecond=999999)
+    d = date.fromisoformat(date.strip()[:10])
+    utc_lo, utc_hi_excl = inclusive_local_date_range_to_utc_bounds(d, d, user_tz)
+    start_naive = naive_utc_for_sql(utc_lo)
+    end_naive = naive_utc_for_sql(utc_hi_excl)
 
     responses = (
         db.query(SurveyResponseORM)
         .filter(
             SurveyResponseORM.survey_version_id.in_(sv_ids),
-            SurveyResponseORM.completion_datetime >= start,
-            SurveyResponseORM.completion_datetime <= end,
+            SurveyResponseORM.completion_datetime >= start_naive,
+            SurveyResponseORM.completion_datetime < end_naive,
             SurveyResponseORM.deleted_at.is_(None),
         )
         .order_by(SurveyResponseORM.completion_datetime)
@@ -316,7 +330,7 @@ def get_dashboard_submissions_by_date(
             id=r.id,
             survey_version_id=r.survey_version_id,
             location_id=r.location_snapshot_id,
-            completion_datetime=r.completion_datetime.isoformat(),
+            completion_datetime=format_dt_for_user(r.completion_datetime, user_tz) or "",
         )
         for r in responses
     ]

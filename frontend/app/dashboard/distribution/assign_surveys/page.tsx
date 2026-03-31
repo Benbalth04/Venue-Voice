@@ -6,6 +6,7 @@ import { Pencil, Plus, Save, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useConfirm } from "@/components/ui/ConfirmDialog"
 import { DataTable, type DataTableColumn } from "@/components/ui/DataTable"
+import { DateTimePicker } from "@/components/ui/DatePicker"
 import { DropdownSelect, SingleSelectDropdown } from "@/components/ui/DropdownSelect"
 import { supabase } from "@/lib/supabase/client"
 import {
@@ -119,21 +120,25 @@ function CreateAssignmentsModal({
           </label>
           <label className="block">
             <span className="text-sm font-medium text-zinc-700">Start date</span>
-            <input
-              type="datetime-local"
-              className="mt-1 w-full rounded-xl border border-zinc-200 px-3 py-2 text-sm"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-            />
+            <div className="mt-1">
+              <DateTimePicker
+                className="w-full"
+                value={startDate}
+                onChange={setStartDate}
+                placeholder="Select start"
+              />
+            </div>
           </label>
           <label className="block">
             <span className="text-sm font-medium text-zinc-700">End date</span>
-            <input
-              type="datetime-local"
-              className="mt-1 w-full rounded-xl border border-zinc-200 px-3 py-2 text-sm"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-            />
+            <div className="mt-1">
+              <DateTimePicker
+                className="w-full"
+                value={endDate}
+                onChange={setEndDate}
+                placeholder="Optional end"
+              />
+            </div>
           </label>
         </div>
 
@@ -202,21 +207,25 @@ function EditAssignmentModal({
         <div className="mt-4 space-y-4">
           <label className="block">
             <span className="text-sm font-medium text-zinc-700">Start date</span>
-            <input
-              type="datetime-local"
-              className="mt-1 w-full rounded-xl border border-zinc-200 px-3 py-2 text-sm"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-            />
+            <div className="mt-1">
+              <DateTimePicker
+                className="w-full"
+                value={startDate}
+                onChange={setStartDate}
+                placeholder="Select start"
+              />
+            </div>
           </label>
           <label className="block">
             <span className="text-sm font-medium text-zinc-700">End date</span>
-            <input
-              type="datetime-local"
-              className="mt-1 w-full rounded-xl border border-zinc-200 px-3 py-2 text-sm"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-            />
+            <div className="mt-1">
+              <DateTimePicker
+                className="w-full"
+                value={endDate}
+                onChange={setEndDate}
+                placeholder="Optional end"
+              />
+            </div>
           </label>
           <label className="flex items-center gap-2 text-sm text-zinc-700">
             <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />

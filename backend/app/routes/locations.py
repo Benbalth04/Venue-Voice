@@ -4,6 +4,7 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,7 @@ from ..core.errors.exceptions import ConflictError, NotFoundError, StaleObjectEr
 
 from ..auth.jwt import get_current_user
 from ..auth.subscription import require_active_subscription
+from ..auth.user_timezone import format_dt_for_user, get_user_zoneinfo
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import (
     Company as CompanyORM,
@@ -101,7 +103,7 @@ def _validate_google_business_url(url: str | None) -> None:
         )
 
 
-def _to_response(loc: LocationORM) -> LocationResponse:
+def _to_response(loc: LocationORM, user_tz: ZoneInfo) -> LocationResponse:
     return LocationResponse(
         id=loc.id,
         name=loc.name,
@@ -109,14 +111,15 @@ def _to_response(loc: LocationORM) -> LocationResponse:
         state=loc.state,
         country=loc.country,
         google_business_url=loc.google_business_url,
-        created_at=loc.created_at.isoformat(),
-        updated_at=loc.updated_at.isoformat(),
+        created_at=format_dt_for_user(loc.created_at, user_tz) or "",
+        updated_at=format_dt_for_user(loc.updated_at, user_tz) or "",
     )
 
 
 @router.get("/locations", response_model=list[LocationResponse])
 def list_locations(
     user: UserORM = Depends(get_current_user),
+    user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
     company = _get_company(user, db)
@@ -129,13 +132,14 @@ def list_locations(
         .order_by(LocationORM.created_at.desc())
         .all()
     )
-    return [_to_response(loc) for loc in locations]
+    return [_to_response(loc, user_tz) for loc in locations]
 
 
 @router.post("/locations", response_model=LocationResponse, status_code=201)
 def create_location(
     payload: LocationCreate,
     user: UserORM = Depends(get_current_user),
+    user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
     company = _get_company(user, db)
@@ -174,17 +178,18 @@ def create_location(
     except IntegrityError:
         db.rollback()
         raise ConflictError(code="LOCATION_NAME_CONFLICT", message="A location with this name already exists")
-    return _to_response(loc)
+    return _to_response(loc, user_tz)
 
 
 @router.get("/locations/{location_id}", response_model=LocationResponse)
 def get_location(
     location_id: str,
     user: UserORM = Depends(get_current_user),
+    user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
     company = _get_company(user, db)
-    return _to_response(_get_location_or_404(location_id, company.id, db))
+    return _to_response(_get_location_or_404(location_id, company.id, db), user_tz)
 
 
 @router.get("/locations/{location_id}/flow-dependencies", response_model=LocationFlowDependencies)
@@ -259,6 +264,7 @@ def update_location(
     location_id: str,
     payload: LocationUpdate,
     user: UserORM = Depends(get_current_user),
+    user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
     company = _get_company(user, db)
@@ -328,7 +334,7 @@ def update_location(
         db.rollback()
         logger.exception("Flow revalidation failed for location %s", loc.id)
 
-    return _to_response(loc)
+    return _to_response(loc, user_tz)
 
 
 @router.delete("/locations/{location_id}", status_code=204)

@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { AlertTriangle, Bell, User, X } from "lucide-react"
+import { AlertTriangle, Bell, X } from "lucide-react"
 import { useAuth } from "@/contexts/AuthContext"
 import { useUnreadResponses } from "@/components/layout/UnreadResponsesContext"
 import { useBrokenRules } from "@/components/layout/BrokenRulesContext"
 import { useBrokenFlows } from "@/components/layout/BrokenFlowsContext"
 import { useQRSubmissionBlocked } from "@/components/layout/QRSubmissionBlockedContext"
+import { ProfileSettingsMenu } from "@/components/layout/ProfileSettingsMenu"
 
 export function Topbar() {
   const { user } = useAuth()
@@ -47,11 +48,6 @@ export function Topbar() {
   }
 
   const companyName = user?.company_name ?? ""
-  const displayName = user
-    ? user.user_display_name ??
-      (`${user.first_name} ${user.last_name}`.trim() || "User")
-    : "—"
-
   const qrBannerMessage =
     submissionBlockedActiveQrCount === 1
       ? "There is 1 active QR code that cannot accept submissions. Ensure the survey assignment is active."
@@ -77,10 +73,7 @@ export function Topbar() {
               <span className="absolute right-1 top-1 inline-flex h-2 w-2 rounded-full bg-violet-500" aria-hidden />
             )}
           </Link>
-          <div className="flex items-center gap-2 rounded-full bg-zinc-50 px-3 py-1.5 text-xs font-medium text-zinc-700">
-            <User className="h-4 w-4" />
-            <span>{displayName || "—"}</span>
-          </div>
+          <ProfileSettingsMenu />
         </div>
       </header>
 

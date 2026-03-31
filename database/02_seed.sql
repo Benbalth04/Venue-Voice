@@ -6,7 +6,7 @@
 -- Data for Name: users; Type: TABLE DATA; Schema: public; Owner: user_default
 --
 
-INSERT INTO users (id, email, first_name, last_name, onboarding_complete, email_verified, created_at, deleted_at) VALUES ('8567b7dc-6049-415e-97d8-740a6483c1b6', 'benbalthes@gmail.com', 'Ben', 'Balthes', true, true, '2026-01-15 05:56:39.091809', NULL);
+INSERT INTO users (id, email, first_name, last_name, onboarding_complete, email_verified, timezone, created_at, deleted_at) VALUES ('8567b7dc-6049-415e-97d8-740a6483c1b6', 'benbalthes@gmail.com', 'Ben', 'Balthes', true, true, 'Australia/Brisbane', '2026-01-15 05:56:39.091809', NULL);
 
 
 --
@@ -307,5 +307,5 @@ INSERT INTO survey_response_photos (id, survey_response_id, question_id, storage
 -- PostgreSQL database dump complete
 --
 
-INSERT INTO subscriptions (id, user_id, stripe_customer_id, stripe_subscription_id, status, trial_end, current_period_end, created_at, updated_at) VALUES 
-('50833f99-96e0-40ae-8eee-bebb7305be23', '8567b7dc-6049-415e-97d8-740a6483c1b6', 'cus_UFKaggJkjFseRM', 'sub_1TGpwhByUVVeu9cahmjQjvmz', 'trialing', '2026-04-07 00:14:14', Null, '2026-03-31 00:12:21.541612', '2026-03-31 00:14:17.420255');
+INSERT INTO subscriptions (id, user_id, stripe_customer_id, stripe_subscription_id, status, trial_end, current_period_end, plan_display_name, created_at, updated_at) VALUES 
+('50833f99-96e0-40ae-8eee-bebb7305be23', '8567b7dc-6049-415e-97d8-740a6483c1b6', 'cus_UFKaggJkjFseRM', 'sub_1TGpwhByUVVeu9cahmjQjvmz', 'trialing', '2026-04-07 00:14:14', Null, 'Starter Plan Monthly', '2026-03-31 00:12:21.541612', '2026-03-31 00:14:17.420255');

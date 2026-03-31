@@ -18,10 +18,11 @@ class SubscriptionStatus(str, PyEnum):
 
 class SubscriptionResponse(BaseModel):
     status: str
-    trial_end: datetime | None = None
-    current_period_end: datetime | None = None
+    trial_end: str | None = None
+    current_period_end: str | None = None
     stripe_customer_id: str | None = None
     stripe_subscription_id: str | None = None
+    plan_display_name: str | None = None
     is_active: bool
 
     model_config = ConfigDict(from_attributes=True)
@@ -64,6 +65,8 @@ class UserResponse(BaseModel):
     last_name: str
     onboarding_complete: bool
     email_verified: bool
+    timezone: str
+    subscription_plan_name: str | None = None
     company_name: str | None = None
     user_display_name: str | None = None
 
@@ -71,6 +74,7 @@ class UserResponse(BaseModel):
 class SetupAccountRequest(BaseModel):
     company_name: str
     location_name: str
+    timezone: str
     location_state: str | None = None
     location_country: str | None = None
     location_google_business_url: str | None = None
@@ -78,6 +82,10 @@ class SetupAccountRequest(BaseModel):
     company_size: str | None = None
     location_count: int | None = None
     how_heard: str | None = None
+
+
+class UpdateUserTimezoneRequest(BaseModel):
+    timezone: str
 
 class Company(BaseModel):
     id: uuid.UUID
@@ -743,7 +751,7 @@ class UpdateRule(CreateRule):
 class RuleGroupResponse(BaseModel):
     id: uuid.UUID
     operator: RuleGroupOperator
-    created_at: datetime
+    created_at: str
 
 
 class RuleConditionResponse(BaseModel):
@@ -753,7 +761,7 @@ class RuleConditionResponse(BaseModel):
     operator: RuleOperator | None
     value: str | list[str] | None
     group_id: uuid.UUID | None
-    created_at: datetime
+    created_at: str
 
 
 class RuleResponse(BaseModel):
@@ -767,8 +775,8 @@ class RuleResponse(BaseModel):
     broken_reasons: list[dict] = Field(default_factory=list)
     groups: list[RuleGroupResponse] = Field(default_factory=list)
     conditions: list[RuleConditionResponse] = Field(default_factory=list)
-    created_at: datetime
-    updated_at: datetime
+    created_at: str
+    updated_at: str
 
 
 class RuleListResponse(BaseModel):
@@ -815,15 +823,15 @@ class NotificationGroupMemberResponse(BaseModel):
     id: uuid.UUID
     name: str
     email: EmailStr
-    created_at: datetime
+    created_at: str
 
 
 class NotificationGroupResponse(BaseModel):
     id: uuid.UUID
     company_id: uuid.UUID
     name: str
-    created_at: datetime
-    updated_at: datetime
+    created_at: str
+    updated_at: str
     members: list[NotificationGroupMemberResponse] = Field(default_factory=list)
     location_ids: list[uuid.UUID] = Field(default_factory=list)
 
@@ -1109,7 +1117,7 @@ class FlowNodeResponse(BaseModel):
     action_type: FlowActionType | None
     config: dict[str, Any] | None
     position: int
-    created_at: datetime
+    created_at: str
 
 
 class FlowResponse(BaseModel):
@@ -1124,8 +1132,8 @@ class FlowResponse(BaseModel):
     broken_reasons: list[dict] = Field(default_factory=list)
     location_survey_ids: list[uuid.UUID] = Field(default_factory=list)
     nodes: list[FlowNodeResponse] = Field(default_factory=list)
-    created_at: datetime
-    updated_at: datetime
+    created_at: str
+    updated_at: str
 
 
 class FlowActionResult(BaseModel):
@@ -1153,7 +1161,7 @@ class FlowRunActionResponse(BaseModel):
     id: uuid.UUID
     action_type: str
     config: dict[str, Any]
-    created_at: datetime
+    created_at: str
 
 
 class FlowRunResponse(BaseModel):
@@ -1173,6 +1181,7 @@ class FlowRunResponse(BaseModel):
     actions: list[FlowRunActionResponse] = Field(default_factory=list)
     runtime_ms: int | None = None
     execution_trace: dict[str, Any]
+    created_at: str
 
 
 # ── Survey Dashboard ──────────────────────────────────────────────────────────
@@ -1268,8 +1277,8 @@ class EngagementData(BaseModel):
 class SurveyDashboardResponse(BaseModel):
     survey_id: uuid.UUID
     survey_name: str
-    date_start: datetime
-    date_end: datetime
+    date_start: str
+    date_end: str
     questions: list[QuestionAggregation]
     engagement: EngagementData
 

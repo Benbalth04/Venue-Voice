@@ -6,9 +6,11 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session, joinedload
 
+from ..core.datetime_user_tz import to_iso8601_zoned
 from ..core.errors.exceptions import (
     ConflictError,
     FlowExecutionError,
@@ -156,12 +158,14 @@ def get_flow_for_company(db: Session, company_id: uuid.UUID, flow_id: uuid.UUID)
     return flow
 
 
-def get_flow_response(db: Session, company_id: uuid.UUID, flow_id: uuid.UUID) -> dict[str, Any]:
+def get_flow_response(
+    db: Session, company_id: uuid.UUID, flow_id: uuid.UUID, user_tz: ZoneInfo
+) -> dict[str, Any]:
     """Return a single flow as a serialised response dict (consistent with create/update)."""
-    return _flow_to_response(get_flow_for_company(db, company_id, flow_id))
+    return _flow_to_response(get_flow_for_company(db, company_id, flow_id), user_tz)
 
 
-def _flow_to_response(flow: FlowORM) -> dict[str, Any]:
+def _flow_to_response(flow: FlowORM, user_tz: ZoneInfo) -> dict[str, Any]:
     return {
         "id": flow.id,
         "company_id": flow.company_id,
@@ -181,14 +185,14 @@ def _flow_to_response(flow: FlowORM) -> dict[str, Any]:
                 "action_type": node.action_type,
                 "config": node.action_config,
                 "position": node.position,
-                "created_at": node.created_at,
+                "created_at": to_iso8601_zoned(node.created_at, user_tz) or "",
             }
             for node in sorted(flow.nodes, key=lambda row: (row.position, row.created_at, row.id))
         ],
         "status": getattr(flow, "status", "active") or "active",
         "broken_reasons": getattr(flow, "broken_reasons", None) or [],
-        "created_at": flow.created_at,
-        "updated_at": flow.updated_at,
+        "created_at": to_iso8601_zoned(flow.created_at, user_tz) or "",
+        "updated_at": to_iso8601_zoned(flow.updated_at, user_tz) or "",
     }
 
 
@@ -412,7 +416,9 @@ def _validate_nodes(
             )
 
 
-def list_flows(db: Session, company_id: uuid.UUID, survey_id: uuid.UUID) -> list[dict[str, Any]]:
+def list_flows(
+    db: Session, company_id: uuid.UUID, survey_id: uuid.UUID, user_tz: ZoneInfo
+) -> list[dict[str, Any]]:
     _get_survey_or_404(db, company_id, survey_id)
     rows = (
         db.query(FlowORM)
@@ -425,10 +431,10 @@ def list_flows(db: Session, company_id: uuid.UUID, survey_id: uuid.UUID) -> list
         .order_by(FlowORM.updated_at.desc(), FlowORM.created_at.desc())
         .all()
     )
-    return [_flow_to_response(row) for row in rows]
+    return [_flow_to_response(row, user_tz) for row in rows]
 
 
-def list_company_flows(db: Session, company_id: uuid.UUID) -> list[dict[str, Any]]:
+def list_company_flows(db: Session, company_id: uuid.UUID, user_tz: ZoneInfo) -> list[dict[str, Any]]:
     rows = (
         db.query(FlowORM)
         .options(joinedload(FlowORM.nodes), joinedload(FlowORM.location_surveys), joinedload(FlowORM.survey))
@@ -439,10 +445,12 @@ def list_company_flows(db: Session, company_id: uuid.UUID) -> list[dict[str, Any
         .order_by(FlowORM.updated_at.desc(), FlowORM.created_at.desc())
         .all()
     )
-    return [_flow_to_response(row) for row in rows]
+    return [_flow_to_response(row, user_tz) for row in rows]
 
 
-def create_flow(db: Session, company_id: uuid.UUID, survey_id: uuid.UUID, payload) -> dict[str, Any]:
+def create_flow(
+    db: Session, company_id: uuid.UUID, survey_id: uuid.UUID, payload, user_tz: ZoneInfo
+) -> dict[str, Any]:
     _get_survey_or_404(db, company_id, survey_id)
     _ensure_unique_flow_name(db, company_id, payload.name)
     _validate_location_survey_ids(db, company_id, survey_id, payload.location_survey_ids)
@@ -476,7 +484,7 @@ def create_flow(db: Session, company_id: uuid.UUID, survey_id: uuid.UUID, payloa
         )
 
     db.commit()
-    return _flow_to_response(_get_flow_or_404(db, company_id, survey_id, flow.id))
+    return _flow_to_response(_get_flow_or_404(db, company_id, survey_id, flow.id), user_tz)
 
 
 def set_flow_active(
@@ -487,6 +495,7 @@ def set_flow_active(
     *,
     is_active: bool,
     updated_at,
+    user_tz: ZoneInfo,
 ) -> dict[str, Any]:
     flow = _get_flow_or_404(db, company_id, survey_id, flow_id)
 
@@ -502,10 +511,17 @@ def set_flow_active(
         raise StaleObjectError("Flow", str(flow.id))
 
     db.commit()
-    return _flow_to_response(_get_flow_or_404(db, company_id, survey_id, flow_id))
+    return _flow_to_response(_get_flow_or_404(db, company_id, survey_id, flow_id), user_tz)
 
 
-def update_flow(db: Session, company_id: uuid.UUID, survey_id: uuid.UUID, flow_id: uuid.UUID, payload) -> dict[str, Any]:
+def update_flow(
+    db: Session,
+    company_id: uuid.UUID,
+    survey_id: uuid.UUID,
+    flow_id: uuid.UUID,
+    payload,
+    user_tz: ZoneInfo,
+) -> dict[str, Any]:
     flow = _get_flow_or_404(db, company_id, survey_id, flow_id)
     _ensure_unique_flow_name(db, company_id, payload.name, exclude_flow_id=flow.id)
     _validate_location_survey_ids(
@@ -562,7 +578,7 @@ def update_flow(db: Session, company_id: uuid.UUID, survey_id: uuid.UUID, flow_i
         )
 
     db.commit()
-    return _flow_to_response(_get_flow_or_404(db, company_id, survey_id, flow.id))
+    return _flow_to_response(_get_flow_or_404(db, company_id, survey_id, flow.id), user_tz)
 
 
 def delete_flow(db: Session, company_id: uuid.UUID, survey_id: uuid.UUID, flow_id: uuid.UUID, updated_at) -> None:
@@ -1291,7 +1307,7 @@ def test_flow(
     }
 
 
-def list_flow_runs(db: Session, company_id: uuid.UUID) -> list[dict[str, Any]]:
+def list_flow_runs(db: Session, company_id: uuid.UUID, user_tz: ZoneInfo) -> list[dict[str, Any]]:
     rows = (
         db.query(FlowRunORM, FlowORM, SurveyORM, LocationORM, QRCodeORM)
         .options(joinedload(FlowRunORM.flow_run_actions))
@@ -1320,12 +1336,17 @@ def list_flow_runs(db: Session, company_id: uuid.UUID) -> list[dict[str, Any]]:
             "qr_code_id": run.qr_code_id,
             "qr_code_title": qr.title if qr else None,
             "actions": [
-                {"id": a.id, "action_type": a.action_type, "config": a.config, "created_at": a.created_at}
+                {
+                    "id": a.id,
+                    "action_type": a.action_type,
+                    "config": a.config,
+                    "created_at": to_iso8601_zoned(a.created_at, user_tz) or "",
+                }
                 for a in sorted(run.flow_run_actions, key=lambda a: a.created_at)
             ],
             "runtime_ms": int(run.execution_trace.get("runtime_ms")) if isinstance(run.execution_trace, dict) and run.execution_trace.get("runtime_ms") is not None else None,
             "execution_trace": run.execution_trace,
-            "created_at": run.created_at,
+            "created_at": to_iso8601_zoned(run.created_at, user_tz) or "",
         }
         for run, flow, survey, location, qr in rows
     ]

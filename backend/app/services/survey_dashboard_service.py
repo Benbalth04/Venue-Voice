@@ -12,6 +12,14 @@ from datetime import datetime, timedelta, date as _date
 
 from sqlalchemy import select, func, case, distinct, and_, cast, Date
 from sqlalchemy.orm import Session
+from zoneinfo import ZoneInfo
+
+from ..core.datetime_user_tz import (
+    inclusive_local_date_range_to_utc_bounds,
+    naive_utc_for_sql,
+    to_iso8601_zoned,
+    user_local_date_sql,
+)
 
 from ..models.postgres_model import (
     AIAnalysis as AIAnalysisORM,
@@ -69,23 +77,24 @@ def get_dashboard_data(
     survey_id: uuid.UUID,
     company_id: uuid.UUID,
     filters: DashboardFilterParams,
+    user_tz: ZoneInfo,
 ) -> SurveyDashboardResponse:
     survey = _verify_survey_ownership(db, survey_id, company_id)
-    date_start, date_end = _resolve_date_range(filters)
+    date_start, date_end = _resolve_date_range(filters, user_tz)
     resolved_filters = DashboardFilterParams(
         location_ids=filters.location_ids,
         qr_code_ids=filters.qr_code_ids,
         date_start=date_start,
         date_end=date_end,
     )
-    engagement = get_engagement_data(db, survey_id, resolved_filters)
+    engagement = get_engagement_data(db, survey_id, resolved_filters, user_tz)
     active_questions = _get_active_questions(db, survey_id)
     if not active_questions:
         return SurveyDashboardResponse(
             survey_id=survey_id,
             survey_name=survey.name,
-            date_start=date_start,
-            date_end=date_end,
+            date_start=to_iso8601_zoned(date_start, user_tz) or "",
+            date_end=to_iso8601_zoned(date_end, user_tz) or "",
             questions=[],
             engagement=engagement,
         )
@@ -94,15 +103,15 @@ def get_dashboard_data(
     }
     target_stable_ids = list(question_meta.keys())
     questions = _execute_aggregations(
-        db, target_stable_ids, question_meta, resolved_filters, survey_id
+        db, target_stable_ids, question_meta, resolved_filters, survey_id, user_tz
     )
     _attach_photo_signed_urls(questions)
     questions.sort(key=lambda q: q.position)
     return SurveyDashboardResponse(
         survey_id=survey_id,
         survey_name=survey.name,
-        date_start=date_start,
-        date_end=date_end,
+        date_start=to_iso8601_zoned(date_start, user_tz) or "",
+        date_end=to_iso8601_zoned(date_end, user_tz) or "",
         questions=questions,
         engagement=engagement,
     )
@@ -113,9 +122,10 @@ def get_old_questions_dashboard_data(
     survey_id: uuid.UUID,
     company_id: uuid.UUID,
     filters: DashboardFilterParams,
+    user_tz: ZoneInfo,
 ) -> OldQuestionsDashboardResponse:
     _verify_survey_ownership(db, survey_id, company_id)
-    date_start, date_end = _resolve_date_range(filters)
+    date_start, date_end = _resolve_date_range(filters, user_tz)
     resolved_filters = DashboardFilterParams(
         location_ids=filters.location_ids,
         qr_code_ids=filters.qr_code_ids,
@@ -152,6 +162,7 @@ def get_old_questions_dashboard_data(
         question_meta,
         resolved_filters,
         survey_id,
+        user_tz,
     )
     _attach_photo_signed_urls(questions)
     # Sort by most recently responded (question with highest stable_question_id last seen)
@@ -163,12 +174,14 @@ def get_engagement_data(
     db: Session,
     survey_id: uuid.UUID,
     filters: DashboardFilterParams,
+    user_tz: ZoneInfo,
 ) -> EngagementData:
     """Return scan/completion totals and daily completion rate for a survey."""
+    scan_day = user_local_date_sql(ScanEventORM.scanned_at, user_tz)
     # ── Daily scans: ScanEvent → QRCode → LocationSurvey scoped to survey ──
     scans_stmt = (
         select(
-            cast(ScanEventORM.scanned_at, Date).label("scan_date"),
+            scan_day.label("scan_date"),
             func.count(ScanEventORM.id).label("cnt"),
         )
         .join(QRCodeORM, QRCodeORM.id == ScanEventORM.qr_code_id)
@@ -186,7 +199,7 @@ def get_engagement_data(
         scans_stmt = scans_stmt.where(ScanEventORM.qr_code_id.in_(filters.qr_code_ids))
     if filters.location_ids:
         scans_stmt = scans_stmt.where(QRCodeORM.location_id.in_(filters.location_ids))
-    scans_stmt = scans_stmt.group_by(cast(ScanEventORM.scanned_at, Date))
+    scans_stmt = scans_stmt.group_by(scan_day)
 
     scan_rows = db.execute(scans_stmt).fetchall()
     daily_scans: dict[_date, int] = {row.scan_date: int(row.cnt) for row in scan_rows}
@@ -194,11 +207,12 @@ def get_engagement_data(
 
     # ── Daily completions: reuse filtered responses subquery ──
     fr_sq = _build_filtered_responses_subquery(db, survey_id, filters)
+    comp_day = user_local_date_sql(fr_sq.c.completion_datetime, user_tz)
     comp_rows = db.execute(
         select(
-            cast(fr_sq.c.completion_datetime, Date).label("comp_date"),
+            comp_day.label("comp_date"),
             func.count(fr_sq.c.id).label("cnt"),
-        ).group_by(cast(fr_sq.c.completion_datetime, Date))
+        ).group_by(comp_day)
     ).fetchall()
     daily_completions: dict[_date, int] = {row.comp_date: int(row.cnt) for row in comp_rows}
     total_completions = sum(daily_completions.values())
@@ -228,10 +242,11 @@ def get_question_breakdown(
     stable_question_id: uuid.UUID,
     breakdown_by: str,
     filters: DashboardFilterParams,
+    user_tz: ZoneInfo,
 ) -> QuestionBreakdownResponse:
     """Return per-location or per-QR-code aggregations for a single question."""
     _verify_survey_ownership(db, survey_id, company_id)
-    date_start, date_end = _resolve_date_range(filters)
+    date_start, date_end = _resolve_date_range(filters, user_tz)
     resolved_filters = DashboardFilterParams(
         location_ids=filters.location_ids,
         qr_code_ids=filters.qr_code_ids,
@@ -294,6 +309,7 @@ def get_question_breakdown(
             question_meta_map,
             entity_filter,
             survey_id,
+            user_tz,
         )
         if aggs:
             series.append(
@@ -317,10 +333,11 @@ def get_engagement_breakdown(
     company_id: uuid.UUID,
     breakdown_by: str,
     filters: DashboardFilterParams,
+    user_tz: ZoneInfo,
 ) -> EngagementBreakdownResponse:
     """Return per-location or per-QR-code engagement data for a survey."""
     _verify_survey_ownership(db, survey_id, company_id)
-    date_start, date_end = _resolve_date_range(filters)
+    date_start, date_end = _resolve_date_range(filters, user_tz)
     resolved_filters = DashboardFilterParams(
         location_ids=filters.location_ids,
         qr_code_ids=filters.qr_code_ids,
@@ -349,7 +366,7 @@ def get_engagement_breakdown(
                 date_start=resolved_filters.date_start,
                 date_end=resolved_filters.date_end,
             )
-        engagement = get_engagement_data(db, survey_id, entity_filter)
+        engagement = get_engagement_data(db, survey_id, entity_filter, user_tz)
         series.append(
             EngagementBreakdownSeries(
                 series_id=entity_id,
@@ -622,12 +639,16 @@ def _get_stable_ids_with_responses(
     return {row[0] for row in rows}
 
 
-def _resolve_date_range(filters: DashboardFilterParams) -> tuple[datetime, datetime]:
-    date_end = filters.date_end or datetime.utcnow()
-    date_start = filters.date_start or (
-        date_end - timedelta(days=_DEFAULT_DATE_RANGE_DAYS)
-    )
-    return date_start, date_end
+def _resolve_date_range(
+    filters: DashboardFilterParams, user_tz: ZoneInfo
+) -> tuple[datetime, datetime]:
+    if filters.date_start is not None and filters.date_end is not None:
+        return filters.date_start, filters.date_end
+
+    end_d = datetime.now(user_tz).date()
+    start_d = end_d - timedelta(days=_DEFAULT_DATE_RANGE_DAYS)
+    utc_lo, utc_hi = inclusive_local_date_range_to_utc_bounds(start_d, end_d, user_tz)
+    return naive_utc_for_sql(utc_lo), naive_utc_for_sql(utc_hi)
 
 
 def _build_filtered_responses_subquery(
@@ -667,6 +688,7 @@ def _build_answer_base_subquery(
     fr_sq,
     target_stable_ids: list[uuid.UUID],
     question_orm_ids: list[uuid.UUID],
+    user_tz: ZoneInfo,
 ):
     """Build answer_base subquery from a filtered_responses subquery.
 
@@ -674,11 +696,12 @@ def _build_answer_base_subquery(
     We join QuestionORM on stable_question_id and constrain to the specific ORM
     row IDs from question_meta to avoid duplicating rows across question versions.
     """
+    response_date_col = user_local_date_sql(fr_sq.c.completion_datetime, user_tz).label("response_date")
     return (
         select(
             QuestionORM.stable_question_id,
             QuestionORM.question_type,
-            cast(fr_sq.c.completion_datetime, Date).label("response_date"),
+            response_date_col,
             SurveyResponseAnswerORM.numeric_value,
             SurveyResponseAnswerORM.text_value,
             fr_sq.c.id.label("response_id"),
@@ -707,13 +730,14 @@ def _execute_aggregations(
     question_meta: dict[uuid.UUID, QuestionORM],
     filters: DashboardFilterParams,
     survey_id: uuid.UUID,
+    user_tz: ZoneInfo,
 ) -> list[QuestionAggregation]:
     if not target_stable_ids:
         return []
 
     question_orm_ids = [q.id for q in question_meta.values()]
     fr_sq = _build_filtered_responses_subquery(db, survey_id, filters)
-    ab_sq = _build_answer_base_subquery(fr_sq, target_stable_ids, question_orm_ids)
+    ab_sq = _build_answer_base_subquery(fr_sq, target_stable_ids, question_orm_ids, user_tz)
 
     # Total responses per stable_question_id (distinct response_ids)
     total_rows = db.execute(

@@ -11,15 +11,22 @@ interface Props {
   surveyId: string;
   filters: FilterState;
   resolvedDates: { dateStart: Date; dateEnd: Date };
+  userTimeZone: string;
 }
 
-export function OldQuestionsAccordion({ surveyId, filters, resolvedDates }: Props) {
+export function OldQuestionsAccordion({
+  surveyId,
+  filters,
+  resolvedDates,
+  userTimeZone,
+}: Props) {
   const [expanded, setExpanded] = useState(false);
   const { data, isLoading, error } = useOldQuestionsData(
     surveyId,
     filters,
     resolvedDates,
-    expanded
+    userTimeZone,
+    expanded,
   );
 
   const questionCount = data?.questions.length ?? 0;

@@ -13,6 +13,7 @@ CREATE TABLE users (
     last_name TEXT NOT NULL,
     onboarding_complete BOOLEAN DEFAULT FALSE NOT NULL,
     email_verified BOOLEAN DEFAULT FALSE NOT NULL,
+    timezone TEXT NOT NULL DEFAULT 'Australia/Brisbane',
     created_at TIMESTAMP DEFAULT NOW(),
     deleted_at TIMESTAMP NULL
 );
@@ -548,6 +549,7 @@ CREATE TABLE subscriptions (
     ),
     trial_end TIMESTAMP NULL,
     current_period_end TIMESTAMP NULL,
+    plan_display_name TEXT NULL,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );

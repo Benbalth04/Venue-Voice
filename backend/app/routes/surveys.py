@@ -1,14 +1,17 @@
 import uuid
 from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.errors.exceptions import ConflictError, NotFoundError, PermissionError, StaleObjectError, ValidationError
+from app.core.timezone_australia import effective_zoneinfo_for_stored_timezone
 
 from app.auth.jwt import get_current_user
 from app.auth.subscription import require_active_subscription
+from app.auth.user_timezone import format_dt_for_user
 from app.db.postgres import get_db_connection
 from app.models.postgres_model import Survey as SurveyORM
 from app.models.postgres_model import User as UserORM
@@ -31,6 +34,10 @@ from app.schemas.pydantic_model import (
 from app.services.survey_validation import validate_survey_schema as validate_survey_schema_service
 
 router = APIRouter(dependencies=[Depends(require_active_subscription)])
+
+
+def _user_tz(user: UserORM) -> ZoneInfo:
+    return effective_zoneinfo_for_stored_timezone(user.timezone)
 
 
 def _strip_tz(dt: datetime) -> datetime:
@@ -211,27 +218,37 @@ def _get_user_company(
 
 def _survey_to_list_item(
     s: SurveyORM,
+    *,
+    user: UserORM,
     last_edited_by: str | None = None,
 ) -> SurveyListItem:
+    tz = _user_tz(user)
     return SurveyListItem(
         id=s.id,
         title=s.name,
         status=s.status.value if hasattr(s.status, "value") else str(s.status),
         latest_version=s.latest_version,
         last_edited_by=last_edited_by,
-        created_at=s.created_at.isoformat() if s.created_at else "",
-        updated_at=s.updated_at.isoformat() if s.updated_at else "",
+        created_at=format_dt_for_user(s.created_at, tz) or "",
+        updated_at=format_dt_for_user(s.updated_at, tz) or "",
     )
 
 
-def _to_survey_with_schema(s: SurveyORM, sv: SurveyVersionORM, last_edited_by: str | None = None) -> SurveyWithSchema:
+def _to_survey_with_schema(
+    s: SurveyORM,
+    sv: SurveyVersionORM,
+    *,
+    user: UserORM,
+    last_edited_by: str | None = None,
+) -> SurveyWithSchema:
+    tz = _user_tz(user)
     return SurveyWithSchema(
         id=s.id,
         title=s.name,
         status=s.status.value if hasattr(s.status, "value") else str(s.status),
         latest_version=s.latest_version,
-        created_at=s.created_at.isoformat() if s.created_at else "",
-        updated_at=s.updated_at.isoformat() if s.updated_at else "",
+        created_at=format_dt_for_user(s.created_at, tz) or "",
+        updated_at=format_dt_for_user(s.updated_at, tz) or "",
         last_edited_by=last_edited_by,
         survey_schema_json=sv.schema_json,
     )
@@ -359,7 +376,7 @@ def list_surveys(
     result = []
     for s in surveys:
         last_edited_by = _get_last_edited_by(s.id, s.latest_version, current_user.id, db)
-        result.append(_survey_to_list_item(s, last_edited_by=last_edited_by))
+        result.append(_survey_to_list_item(s, user=current_user, last_edited_by=last_edited_by))
     return result
 
 
@@ -374,7 +391,7 @@ def get_survey(
 ):
     survey = _get_survey_or_404(survey_id, current_user, db)
     last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)
-    return _survey_to_list_item(survey, last_edited_by=last_edited_by)
+    return _survey_to_list_item(survey, user=current_user, last_edited_by=last_edited_by)
 
 
 # ------------------------------------------------------------------
@@ -389,7 +406,7 @@ def get_survey_latest(
     survey = _get_survey_or_404(survey_id, current_user, db)
     sv = _get_latest_version_or_404(survey.id, db)
     last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)
-    return _to_survey_with_schema(survey, sv, last_edited_by)
+    return _to_survey_with_schema(survey, sv, user=current_user, last_edited_by=last_edited_by)
 
 
 # ------------------------------------------------------------------
@@ -449,7 +466,7 @@ def create_survey(
     db.refresh(survey)
     db.refresh(sv)
 
-    return _to_survey_with_schema(survey, sv, str(current_user.id))
+    return _to_survey_with_schema(survey, sv, user=current_user, last_edited_by=str(current_user.id))
 
 
 # ------------------------------------------------------------------
@@ -489,7 +506,7 @@ def save_survey_version(
 
     # Do not create a duplicate version row when there are no schema changes.
     if current_sv.schema_json == payload.survey_schema_json:
-        return _to_survey_with_schema(survey, current_sv, last_edited_by)
+        return _to_survey_with_schema(survey, current_sv, user=current_user, last_edited_by=last_edited_by)
 
     # Build stable_question_id map from the current version before creating the new one.
     prev_questions = (
@@ -532,7 +549,7 @@ def save_survey_version(
     revalidate_flows_for_survey(db, survey.id)
     db.commit()
 
-    return _to_survey_with_schema(survey, sv, str(current_user.id))
+    return _to_survey_with_schema(survey, sv, user=current_user, last_edited_by=str(current_user.id))
 
 
 # ------------------------------------------------------------------
@@ -585,7 +602,7 @@ def update_survey_meta(
     db.commit()
     db.refresh(survey)
     last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)
-    return _survey_to_list_item(survey, last_edited_by=last_edited_by)
+    return _survey_to_list_item(survey, user=current_user, last_edited_by=last_edited_by)
 
 
 # ------------------------------------------------------------------
@@ -615,7 +632,7 @@ def publish_survey(
     db.commit()
     db.refresh(survey)
     last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)
-    return _survey_to_list_item(survey, last_edited_by=last_edited_by)
+    return _survey_to_list_item(survey, user=current_user, last_edited_by=last_edited_by)
 
 
 # ------------------------------------------------------------------
@@ -641,7 +658,7 @@ def archive_survey(
     db.commit()
     db.refresh(survey)
     last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)
-    return _survey_to_list_item(survey, last_edited_by=last_edited_by)
+    return _survey_to_list_item(survey, user=current_user, last_edited_by=last_edited_by)
 
 
 # ------------------------------------------------------------------
@@ -681,7 +698,7 @@ def unpublish_survey(
     db.commit()
     db.refresh(survey)
     last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)
-    return _survey_to_list_item(survey, last_edited_by=last_edited_by)
+    return _survey_to_list_item(survey, user=current_user, last_edited_by=last_edited_by)
 
 
 # ------------------------------------------------------------------
@@ -713,7 +730,7 @@ def unarchive_survey(
     db.commit()
     db.refresh(survey)
     last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)
-    return _survey_to_list_item(survey, last_edited_by=last_edited_by)
+    return _survey_to_list_item(survey, user=current_user, last_edited_by=last_edited_by)
 
 
 # ------------------------------------------------------------------
@@ -777,4 +794,4 @@ def duplicate_survey(
     db.refresh(new_survey)
     db.refresh(new_sv)
 
-    return _to_survey_with_schema(new_survey, new_sv, str(current_user.id))
+    return _to_survey_with_schema(new_survey, new_sv, user=current_user, last_edited_by=str(current_user.id))

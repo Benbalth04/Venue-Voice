@@ -10,7 +10,9 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 
 from ..auth.jwt import get_current_user
 from ..auth.subscription import require_active_subscription
+from ..auth.user_timezone import format_dt_for_user
 from ..core.errors.exceptions import ConflictError, ExternalAPIError, NotFoundError, RateLimitExceededError, StaleObjectError, ValidationError
+from ..core.timezone_australia import effective_zoneinfo_for_stored_timezone
 from ..core.rate_limit import check_rate_limit, check_qr_rate_limit
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import (
@@ -147,7 +149,8 @@ def _get_qr_or_404(qr_id: str, company_id: uuid.UUID, db: Session) -> QRCodeORM:
     return qr
 
 
-def _to_response(qr: QRCodeORM) -> QRCodeResponse:
+def _to_response(qr: QRCodeORM, user: UserORM) -> QRCodeResponse:
+    tz = effective_zoneinfo_for_stored_timezone(user.timezone)
     location_survey = qr.location_survey
     location = location_survey.location
     survey = location_survey.survey
@@ -164,14 +167,14 @@ def _to_response(qr: QRCodeORM) -> QRCodeResponse:
         location_survey_status=ls_status,
         location_id=location.id,
         location_name=location.name,
-        start_date=location_survey.start_date.isoformat(),
-        end_date=location_survey.end_date.isoformat() if location_survey.end_date else None,
+        start_date=format_dt_for_user(location_survey.start_date, tz) or "",
+        end_date=format_dt_for_user(location_survey.end_date, tz) if location_survey.end_date else None,
         is_active=qr.is_active,
         redirect_url=qr.redirect_url,
         has_logo=qr.has_logo,
         assets=_asset_urls(qr),
-        created_at=qr.created_at.isoformat(),
-        updated_at=qr.updated_at.isoformat(),
+        created_at=format_dt_for_user(qr.created_at, tz) or "",
+        updated_at=format_dt_for_user(qr.updated_at, tz) or "",
         location_status=ls_status,
         assignment_status=ls_status,
     )
@@ -203,7 +206,7 @@ def list_qr_codes(
         .order_by(QRCodeORM.created_at.desc())
         .all()
     )
-    return [_to_response(qr) for qr in qrs]
+    return [_to_response(qr, user) for qr in qrs]
 
 
 @router.get("/qr-codes/submission-blocked-summary")
@@ -226,7 +229,7 @@ def get_qr_code(
     db: Session = Depends(get_db_connection),
 ):
     company = _get_company(user, db)
-    return _to_response(_get_qr_or_404(qr_id, company.id, db))
+    return _to_response(_get_qr_or_404(qr_id, company.id, db), user)
 
 
 @router.post("/qr-codes", response_model=QRCodeResponse, status_code=201)
@@ -323,7 +326,7 @@ def create_qr_code(
             details={"qr_code_id": str(qr_id)},
         ) from e
 
-    return _to_response(_get_qr_or_404(str(qr_id), company.id, db))
+    return _to_response(_get_qr_or_404(str(qr_id), company.id, db), user)
 
 
 @router.patch("/qr-codes/{qr_id}", response_model=QRCodeResponse)
@@ -375,7 +378,7 @@ def update_qr_code(
         raise StaleObjectError("QRCode", str(qr.id))
 
     db.commit()
-    return _to_response(_get_qr_or_404(str(qr.id), company.id, db))
+    return _to_response(_get_qr_or_404(str(qr.id), company.id, db), user)
 
 
 @router.delete("/qr-codes/{qr_id}", status_code=204)

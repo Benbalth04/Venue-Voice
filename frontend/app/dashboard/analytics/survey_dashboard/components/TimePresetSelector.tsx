@@ -1,5 +1,6 @@
 "use client";
 
+import { DatePicker } from "@/components/ui/DatePicker";
 import type { TimePreset } from "@/lib/dashboard/types";
 
 const PRESETS: { label: string; value: TimePreset }[] = [
@@ -57,23 +58,23 @@ export function TimePresetSelector({
           ))}
         </div>
         {value === "custom" && (
-          <div className="flex items-center gap-2">
-            <input
-              type="date"
+          <div className="flex flex-wrap items-center gap-2">
+            <DatePicker
               value={toInputValue(dateStart)}
-              onChange={(e) =>
-                onDateStartChange(e.target.value ? new Date(e.target.value) : null)
+              onChange={(ymd) =>
+                onDateStartChange(ymd ? new Date(ymd) : null)
               }
-              className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 focus:outline-none focus:ring-2 focus:ring-violet-500"
+              placeholder="Start"
+              className="min-w-[10.5rem]"
             />
             <span className="text-xs text-zinc-400">to</span>
-            <input
-              type="date"
+            <DatePicker
               value={toInputValue(dateEnd)}
-              onChange={(e) =>
-                onDateEndChange(e.target.value ? new Date(e.target.value) : null)
+              onChange={(ymd) =>
+                onDateEndChange(ymd ? new Date(ymd) : null)
               }
-              className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 focus:outline-none focus:ring-2 focus:ring-violet-500"
+              placeholder="End"
+              className="min-w-[10.5rem]"
             />
           </div>
         )}

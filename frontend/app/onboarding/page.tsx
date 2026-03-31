@@ -9,6 +9,10 @@ import { PlanCard } from "@/components/onboarding/PlanCard"
 import { BillingToggle } from "@/components/subscription/BillingToggle"
 import { Button } from "@/components/ui/button"
 import { setupAccount, createCheckoutSession, extractErrorMessage } from "@/lib/api/client"
+import {
+  AUSTRALIA_TIMEZONE_OPTIONS,
+  guessBrowserAustraliaTimezone,
+} from "@/lib/timezone/australia"
 import { SUBSCRIBE_PLANS, type BillingInterval, type SubscribePlanId } from "@/lib/subscription/plans"
 import { useAuth } from "@/contexts/AuthContext"
 import { SingleSelectDropdown } from "@/components/ui/DropdownSelect"
@@ -47,6 +51,11 @@ const HOW_HEARD_OPTIONS: DropdownOption[] = [
   "Event",
   "Other",
 ].map((o) => ({ value: o, label: o }))
+
+const TIMEZONE_OPTIONS: DropdownOption[] = AUSTRALIA_TIMEZONE_OPTIONS.map((o) => ({
+  value: o.value,
+  label: o.label,
+}))
 
 const STEP_LABELS = ["Your Business", "About You", "Choose Plan"]
 
@@ -129,9 +138,10 @@ function OnboardingPageContent() {
   const { session } = useAuth()
   const [step, setStep] = useState(0)
 
-  const [form, setFormState] = useState({
+  const [form, setFormState] = useState(() => ({
     companyName: "",
     locationName: "",
+    timezone: guessBrowserAustraliaTimezone(),
     locationState: "",
     locationCountry: "",
     locationGoogleUrl: "",
@@ -139,7 +149,7 @@ function OnboardingPageContent() {
     companySize: "",
     locationCount: "",
     howHeard: "",
-  })
+  }))
 
   const [fieldErrors, setFieldErrors] = useState<{ companyName?: string; locationName?: string }>({})
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -171,6 +181,7 @@ function OnboardingPageContent() {
       await setupAccount(session.access_token, {
         company_name: form.companyName,
         location_name: form.locationName,
+        timezone: form.timezone,
         location_state: form.locationState || null,
         location_country: form.locationCountry || null,
         location_google_business_url: form.locationGoogleUrl || null,
@@ -285,6 +296,16 @@ function OnboardingPageContent() {
                     placeholder="https://maps.google.com/… (optional)"
                     value={form.locationGoogleUrl}
                     onChange={(e) => setField("locationGoogleUrl", e.target.value)}
+                  />
+                </Field>
+
+                <Field label="Your timezone">
+                  <SingleSelectDropdown
+                    className="mt-1"
+                    options={TIMEZONE_OPTIONS}
+                    value={form.timezone}
+                    onChange={(v) => setField("timezone", v)}
+                    placeholder="Select timezone"
                   />
                 </Field>
               </div>

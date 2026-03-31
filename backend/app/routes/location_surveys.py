@@ -11,7 +11,9 @@ from sqlalchemy import func
 
 from ..auth.jwt import get_current_user
 from ..auth.subscription import require_active_subscription
+from ..auth.user_timezone import format_dt_for_user
 from ..core.errors.exceptions import ConflictError, NotFoundError, StaleObjectError, ValidationError
+from ..core.timezone_australia import effective_zoneinfo_for_stored_timezone
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import (
     Company as CompanyORM,
@@ -57,7 +59,12 @@ def _get_company(user: UserORM, db: Session) -> CompanyORM:
     return company
 
 
-def _serialize_location_survey(location_survey: LocationSurveyORM, now: datetime | None = None) -> LocationSurveyResponse:
+def _serialize_location_survey(
+    location_survey: LocationSurveyORM,
+    user: UserORM,
+    now: datetime | None = None,
+) -> LocationSurveyResponse:
+    tz = effective_zoneinfo_for_stored_timezone(user.timezone)
     current_time = now or utc_now()
     survey = location_survey.survey
     location = location_survey.location
@@ -71,11 +78,11 @@ def _serialize_location_survey(location_survey: LocationSurveyORM, now: datetime
         survey_name=survey.name,
         survey_is_published=survey.status == SurveyStatus.active,
         is_active=location_survey.is_active,
-        start_date=location_survey.start_date.isoformat(),
-        end_date=location_survey.end_date.isoformat() if location_survey.end_date else None,
+        start_date=format_dt_for_user(location_survey.start_date, tz) or "",
+        end_date=format_dt_for_user(location_survey.end_date, tz) if location_survey.end_date else None,
         status=derive_location_survey_status(location_survey, location, survey, current_time),
-        created_at=location_survey.created_at.isoformat(),
-        updated_at=location_survey.updated_at.isoformat(),
+        created_at=format_dt_for_user(location_survey.created_at, tz) or "",
+        updated_at=format_dt_for_user(location_survey.updated_at, tz) or "",
     )
 
 
@@ -210,7 +217,7 @@ def bulk_assign_location_surveys(
         .all()
     )
     now = utc_now()
-    return [_serialize_location_survey(assignment, now) for assignment in created_assignments]
+    return [_serialize_location_survey(assignment, user, now) for assignment in created_assignments]
 
 
 @router.patch("/location-surveys/{location_survey_id}", response_model=LocationSurveyResponse)
@@ -254,7 +261,7 @@ def update_location_survey(
 
     db.commit()
     db.refresh(location_survey)
-    return _serialize_location_survey(location_survey)
+    return _serialize_location_survey(location_survey, user)
 
 
 @router.get("/location-surveys", response_model=list[LocationSurveyResponse])
@@ -295,7 +302,7 @@ def list_location_surveys(
             raise ValidationError(code="INVALID_SURVEY_ID", message="Invalid survey ID")
 
     now = utc_now()
-    return [_serialize_location_survey(location_survey, now) for location_survey in query.all()]
+    return [_serialize_location_survey(location_survey, user, now) for location_survey in query.all()]
 
 
 @router.delete("/location-surveys/{location_survey_id}", status_code=204)

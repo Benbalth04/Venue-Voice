@@ -3,8 +3,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+from zoneinfo import ZoneInfo
 
 from ..auth.jwt import get_current_user
+from ..auth.user_timezone import get_user_zoneinfo
+from ..core.datetime_user_tz import to_iso8601_zoned
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import User
 from ..schemas.pydantic_model import (
@@ -28,6 +31,7 @@ router = APIRouter(prefix="/billing", tags=["billing"])
 @router.get("/subscription", response_model=SubscriptionResponse)
 def get_subscription_status(
     current_user: User = Depends(get_current_user),
+    user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
     """Return the current user's subscription status."""
@@ -36,13 +40,15 @@ def get_subscription_status(
         return SubscriptionResponse(
             status="none",
             is_active=False,
+            plan_display_name=None,
         )
     return SubscriptionResponse(
         status=sub.status,
-        trial_end=sub.trial_end,
-        current_period_end=sub.current_period_end,
+        trial_end=to_iso8601_zoned(sub.trial_end, user_tz),
+        current_period_end=to_iso8601_zoned(sub.current_period_end, user_tz),
         stripe_customer_id=sub.stripe_customer_id,
         stripe_subscription_id=sub.stripe_subscription_id,
+        plan_display_name=sub.plan_display_name,
         is_active=is_subscription_active(sub),
     )
 

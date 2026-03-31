@@ -5,14 +5,22 @@ Endpoints aggregate per-question response data for a given survey.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from ..auth.jwt import get_current_user
 from ..auth.subscription import require_active_subscription
+from ..auth.user_timezone import get_user_zoneinfo
+from ..core.datetime_user_tz import (
+    inclusive_local_date_range_to_utc_bounds,
+    local_date_start_utc,
+    naive_utc_for_sql,
+)
+from ..core.errors.exceptions import ValidationError
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import Company as CompanyORM, User as UserORM
 from ..schemas.pydantic_model import (
@@ -28,7 +36,6 @@ from ..services.survey_dashboard_service import (
     get_old_questions_dashboard_data,
     get_question_breakdown,
 )
-from ..core.errors.exceptions import NotFoundError
 
 router = APIRouter(prefix="/surveys", tags=["survey-dashboard"], dependencies=[Depends(require_active_subscription)])
 
@@ -43,12 +50,70 @@ def _get_company(user: UserORM, db: Session) -> CompanyORM:
         .first()
     )
     if not company:
+        from ..core.errors.exceptions import NotFoundError
+
         raise NotFoundError(
             code="COMPANY_NOT_FOUND",
             message="Company not found",
             details={},
         )
     return company
+
+
+def _parse_yyyy_mm_dd(s: str | None) -> date | None:
+    if not s or not str(s).strip():
+        return None
+    t = str(s).strip()
+    if len(t) >= 10:
+        t = t[:10]
+    try:
+        return date.fromisoformat(t)
+    except ValueError as e:
+        raise ValidationError(
+            code="INVALID_DATE",
+            message="date_start and date_end must be YYYY-MM-DD",
+        ) from e
+
+
+def _survey_dashboard_filters(
+    *,
+    location_ids: list[uuid.UUID] | None,
+    qr_code_ids: list[uuid.UUID] | None,
+    date_start: str | None,
+    date_end: str | None,
+    user_tz: ZoneInfo,
+) -> DashboardFilterParams:
+    ds = _parse_yyyy_mm_dd(date_start)
+    de = _parse_yyyy_mm_dd(date_end)
+    if ds and de and ds > de:
+        raise ValidationError(code="INVALID_DATE_RANGE", message="date_start must be before date_end")
+
+    loc = location_ids or None
+    qr = qr_code_ids or None
+
+    if ds is not None and de is not None:
+        utc_lo, utc_hi = inclusive_local_date_range_to_utc_bounds(ds, de, user_tz)
+        return DashboardFilterParams(
+            location_ids=loc,
+            qr_code_ids=qr,
+            date_start=naive_utc_for_sql(utc_lo),
+            date_end=naive_utc_for_sql(utc_hi),
+        )
+    if ds is not None:
+        return DashboardFilterParams(
+            location_ids=loc,
+            qr_code_ids=qr,
+            date_start=naive_utc_for_sql(local_date_start_utc(ds, user_tz)),
+            date_end=naive_utc_for_sql(local_date_start_utc(ds + timedelta(days=1), user_tz)),
+        )
+    if de is not None:
+        return DashboardFilterParams(
+            location_ids=loc,
+            qr_code_ids=qr,
+            date_start=datetime(2000, 1, 1),
+            date_end=naive_utc_for_sql(local_date_start_utc(de + timedelta(days=1), user_tz)),
+        )
+    return DashboardFilterParams(location_ids=loc, qr_code_ids=qr, date_start=None, date_end=None)
 
 
 @router.get(
@@ -60,19 +125,21 @@ def get_survey_dashboard(
     survey_id: uuid.UUID,
     location_ids: list[uuid.UUID] | None = Query(default=None),
     qr_code_ids: list[uuid.UUID] | None = Query(default=None),
-    date_start: datetime | None = Query(default=None),
-    date_end: datetime | None = Query(default=None),
+    date_start: str | None = Query(default=None, description="YYYY-MM-DD in user's saved timezone"),
+    date_end: str | None = Query(default=None, description="YYYY-MM-DD in user's saved timezone"),
     user: UserORM = Depends(get_current_user),
+    user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ) -> SurveyDashboardResponse:
     company = _get_company(user, db)
-    filters = DashboardFilterParams(
-        location_ids=location_ids or None,
-        qr_code_ids=qr_code_ids or None,
+    filters = _survey_dashboard_filters(
+        location_ids=location_ids,
+        qr_code_ids=qr_code_ids,
         date_start=date_start,
         date_end=date_end,
+        user_tz=user_tz,
     )
-    return get_dashboard_data(db, survey_id, company.id, filters)
+    return get_dashboard_data(db, survey_id, company.id, filters, user_tz)
 
 
 @router.get(
@@ -84,19 +151,21 @@ def get_old_questions_dashboard(
     survey_id: uuid.UUID,
     location_ids: list[uuid.UUID] | None = Query(default=None),
     qr_code_ids: list[uuid.UUID] | None = Query(default=None),
-    date_start: datetime | None = Query(default=None),
-    date_end: datetime | None = Query(default=None),
+    date_start: str | None = Query(default=None, description="YYYY-MM-DD in user's saved timezone"),
+    date_end: str | None = Query(default=None, description="YYYY-MM-DD in user's saved timezone"),
     user: UserORM = Depends(get_current_user),
+    user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ) -> OldQuestionsDashboardResponse:
     company = _get_company(user, db)
-    filters = DashboardFilterParams(
-        location_ids=location_ids or None,
-        qr_code_ids=qr_code_ids or None,
+    filters = _survey_dashboard_filters(
+        location_ids=location_ids,
+        qr_code_ids=qr_code_ids,
         date_start=date_start,
         date_end=date_end,
+        user_tz=user_tz,
     )
-    return get_old_questions_dashboard_data(db, survey_id, company.id, filters)
+    return get_old_questions_dashboard_data(db, survey_id, company.id, filters, user_tz)
 
 
 @router.get(
@@ -110,19 +179,23 @@ def get_question_breakdown_endpoint(
     breakdown_by: Literal["location", "qr_code"] = Query(...),
     location_ids: list[uuid.UUID] | None = Query(default=None),
     qr_code_ids: list[uuid.UUID] | None = Query(default=None),
-    date_start: datetime | None = Query(default=None),
-    date_end: datetime | None = Query(default=None),
+    date_start: str | None = Query(default=None, description="YYYY-MM-DD in user's saved timezone"),
+    date_end: str | None = Query(default=None, description="YYYY-MM-DD in user's saved timezone"),
     user: UserORM = Depends(get_current_user),
+    user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ) -> QuestionBreakdownResponse:
     company = _get_company(user, db)
-    filters = DashboardFilterParams(
-        location_ids=location_ids or None,
-        qr_code_ids=qr_code_ids or None,
+    filters = _survey_dashboard_filters(
+        location_ids=location_ids,
+        qr_code_ids=qr_code_ids,
         date_start=date_start,
         date_end=date_end,
+        user_tz=user_tz,
     )
-    return get_question_breakdown(db, survey_id, company.id, question_id, breakdown_by, filters)
+    return get_question_breakdown(
+        db, survey_id, company.id, question_id, breakdown_by, filters, user_tz
+    )
 
 
 @router.get(
@@ -135,16 +208,18 @@ def get_engagement_breakdown_endpoint(
     breakdown_by: Literal["location", "qr_code"] = Query(...),
     location_ids: list[uuid.UUID] | None = Query(default=None),
     qr_code_ids: list[uuid.UUID] | None = Query(default=None),
-    date_start: datetime | None = Query(default=None),
-    date_end: datetime | None = Query(default=None),
+    date_start: str | None = Query(default=None, description="YYYY-MM-DD in user's saved timezone"),
+    date_end: str | None = Query(default=None, description="YYYY-MM-DD in user's saved timezone"),
     user: UserORM = Depends(get_current_user),
+    user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ) -> EngagementBreakdownResponse:
     company = _get_company(user, db)
-    filters = DashboardFilterParams(
-        location_ids=location_ids or None,
-        qr_code_ids=qr_code_ids or None,
+    filters = _survey_dashboard_filters(
+        location_ids=location_ids,
+        qr_code_ids=qr_code_ids,
         date_start=date_start,
         date_end=date_end,
+        user_tz=user_tz,
     )
-    return get_engagement_breakdown(db, survey_id, company.id, breakdown_by, filters)
+    return get_engagement_breakdown(db, survey_id, company.id, breakdown_by, filters, user_tz)

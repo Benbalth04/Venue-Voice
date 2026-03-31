@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from ..core.errors.exceptions import ExternalAPIError, NotFoundError, PermissionError, ValidationError
 from ..models.postgres_model import Subscription, User
+from ..services.billing.stripe_billing_display import plan_display_name_from_price
 
 logger = logging.getLogger(__name__)
 
@@ -272,6 +273,25 @@ def create_portal_session(user: User, db: Session) -> str:
 # Subscription sync (used by webhook handler + reconciliation)
 # ---------------------------------------------------------------------------
 
+def _plan_display_name_from_stripe_subscription(stripe_sub: stripe.Subscription) -> str | None:
+    items = getattr(stripe_sub, "items", None)
+    if not items:
+        return None
+    data = getattr(items, "data", None) or []
+    if not data:
+        return None
+    item0 = data[0]
+    price = getattr(item0, "price", None)
+    if price is None:
+        return None
+    try:
+        price_dict = price.to_dict()
+    except Exception:
+        return None
+    name = plan_display_name_from_price(price_dict)
+    return name if name else None
+
+
 def sync_subscription_from_stripe_object(stripe_sub: stripe.Subscription, db: Session) -> None:
     """Upsert the local Subscription row from a Stripe subscription object.
 
@@ -333,6 +353,7 @@ def sync_subscription_from_stripe_object(stripe_sub: stripe.Subscription, db: Se
     if current_period_end_ts:
         sub.current_period_end = datetime.utcfromtimestamp(current_period_end_ts)
 
+    sub.plan_display_name = _plan_display_name_from_stripe_subscription(stripe_sub)
     sub.updated_at = datetime.utcnow()
 
     try:

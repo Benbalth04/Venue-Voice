@@ -19,6 +19,7 @@ export function buildCacheKey(
   qrCodeIds: string[],
   dateStart: string,
   dateEnd: string,
+  timeZone = "",
 ): string {
   return [
     prefix,
@@ -26,6 +27,7 @@ export function buildCacheKey(
     [...qrCodeIds].sort().join(","),
     dateStart,
     dateEnd,
+    timeZone,
   ].join("|");
 }
 
