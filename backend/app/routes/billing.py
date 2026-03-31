@@ -8,6 +8,7 @@ from ..auth.jwt import get_current_user
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import User
 from ..schemas.pydantic_model import (
+    CheckoutSessionRequest,
     CheckoutSessionResponse,
     PortalSessionResponse,
     SubscriptionResponse,
@@ -46,11 +47,17 @@ def get_subscription_status(
 
 @router.post("/checkout", response_model=CheckoutSessionResponse)
 def create_checkout(
+    body: CheckoutSessionRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db_connection),
 ):
     """Create a Stripe Checkout session and return the hosted URL."""
-    url = create_checkout_session(current_user, db)
+    url = create_checkout_session(
+        current_user,
+        db,
+        body.plan,
+        body.billing_interval,
+    )
     return CheckoutSessionResponse(checkout_url=url)
 
 

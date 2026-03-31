@@ -1828,12 +1828,29 @@ export async function fetchSubscription(
   )
 }
 
+export type CheckoutPlan = "starter" | "growth" | "pro"
+
+export type CheckoutBillingInterval = "monthly" | "yearly"
+
+export interface CreateCheckoutSessionBody {
+  plan: CheckoutPlan
+  billingInterval: CheckoutBillingInterval
+}
+
 export async function createCheckoutSession(
-  accessToken: string
+  accessToken: string,
+  body: CreateCheckoutSessionBody
 ): Promise<{ checkout_url: string }> {
   return apiFetch<{ checkout_url: string }>(
     `${BACKEND_BASE}/api/v1/billing/checkout`,
-    { method: "POST", headers: authHeaders(accessToken) }
+    {
+      method: "POST",
+      headers: authHeaders(accessToken),
+      body: JSON.stringify({
+        plan: body.plan,
+        billing_interval: body.billingInterval,
+      }),
+    }
   )
 }
 

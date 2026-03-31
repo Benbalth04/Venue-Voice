@@ -200,7 +200,10 @@ function OnboardingPageContent() {
     setLoading(true)
     setSubmitError(null)
     try {
-      const { checkout_url } = await createCheckoutSession(session.access_token)
+      const { checkout_url } = await createCheckoutSession(session.access_token, {
+        plan: "growth",
+        billingInterval: "monthly",
+      })
       window.location.href = checkout_url
     } catch (err) {
       setSubmitError(extractErrorMessage(err, "Failed to start checkout. Please try again."))

@@ -206,9 +206,6 @@ function SurveyDashboardInner() {
               onExpandScanCompletion={() =>
                 handleExpandChart({ kind: "engagement", subChart: "scan_completion" }, "Scans vs Completions")
               }
-              onExpandCompletionRate={() =>
-                handleExpandChart({ kind: "engagement", subChart: "completion_rate" }, "Completion Rate Over Time")
-              }
             />
           )}
 

@@ -21,9 +21,17 @@ logger = logging.getLogger(__name__)
 # Stripe client initialisation
 # ---------------------------------------------------------------------------
 _STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
-_BASIC_PLAN_PRICE_ID = os.getenv("BASIC_PLAN_PRICE_ID")
 _FREE_TRIAL_DAYS = int(os.getenv("DEFAULT_FREE_TRIAL_DAYS"))
 _APP_ORIGIN = os.getenv("FRONTEND_ORIGIN")
+
+_PLAN_PRICE_IDS: dict[tuple[str, str], str | None] = {
+    ("starter", "monthly"): os.getenv("STARTER_PLAN_MONTHLY_PRICE_ID"),
+    ("starter", "yearly"): os.getenv("STARTER_PLAN_YEARLY_PRICE_ID"),
+    ("growth", "monthly"): os.getenv("GROWTH_PLAN_MONTHLY_PRICE_ID"),
+    ("growth", "yearly"): os.getenv("GROWTH_PLAN_YEARLY_PRICE_ID"),
+    ("pro", "monthly"): os.getenv("PRO_PLAN_MONTHLY_PRICE_ID"),
+    ("pro", "yearly"): os.getenv("PRO_PLAN_YEARLY_PRICE_ID"),
+}
 
 if _STRIPE_SECRET_KEY:
     stripe.api_key = _STRIPE_SECRET_KEY
@@ -122,13 +130,30 @@ def get_or_create_stripe_customer(user: User, db: Session) -> str:
 # Checkout session
 # ---------------------------------------------------------------------------
 
-def create_checkout_session(user: User, db: Session) -> str:
+def _price_id_for_plan(plan: str, billing_interval: str) -> str:
+    raw = _PLAN_PRICE_IDS.get((plan, billing_interval))
+    price_id = (raw or "").strip()
+    if not price_id:
+        raise ExternalAPIError(
+            service_name="Stripe",
+            error_message=(
+                f"Stripe price ID is not configured for plan={plan!r} "
+                f"billing_interval={billing_interval!r}. Set the matching "
+                "*_PLAN_*_PRICE_ID environment variable."
+            ),
+        )
+    return price_id
+
+
+def create_checkout_session(user: User, db: Session, plan: str, billing_interval: str) -> str:
     """Create a Stripe Checkout session and return the hosted URL.
 
+    - Uses the price ID for the requested plan and billing interval from env.
     - Applies a free trial when the user has never had one.
     - Sets trial_from_plan=False so Stripe does not grant a second trial on
       re-subscription.
     """
+    price_id = _price_id_for_plan(plan, billing_interval)
     customer_id = get_or_create_stripe_customer(user, db)
 
     sub = db.query(Subscription).filter(Subscription.user_id == user.id).first()
@@ -142,7 +167,7 @@ def create_checkout_session(user: User, db: Session) -> str:
         session = stripe.checkout.Session.create(
             customer=customer_id,
             mode="subscription",
-            line_items=[{"price": _BASIC_PLAN_PRICE_ID, "quantity": 1}],
+            line_items=[{"price": price_id, "quantity": 1}],
             subscription_data=subscription_data,
             success_url=f"{_APP_ORIGIN}/billing/success?session_id={{CHECKOUT_SESSION_ID}}",
             cancel_url=f"{_APP_ORIGIN}/billing/failed"

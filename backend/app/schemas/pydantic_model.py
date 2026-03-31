@@ -31,6 +31,11 @@ class CheckoutSessionResponse(BaseModel):
     checkout_url: str
 
 
+class CheckoutSessionRequest(BaseModel):
+    plan: Literal["starter", "growth", "pro"]
+    billing_interval: Literal["monthly", "yearly"]
+
+
 class PortalSessionResponse(BaseModel):
     portal_url: str
 

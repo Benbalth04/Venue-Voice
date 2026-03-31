@@ -16,16 +16,125 @@ import {
   extractErrorMessage,
 } from "@/lib/api/client"
 
-const PLAN_FEATURES = [
-  "Unlimited survey responses",
-  "QR code generation for all locations",
-  "Automated email alerts & flows",
-  "Real-time analytics dashboard",
-  "AI-powered sentiment analysis",
-  "Priority support",
+type BillingInterval = "monthly" | "yearly"
+
+type SubscribePlanId = "starter" | "growth" | "pro"
+
+const SUBSCRIBE_PLANS: {
+  id: SubscribePlanId
+  name: string
+  bestFor: string
+  monthlyPrice: number
+  yearlyPrice: number
+  yearlyMonthlyEquiv: number
+  popular: boolean
+  features: string[]
+}[] = [
+  {
+    id: "starter",
+    name: "Starter",
+    bestFor: "Best for: Single-location venues",
+    monthlyPrice: 10,
+    yearlyPrice: 96,
+    yearlyMonthlyEquiv: 8,
+    popular: false,
+    features: [
+      "1 Location",
+      "QR Code Feedback Collection",
+      "1 Active Automation Flow",
+      "Basic Feedback Routing (max 2 branches in each flow)",
+      "Redirect happy customers to Google Reviews",
+      "Real-time Email Alerts",
+      "Basic Feedback Dashboard",
+      "Unlimited Responses",
+    ],
+  },
+  {
+    id: "growth",
+    name: "Growth",
+    bestFor: "Best for: Growing multi-location businesses",
+    monthlyPrice: 30,
+    yearlyPrice: 288,
+    yearlyMonthlyEquiv: 24,
+    popular: true,
+    features: [
+      "Up to 5 Locations",
+      "Smart Feedback Routing & Review Control",
+      "Instant alerts for negative feedback",
+      "5 Active Automation Flows",
+      "Full Analytics Dashboard",
+      "Up to 5 Team Members",
+      "Photo Feedback Collection",
+    ],
+  },
+  {
+    id: "pro",
+    name: "Pro",
+    bestFor: "Best for: Operators managing multiple venues",
+    monthlyPrice: 50,
+    yearlyPrice: 480,
+    yearlyMonthlyEquiv: 40,
+    popular: false,
+    features: [
+      "Up to 20 Locations",
+      "Identify underperforming locations instantly",
+      "Compare performance across locations",
+      "Priority Alerts & Notifications",
+      "10 Active Automation Flows",
+      "Up to 20 Team Members"
+    ],
+  },
 ]
 
 const STEP_LABELS = ["Your Business", "About You", "Choose Plan"]
+
+function BillingToggle({
+  value,
+  onChange,
+}: {
+  value: BillingInterval
+  onChange: (v: BillingInterval) => void
+}) {
+  return (
+    <div className="mx-auto mb-8 w-full max-w-xs overflow-visible">
+      <div
+        className="flex overflow-visible rounded-full border border-zinc-200 bg-zinc-100 p-1"
+        role="tablist"
+        aria-label="Billing period"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={value === "monthly"}
+          className={`flex-1 rounded-full px-4 py-2.5 text-sm font-medium transition-colors ${
+            value === "monthly" ? "bg-white text-violet-700 shadow-sm" : "text-zinc-600 hover:text-zinc-900"
+          }`}
+          onClick={() => onChange("monthly")}
+        >
+          Monthly
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={value === "yearly"}
+          aria-label="Yearly billing, 20% off"
+          className={`relative flex-1 overflow-visible rounded-full py-2.5 pl-3 pr-7 text-sm font-medium transition-colors ${
+            value === "yearly" ? "bg-white text-violet-700 shadow-sm" : "text-zinc-600 hover:text-zinc-900"
+          }`}
+          onClick={() => onChange("yearly")}
+        >
+          <span className="relative z-0 block text-center">Yearly</span>
+          <span
+            className="pointer-events-none absolute right-1 top-0 z-10 origin-top-right rotate-[10deg] rounded-br-sm rounded-tl-sm rounded-tr-sm bg-violet-600 px-1.5 py-0.5 text-[0.6rem] font-extrabold uppercase leading-none tracking-wide text-white shadow-md ring-1 ring-violet-500/40"
+            aria-hidden
+          >
+            20% off
+          </span>
+        </button>
+      </div>
+    </div>
+  )
+}
 
 function StepIndicator({ current, labels }: { current: number; labels: string[] }) {
   return (
@@ -38,8 +147,8 @@ function StepIndicator({ current, labels }: { current: number; labels: string[] 
                 i < current
                   ? "bg-violet-600 text-white"
                   : i === current
-                  ? "bg-violet-600 text-white ring-4 ring-violet-100"
-                  : "bg-zinc-100 text-zinc-400"
+                    ? "bg-violet-600 text-white ring-4 ring-violet-100"
+                    : "bg-zinc-100 text-zinc-400"
               }`}
             >
               {i < current ? (
@@ -72,7 +181,9 @@ function SubscribePageContent() {
   const { session } = useAuth()
   const [status, setStatus] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [loadingPlanId, setLoadingPlanId] = useState<SubscribePlanId | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [billing, setBilling] = useState<BillingInterval>("monthly")
 
   useEffect(() => {
     if (!session?.access_token) return
@@ -87,16 +198,22 @@ function SubscribePageContent() {
       .catch(() => setStatus(null))
   }, [session, router])
 
-  async function handleSubscribe() {
+  async function handleSubscribe(_planId: SubscribePlanId) {
     if (!session?.access_token) return
     setLoading(true)
+    setLoadingPlanId(_planId)
     setError(null)
     try {
-      const { checkout_url } = await createCheckoutSession(session.access_token)
+      const { checkout_url } = await createCheckoutSession(session.access_token, {
+        plan: _planId,
+        billingInterval: billing,
+      })
+      // eslint-disable-next-line react-hooks/immutability -- leave React tree for Stripe checkout
       window.location.href = checkout_url
     } catch (err) {
       setError(extractErrorMessage(err, "Failed to start checkout. Please try again."))
       setLoading(false)
+      setLoadingPlanId(null)
     }
   }
 
@@ -117,8 +234,7 @@ function SubscribePageContent() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-zinc-50 px-4 py-12">
-      <div className="w-full max-w-lg">
-
+      <div className={`w-full ${isLapsed ? "max-w-lg" : "max-w-6xl"}`}>
         {/* Brand header */}
         <div className="mb-8 text-center">
           <h1 className="text-2xl font-bold text-zinc-900">Venue Voice</h1>
@@ -145,7 +261,7 @@ function SubscribePageContent() {
               )}
 
               <div className="flex flex-col gap-3">
-                <Button className="w-full" onClick={handleSubscribe} disabled={loading}>
+                <Button className="w-full" onClick={() => handleSubscribe("growth")} disabled={loading}>
                   {loading ? "Redirecting…" : "Resubscribe"}
                 </Button>
                 <Button variant="outline" className="w-full" onClick={handleManageBilling} disabled={loading}>
@@ -155,22 +271,42 @@ function SubscribePageContent() {
             </div>
           ) : (
             <div>
-              <div className="mb-6 text-center">
+              <div className="mb-2 text-center">
                 <h2 className="text-xl font-semibold text-zinc-900">Choose your plan</h2>
                 <p className="mt-1 text-sm text-zinc-500">
-                  Start with a 7-day free trial. No charge until the trial ends.
+                  Every plan includes a 7-day free trial. No charge until the trial ends.
                 </p>
               </div>
 
-              <PlanCard
-                name="Venue Voice Pro"
-                price="$49"
-                billingCycle="per month"
-                trialLabel="7-day free trial"
-                features={PLAN_FEATURES}
-                onSelect={handleSubscribe}
-                loading={loading}
-              />
+              <BillingToggle value={billing} onChange={setBilling} />
+
+              <div className="grid grid-cols-1 gap-6 md:grid-cols-3 md:items-stretch">
+                {SUBSCRIBE_PLANS.map((plan) => {
+                  const isMonthly = billing === "monthly"
+                  const yearlyPriceDetails = !isMonthly
+                    ? {
+                        regularMonthly: `$${plan.monthlyPrice}/mo`,
+                        effectiveMonthly: `$${plan.yearlyMonthlyEquiv}`,
+                        annualTotalNote: `$${plan.yearlyPrice}/year billed annually`,
+                      }
+                    : undefined
+
+                  return (
+                    <PlanCard
+                      key={plan.id}
+                      name={plan.name}
+                      price={isMonthly ? `$${plan.monthlyPrice}` : `$${plan.yearlyPrice}`}
+                      billingCycle={isMonthly ? "/month" : "/year"}
+                      bestFor={plan.bestFor}
+                      yearlyPriceDetails={yearlyPriceDetails}
+                      popular={plan.popular}
+                      features={plan.features}
+                      onSelect={() => handleSubscribe(plan.id)}
+                      loading={loading && loadingPlanId === plan.id}
+                    />
+                  )
+                })}
+              </div>
 
               {error && (
                 <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
