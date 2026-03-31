@@ -452,6 +452,15 @@ CREATE TABLE flow_run_actions (
 );
 
 --------------------------------------------------
+-- STRIPE WEBHOOK IDEMPOTENCY
+--------------------------------------------------
+CREATE TABLE stripe_webhook_events (
+    stripe_event_id TEXT PRIMARY KEY,
+    event_type TEXT NOT NULL,
+    received_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+--------------------------------------------------
 -- EMAIL EVENTS
 --------------------------------------------------
 CREATE TABLE email_events (
@@ -463,8 +472,17 @@ CREATE TABLE email_events (
     sent_at TIMESTAMP,
     error_message TEXT,
     retry_count INTEGER NOT NULL DEFAULT 0,
-    created_at TIMESTAMP DEFAULT NOW()
+    created_at TIMESTAMP DEFAULT NOW(),
+    event_category TEXT NOT NULL DEFAULT 'user_notification'
+        CHECK (event_category IN ('stripe_billing', 'user_notification', 'system')),
+    template_name TEXT,
+    stripe_event_id TEXT,
+    idempotency_key TEXT,
+    context_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    CONSTRAINT uq_email_events_idempotency_key UNIQUE (idempotency_key)
 );
+CREATE INDEX idx_email_events_event_category ON email_events(event_category);
+CREATE INDEX idx_email_events_stripe_event_id ON email_events(stripe_event_id) WHERE stripe_event_id IS NOT NULL;
 
 --------------------------------------------------
 -- AI ANALYSIS
@@ -560,6 +578,16 @@ CREATE INDEX IF NOT EXISTS idx_questions_stable_version
 CREATE INDEX IF NOT EXISTS idx_ai_analysis_response_question_nodeletion
     ON ai_analysis(survey_response_id, question_id)
     WHERE deleted_at IS NULL;
+
+
+--------------------------------------------------
+-- STRIPE WEBHOOKS
+--------------------------------------------------
+CREATE TABLE IF NOT EXISTS stripe_webhook_events (
+    stripe_event_id TEXT PRIMARY KEY,
+    event_type TEXT NOT NULL,
+    received_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
 
 
 --------------------------------------------------

@@ -8,6 +8,7 @@ import { AuthGuard } from "@/components/auth/AuthGuard"
 import { EmailVerifiedGuard } from "@/components/auth/EmailVerifiedGuard"
 import { OnboardingGuard } from "@/components/auth/OnboardingGuard"
 import { PlanCard } from "@/components/onboarding/PlanCard"
+import { BillingToggle } from "@/components/subscription/BillingToggle"
 import { Button } from "@/components/ui/button"
 import {
   createCheckoutSession,
@@ -15,126 +16,9 @@ import {
   fetchSubscription,
   extractErrorMessage,
 } from "@/lib/api/client"
-
-type BillingInterval = "monthly" | "yearly"
-
-type SubscribePlanId = "starter" | "growth" | "pro"
-
-const SUBSCRIBE_PLANS: {
-  id: SubscribePlanId
-  name: string
-  bestFor: string
-  monthlyPrice: number
-  yearlyPrice: number
-  yearlyMonthlyEquiv: number
-  popular: boolean
-  features: string[]
-}[] = [
-  {
-    id: "starter",
-    name: "Starter",
-    bestFor: "Best for: Single-location venues",
-    monthlyPrice: 10,
-    yearlyPrice: 96,
-    yearlyMonthlyEquiv: 8,
-    popular: false,
-    features: [
-      "1 Location",
-      "QR Code Feedback Collection",
-      "1 Active Automation Flow",
-      "Basic Feedback Routing (max 2 branches in each flow)",
-      "Redirect happy customers to Google Reviews",
-      "Real-time Email Alerts",
-      "Basic Feedback Dashboard",
-      "Unlimited Responses",
-    ],
-  },
-  {
-    id: "growth",
-    name: "Growth",
-    bestFor: "Best for: Growing multi-location businesses",
-    monthlyPrice: 30,
-    yearlyPrice: 288,
-    yearlyMonthlyEquiv: 24,
-    popular: true,
-    features: [
-      "Up to 5 Locations",
-      "Smart Feedback Routing & Review Control",
-      "Instant alerts for negative feedback",
-      "5 Active Automation Flows",
-      "Full Analytics Dashboard",
-      "Up to 5 Team Members",
-      "Photo Feedback Collection",
-    ],
-  },
-  {
-    id: "pro",
-    name: "Pro",
-    bestFor: "Best for: Operators managing multiple venues",
-    monthlyPrice: 50,
-    yearlyPrice: 480,
-    yearlyMonthlyEquiv: 40,
-    popular: false,
-    features: [
-      "Up to 20 Locations",
-      "Identify underperforming locations instantly",
-      "Compare performance across locations",
-      "Priority Alerts & Notifications",
-      "10 Active Automation Flows",
-      "Up to 20 Team Members"
-    ],
-  },
-]
+import { SUBSCRIBE_PLANS, type BillingInterval, type SubscribePlanId } from "@/lib/subscription/plans"
 
 const STEP_LABELS = ["Your Business", "About You", "Choose Plan"]
-
-function BillingToggle({
-  value,
-  onChange,
-}: {
-  value: BillingInterval
-  onChange: (v: BillingInterval) => void
-}) {
-  return (
-    <div className="mx-auto mb-8 w-full max-w-xs overflow-visible">
-      <div
-        className="flex overflow-visible rounded-full border border-zinc-200 bg-zinc-100 p-1"
-        role="tablist"
-        aria-label="Billing period"
-      >
-        <button
-          type="button"
-          role="tab"
-          aria-selected={value === "monthly"}
-          className={`flex-1 rounded-full px-4 py-2.5 text-sm font-medium transition-colors ${
-            value === "monthly" ? "bg-white text-violet-700 shadow-sm" : "text-zinc-600 hover:text-zinc-900"
-          }`}
-          onClick={() => onChange("monthly")}
-        >
-          Monthly
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={value === "yearly"}
-          aria-label="Yearly billing, 20% off"
-          className={`relative flex-1 overflow-visible rounded-full py-2.5 pl-3 pr-7 text-sm font-medium transition-colors ${
-            value === "yearly" ? "bg-white text-violet-700 shadow-sm" : "text-zinc-600 hover:text-zinc-900"
-          }`}
-          onClick={() => onChange("yearly")}
-        >
-          <span className="relative z-0 block text-center">Yearly</span>
-          <span
-            className="pointer-events-none absolute right-1 top-0 z-10 origin-top-right rotate-[10deg] rounded-br-sm rounded-tl-sm rounded-tr-sm bg-violet-600 px-1.5 py-0.5 text-[0.6rem] font-extrabold uppercase leading-none tracking-wide text-white shadow-md ring-1 ring-violet-500/40"
-            aria-hidden
-          >
-            20% off
-          </span>
-        </button>
-      </div>
-    </div>
-  )
-}
 
 function StepIndicator({ current, labels }: { current: number; labels: string[] }) {
   return (

@@ -10,11 +10,11 @@ import resend
 from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
-from ..integrations.supabase_storage import (
+from ...integrations.supabase_storage import (
     generate_photo_signed_url,
     get_supabase_service_client,
 )
-from ..models.postgres_model import (
+from ...models.postgres_model import (
     EmailEvent as EmailEventORM,
     Flow as FlowORM,
     FlowRun as FlowRunORM,
@@ -28,6 +28,8 @@ from ..models.postgres_model import (
     SurveyResponsePhoto as SurveyResponsePhotoORM,
     SurveyVersion as SurveyVersionORM,
 )
+from .constants import EMAIL_CATEGORY_USER_NOTIFICATION
+from .retry import call_with_exponential_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +38,6 @@ _RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "")
 _FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "")
 _MAX_RETRIES = 3
 
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 def send_emails_for_flow_run(flow_run_id: uuid.UUID, db: Session) -> None:
     """Send a single BCC'd email for all pending recipients of a flow run.
@@ -52,11 +50,11 @@ def send_emails_for_flow_run(flow_run_id: uuid.UUID, db: Session) -> None:
         logger.warning("RESEND_API_KEY or RESEND_FROM_EMAIL not configured — skipping email send")
         return
 
-    # Atomically claim all pending events for this flow run.
     stmt = (
         sa_update(EmailEventORM)
         .where(
             EmailEventORM.flow_run_id == flow_run_id,
+            EmailEventORM.event_category == EMAIL_CATEGORY_USER_NOTIFICATION,
             EmailEventORM.status == "pending",
             EmailEventORM.retry_count < _MAX_RETRIES,
         )
@@ -68,7 +66,7 @@ def send_emails_for_flow_run(flow_run_id: uuid.UUID, db: Session) -> None:
     db.commit()
 
     if not rows:
-        return  # Nothing to send, or already claimed by another thread.
+        return
 
     event_ids: list[uuid.UUID] = [row[0] for row in rows]
     recipient_emails: list[str] = [row[1] for row in rows if row[1]]
@@ -91,14 +89,11 @@ def send_emails_for_flow_run(flow_run_id: uuid.UUID, db: Session) -> None:
 
 
 def reconcile_pending_emails(db: Session) -> None:
-    """Find all pending email events grouped by flow_run and attempt delivery.
-
-    Called by the APScheduler job every 5 minutes to catch any emails that
-    were not sent due to application crashes or transient failures.
-    """
+    """Find all pending flow email events grouped by flow_run and attempt delivery."""
     rows = (
         db.query(EmailEventORM.flow_run_id)
         .filter(
+            EmailEventORM.event_category == EMAIL_CATEGORY_USER_NOTIFICATION,
             EmailEventORM.status == "pending",
             EmailEventORM.retry_count < _MAX_RETRIES,
             EmailEventORM.flow_run_id.isnot(None),
@@ -119,12 +114,7 @@ def reconcile_pending_emails(db: Session) -> None:
             logger.exception("Reconciliation failed for flow_run_id=%s", frid)
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
 def _get_subject(flow_run_id: uuid.UUID, db: Session) -> tuple[str, str]:
-    """Return (subject_line, flow_name). Falls back gracefully if data is missing."""
     flow_run = db.query(FlowRunORM).filter_by(id=flow_run_id).first()
     if not flow_run:
         return "Alert: survey flow triggered", "Unknown Flow"
@@ -134,10 +124,8 @@ def _get_subject(flow_run_id: uuid.UUID, db: Session) -> tuple[str, str]:
 
 
 def _build_email_for_flow_run(flow_run_id: uuid.UUID, db: Session) -> str:
-    """Fetch all context for a flow run and render the HTML email body."""
     flow_run = db.query(FlowRunORM).filter_by(id=flow_run_id).first()
 
-    # --- Context fields (all defensive, fall back to "Unknown") ---
     flow_name = "Unknown Flow"
     survey_name = "Unknown Survey"
     location_name = "Unknown Location"
@@ -146,12 +134,10 @@ def _build_email_for_flow_run(flow_run_id: uuid.UUID, db: Session) -> str:
     answers: list[dict[str, Any]] = []
 
     if flow_run:
-        # Flow name
         flow = db.query(FlowORM).filter_by(id=flow_run.flow_id).first()
         if flow:
             flow_name = flow.name
 
-        # Survey + Location via LocationSurvey
         if flow_run.location_survey_id:
             ls = db.query(LocationSurveyORM).filter_by(id=flow_run.location_survey_id).first()
             if ls:
@@ -162,13 +148,11 @@ def _build_email_for_flow_run(flow_run_id: uuid.UUID, db: Session) -> str:
                 if location:
                     location_name = location.name
 
-        # QR Code title
         if flow_run.qr_code_id:
             qr = db.query(QRCodeORM).filter_by(id=flow_run.qr_code_id).first()
             if qr:
                 qr_title = qr.title
 
-        # Response answers
         if flow_run.response_id:
             response = (
                 db.query(SurveyResponseORM)
@@ -199,10 +183,6 @@ def _get_ordered_answers(
     survey_version_id: uuid.UUID,
     db: Session,
 ) -> list[dict[str, Any]]:
-    """Return answers in survey question order.
-
-    Each entry: {"title": str, "answer": str | None, "photo_url": str | None}
-    """
     sv = (
         db.query(SurveyVersionORM)
         .filter_by(id=survey_version_id)
@@ -215,8 +195,6 @@ def _get_ordered_answers(
     if not questions_schema:
         return []
 
-    # Build question_key → QuestionORM lookup.
-    # schema_json["questions"][i]["id"] == question_key (confirmed in survey_public.py:601).
     questions_orm = (
         db.query(QuestionORM)
         .filter(
@@ -227,8 +205,6 @@ def _get_ordered_answers(
     )
     by_key: dict[str, QuestionORM] = {q.question_key: q for q in questions_orm}
 
-    # Build stable_question_id → SurveyResponseAnswer lookup.
-    # SurveyResponseAnswer.question_id stores stable_question_id (see survey_public.py:640,644).
     answers_orm = (
         db.query(SurveyResponseAnswerORM)
         .filter(
@@ -241,8 +217,6 @@ def _get_ordered_answers(
         str(a.question_id): a for a in answers_orm if a.question_id
     }
 
-    # Build stable_question_id → storage_path lookup for photos.
-    # SurveyResponsePhoto.question_id also stores stable_question_id (see survey_public.py:710).
     photos_orm = (
         db.query(SurveyResponsePhotoORM)
         .filter(SurveyResponsePhotoORM.survey_response_id == response_id)
@@ -259,10 +233,8 @@ def _get_ordered_answers(
         if not q_orm:
             continue
 
-        # Use stable_question_id to match against answer/photo rows
         q_stable = str(q_orm.stable_question_id)
 
-        # Resolve question title (schema may store as string or {"text": "..."})
         title_raw = sq.get("title") or q_orm.question_text
         if isinstance(title_raw, dict):
             title = title_raw.get("text") or q_orm.question_text
@@ -274,7 +246,6 @@ def _get_ordered_answers(
         if storage_path:
             try:
                 client = get_supabase_service_client()
-                # 7-day expiry (Supabase max) — emails are persistent
                 photo_url = generate_photo_signed_url(
                     client=client, storage_path=storage_path, expires_in=604800
                 )
@@ -302,15 +273,19 @@ def _get_ordered_answers(
 
 def _send_via_resend(recipient_emails: list[str], subject: str, html: str) -> None:
     """Send one email via Resend with all recipients in BCC."""
-    resend.api_key = _RESEND_API_KEY
-    params: resend.Emails.SendParams = {
-        "from": _RESEND_FROM_EMAIL,
-        "to": [_RESEND_FROM_EMAIL],
-        "bcc": recipient_emails,
-        "subject": subject,
-        "html": html,
-    }
-    resend.Emails.send(params)
+
+    def _send() -> None:
+        resend.api_key = _RESEND_API_KEY
+        params: resend.Emails.SendParams = {
+            "from": _RESEND_FROM_EMAIL,
+            "to": [_RESEND_FROM_EMAIL],
+            "bcc": recipient_emails,
+            "subject": subject,
+            "html": html,
+        }
+        resend.Emails.send(params)
+
+    call_with_exponential_backoff(_send, operation_name="Resend flow alert email")
 
 
 def _mark_events(
@@ -325,7 +300,7 @@ def _mark_events(
     if sent_at is not None:
         values["sent_at"] = sent_at
     if error is not None:
-        values["error_message"] = error[:2000]  # Guard against very long error strings
+        values["error_message"] = error[:2000]
     db.execute(
         sa_update(EmailEventORM)
         .where(EmailEventORM.id.in_(event_ids))
@@ -337,10 +312,7 @@ def _mark_events(
 def _increment_retry_and_requeue(
     db: Session, event_ids: list[uuid.UUID], *, error: str
 ) -> None:
-    """Increment retry_count. If under limit, reset to 'pending'; otherwise mark permanent failure."""
-    # Fetch current retry_count for each event
     events = db.query(EmailEventORM).filter(EmailEventORM.id.in_(event_ids)).all()
-    now = datetime.utcnow()
     for ev in events:
         new_count = (ev.retry_count or 0) + 1
         ev.retry_count = new_count
@@ -352,10 +324,6 @@ def _increment_retry_and_requeue(
             )
     db.commit()
 
-
-# ---------------------------------------------------------------------------
-# HTML Template
-# ---------------------------------------------------------------------------
 
 def _build_email_html(
     *,
@@ -426,7 +394,6 @@ def _build_email_html(
       <td align="center">
         <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;">
 
-          <!-- Header -->
           <tr>
             <td style="background:#4f46e5;border-radius:8px 8px 0 0;padding:24px 32px;">
               <p style="margin:0;font-size:12px;font-weight:600;letter-spacing:0.1em;
@@ -437,11 +404,9 @@ def _build_email_html(
             </td>
           </tr>
 
-          <!-- Body -->
           <tr>
             <td style="background:#ffffff;padding:32px;">
 
-              <!-- Submission details -->
               <h2 style="margin:0 0 12px;font-size:14px;font-weight:600;
                           color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;">
                 Submission Details
@@ -451,7 +416,6 @@ def _build_email_html(
                 {context_rows}
               </table>
 
-              <!-- Survey responses -->
               <h2 style="margin:0 0 12px;font-size:14px;font-weight:600;
                           color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;">
                 Survey Responses
@@ -469,7 +433,6 @@ def _build_email_html(
                 {answer_rows_html}
               </table>
 
-              <!-- CTA -->
               <table width="100%" cellpadding="0" cellspacing="0">
                 <tr>
                   <td align="center">
@@ -486,7 +449,6 @@ def _build_email_html(
             </td>
           </tr>
 
-          <!-- Footer -->
           <tr>
             <td style="background:#f9fafb;border:1px solid #e5e7eb;border-top:none;
                         border-radius:0 0 8px 8px;padding:16px 32px;text-align:center;">
@@ -506,7 +468,6 @@ def _build_email_html(
 
 
 def _escape(value: Any) -> str:
-    """HTML-escape a value for safe insertion into email HTML."""
     if value is None:
         return "—"
     s = str(value)

@@ -20,12 +20,13 @@ scheduler = BackgroundScheduler(timezone="UTC")
 def reconciliation_job() -> None:
     """Entry point called by APScheduler. Opens its own DB session."""
     from ..db.postgres import SessionLocal
-    from ..services.email_service import reconcile_pending_emails
+    from ..services.email import reconcile_pending_emails, reconcile_stripe_billing_emails
 
     db = SessionLocal()
     try:
         logger.debug("Email reconciliation job starting")
         reconcile_pending_emails(db)
+        reconcile_stripe_billing_emails(db)
         logger.debug("Email reconciliation job complete")
     except Exception:
         logger.exception("Unhandled error in email reconciliation job")
@@ -56,7 +57,7 @@ def start_scheduler() -> None:
 
     scheduler.start()
     logger.info(
-        "Scheduler started: email_reconciliation (5 min), "
+        "Scheduler started: email_reconciliation (5 min, flow + Stripe billing), "
         "stripe_reconciliation (daily 14:00 UTC / 12:00 AM AEST)"
     )
 

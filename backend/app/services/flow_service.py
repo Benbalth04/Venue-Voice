@@ -17,6 +17,7 @@ from ..core.errors.exceptions import (
     ValidationError,
 )
 from ..db.postgres import SessionLocal
+from ..services.email.constants import EMAIL_CATEGORY_USER_NOTIFICATION
 from ..models.postgres_model import (
     Flow as FlowORM,
     FlowLocationSurvey as FlowLocationSurveyORM,
@@ -987,6 +988,7 @@ def _persist_flow_run(
                     flow_run_id=row.id,
                     recipient_email=email,
                     status="pending",
+                    event_category=EMAIL_CATEGORY_USER_NOTIFICATION,
                 )
             )
 
@@ -1133,7 +1135,7 @@ def execute_flows_for_response(
 
     # Attempt immediate email delivery. Failures are logged and left in
     # "pending" status so the reconciliation job can retry them.
-    from .email_service import send_emails_for_flow_run
+    from .email import send_emails_for_flow_run
     for flow_run in persisted_flow_runs:
         try:
             send_emails_for_flow_run(flow_run.id, db)

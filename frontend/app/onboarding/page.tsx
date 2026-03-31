@@ -7,8 +7,10 @@ import { AuthGuard } from "@/components/auth/AuthGuard"
 import { EmailVerifiedGuard } from "@/components/auth/EmailVerifiedGuard"
 import { OnboardingIncompleteGuard } from "@/components/auth/OnboardingIncompleteGuard"
 import { PlanCard } from "@/components/onboarding/PlanCard"
+import { BillingToggle } from "@/components/subscription/BillingToggle"
 import { Button } from "@/components/ui/button"
 import { setupAccount, createCheckoutSession, extractErrorMessage } from "@/lib/api/client"
+import { SUBSCRIBE_PLANS, type BillingInterval, type SubscribePlanId } from "@/lib/subscription/plans"
 import { useAuth } from "@/contexts/AuthContext"
 import { SingleSelectDropdown } from "@/components/ui/DropdownSelect"
 import type { DropdownOption } from "@/components/ui/DropdownSelect"
@@ -46,15 +48,6 @@ const HOW_HEARD_OPTIONS: DropdownOption[] = [
   "Event",
   "Other",
 ].map((o) => ({ value: o, label: o }))
-
-const PLAN_FEATURES = [
-  "Unlimited survey responses",
-  "QR code generation for all locations",
-  "Automated email alerts & flows",
-  "Real-time analytics dashboard",
-  "AI-powered sentiment analysis",
-  "Priority support",
-]
 
 const STEP_LABELS = ["Your Business", "About You", "Choose Plan"]
 
@@ -152,6 +145,8 @@ function OnboardingPageContent() {
   const [fieldErrors, setFieldErrors] = useState<{ companyName?: string; locationName?: string }>({})
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [billing, setBilling] = useState<BillingInterval>("monthly")
+  const [loadingPlanId, setLoadingPlanId] = useState<SubscribePlanId | null>(null)
 
   function setField(field: keyof typeof form, value: string) {
     setFormState((prev) => ({ ...prev, [field]: value }))
@@ -195,19 +190,24 @@ function OnboardingPageContent() {
 
   // ── Slide 3 ──────────────────────────────────────────────────────────────────
 
-  async function handleSelectPlan() {
-    if (!session?.access_token) { router.replace("/login"); return }
+  async function handleSubscribe(planId: SubscribePlanId) {
+    if (!session?.access_token) {
+      router.replace("/login")
+      return
+    }
     setLoading(true)
+    setLoadingPlanId(planId)
     setSubmitError(null)
     try {
       const { checkout_url } = await createCheckoutSession(session.access_token, {
-        plan: "growth",
-        billingInterval: "monthly",
+        plan: planId,
+        billingInterval: billing,
       })
       window.location.href = checkout_url
     } catch (err) {
       setSubmitError(extractErrorMessage(err, "Failed to start checkout. Please try again."))
       setLoading(false)
+      setLoadingPlanId(null)
     }
   }
 
@@ -215,7 +215,7 @@ function OnboardingPageContent() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-zinc-50 px-4 py-12">
-      <div className="w-full max-w-lg">
+      <div className={`w-full ${step === 2 ? "max-w-6xl" : "max-w-lg"}`}>
 
         {/* Brand header */}
         <div className="mb-8 text-center">
@@ -374,28 +374,60 @@ function OnboardingPageContent() {
           {/* ── Slide 3: Choose Plan ── */}
           {step === 2 && (
             <div>
-              <div className="mb-6 text-center">
+              <div className="mb-2 text-center">
                 <h2 className="text-xl font-semibold text-zinc-900">Choose your plan</h2>
                 <p className="mt-1 text-sm text-zinc-500">
-                  Start with a 7-day free trial. No charge until the trial ends.
+                  Every plan includes a 7-day free trial. No charge until the trial ends.
                 </p>
               </div>
 
-              <PlanCard
-                name="Venue Voice Pro"
-                price="$49"
-                billingCycle="per month"
-                trialLabel="7-day free trial"
-                features={PLAN_FEATURES}
-                onSelect={handleSelectPlan}
-                loading={loading}
-              />
+              <BillingToggle value={billing} onChange={setBilling} />
+
+              <div className="grid grid-cols-1 gap-6 md:grid-cols-3 md:items-stretch">
+                {SUBSCRIBE_PLANS.map((plan) => {
+                  const isMonthly = billing === "monthly"
+                  const yearlyPriceDetails = !isMonthly
+                    ? {
+                        regularMonthly: `$${plan.monthlyPrice}/mo`,
+                        effectiveMonthly: `$${plan.yearlyMonthlyEquiv}`,
+                        annualTotalNote: `$${plan.yearlyPrice}/year billed annually`,
+                      }
+                    : undefined
+
+                  return (
+                    <PlanCard
+                      key={plan.id}
+                      name={plan.name}
+                      price={isMonthly ? `$${plan.monthlyPrice}` : `$${plan.yearlyPrice}`}
+                      billingCycle={isMonthly ? "/month" : "/year"}
+                      bestFor={plan.bestFor}
+                      yearlyPriceDetails={yearlyPriceDetails}
+                      popular={plan.popular}
+                      features={plan.features}
+                      onSelect={() => handleSubscribe(plan.id)}
+                      loading={loading && loadingPlanId === plan.id}
+                    />
+                  )
+                })}
+              </div>
 
               {submitError && (
                 <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                   {submitError}
                 </div>
               )}
+
+              <Button
+                variant="outline"
+                className="mt-6 w-full"
+                onClick={() => {
+                  setSubmitError(null)
+                  setStep(1)
+                }}
+                disabled={loading}
+              >
+                ← Back
+              </Button>
             </div>
           )}
         </div>
