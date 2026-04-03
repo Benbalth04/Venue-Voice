@@ -15,12 +15,15 @@ export default function SignupPage() {
   const [firstName, setFirstName] = useState("")
   const [lastName, setLastName] = useState("")
 
+  const [acceptedLegal, setAcceptedLegal] = useState(false)
+
   const [error, setError] = useState<string | null>(null)
   const [fieldErrors, setFieldErrors] = useState<{
     firstName?: string
     lastName?: string
     email?: string
     password?: string
+    acceptedLegal?: string
   }>({})
   const [loading, setLoading] = useState(false)
 
@@ -32,6 +35,7 @@ export default function SignupPage() {
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errs.email = "Please enter a valid email address"
     if (!password) errs.password = "Password is required"
     else if (password.length < 6) errs.password = "Password must be at least 6 characters"
+    if (!acceptedLegal) errs.acceptedLegal = "You must agree to the terms and privacy statement to sign up"
     setFieldErrors(errs)
     return Object.keys(errs).length === 0
   }
@@ -173,13 +177,51 @@ export default function SignupPage() {
             )}
           </label>
 
+          <div className="rounded-xl border border-zinc-200 bg-zinc-50/80 p-3">
+            <label className="flex cursor-pointer gap-3">
+              <input
+                type="checkbox"
+                checked={acceptedLegal}
+                onChange={(e) => {
+                  setAcceptedLegal(e.target.checked)
+                  if (fieldErrors.acceptedLegal) setFieldErrors((p) => ({ ...p, acceptedLegal: undefined }))
+                }}
+                className="mt-0.5 h-4 w-4 shrink-0 rounded border-zinc-300 text-violet-600 focus:ring-2 focus:ring-violet-500"
+              />
+              <span className="text-sm text-zinc-700">
+                By signing up you agree to our{" "}
+                <Link
+                  href="/legal/terms"
+                  className="font-medium text-violet-700 underline-offset-2 hover:underline"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  terms and conditions
+                </Link>{" "}
+                and{" "}
+                <Link
+                  href="/legal/privacy"
+                  className="font-medium text-violet-700 underline-offset-2 hover:underline"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  privacy statement
+                </Link>
+                .
+              </span>
+            </label>
+            {fieldErrors.acceptedLegal && (
+              <p className="mt-2 text-xs text-red-600">{fieldErrors.acceptedLegal}</p>
+            )}
+          </div>
+
           {error ? (
             <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
               {error}
             </div>
           ) : null}
 
-          <Button className="w-full" type="submit" disabled={loading}>
+          <Button className="w-full" type="submit" disabled={loading || !acceptedLegal}>
             {loading ? "Creating…" : "Create account"}
           </Button>
         </form>
