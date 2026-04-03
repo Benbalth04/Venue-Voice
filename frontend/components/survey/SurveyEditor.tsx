@@ -69,7 +69,7 @@ export function SurveyEditor({
           <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
             Survey title
           </div>
-          <div className="mt-2 text-lg font-semibold text-zinc-950">
+          <div className="mt-2 text-left text-lg font-semibold text-zinc-950">
             {survey.title.text || "Untitled"}
           </div>
         </button>
@@ -85,7 +85,7 @@ export function SurveyEditor({
           <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
             Survey subtitle
           </div>
-          <div className="mt-2 text-sm text-zinc-700">
+          <div className="mt-2 text-left text-sm text-zinc-700">
             {survey.subtitle?.text || "—"}
           </div>
         </button>

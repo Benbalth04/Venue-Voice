@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import Link from "next/link"
 import { ChevronDown, Loader2 } from "lucide-react"
 import { useAuth } from "@/contexts/AuthContext"
 import {
@@ -87,6 +88,13 @@ export function ProfileSettingsMenu() {
               Subscription
             </p>
             <p className="mt-0.5 text-sm text-zinc-800">{plan ?? "None"}</p>
+            <Link
+              href="/dashboard/settings/manage-subscription"
+              onClick={close}
+              className="mt-1 inline-block text-xs font-medium text-violet-600 hover:text-violet-700"
+            >
+              Manage subscription
+            </Link>
           </div>
 
           <div className="px-3 py-2">

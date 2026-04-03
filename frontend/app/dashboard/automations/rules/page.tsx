@@ -18,7 +18,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
-import { AlertTriangle, Bell, ChevronDown, GripVertical, Loader2, Pencil, Plus, Save, Trash2 } from "lucide-react"
+import { AlertTriangle, Bell, Check, ChevronDown, GripVertical, Loader2, Pencil, Plus, Save, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner"
 import { Card } from "@/components/ui/card"
@@ -535,6 +535,7 @@ export default function RulesPage() {
   const [draft, setDraft] = useState<RuleDraft | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [saveSuccess, setSaveSuccess] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [draftError, setDraftError] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
@@ -638,6 +639,12 @@ export default function RulesPage() {
     return () => clearTimeout(t)
   }, [deleteError])
 
+  useEffect(() => {
+    if (!saveSuccess) return
+    const t = setTimeout(() => setSaveSuccess(false), 3000)
+    return () => clearTimeout(t)
+  }, [saveSuccess])
+
   // ---- Rule CRUD --------------------------------------------------------
 
   async function startNewRule() {
@@ -687,6 +694,7 @@ export default function RulesPage() {
       const nextDraft = draftFromRule(saved)
       setDraft(nextDraft)
       setDraftSnapshot(serializeDraft(nextDraft))
+      setSaveSuccess(true)
       void refreshBrokenRuleCount()
     } catch (err) {
       if (isStaleObjectError(err)) {
@@ -954,7 +962,13 @@ export default function RulesPage() {
                     Build conditions using any question from this survey.
                   </p>
                 </div>
-                <div className="flex shrink-0 gap-2">
+                <div className="flex shrink-0 items-center gap-2">
+                  {saveSuccess && (
+                    <span className="flex items-center gap-1 text-sm font-medium text-green-600">
+                      <Check className="h-4 w-4" />
+                      Saved
+                    </span>
+                  )}
                   <Button
                     variant="ghost"
                     onClick={async () => {

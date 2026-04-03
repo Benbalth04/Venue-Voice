@@ -3,6 +3,7 @@
 import Link from "next/link"
 import { AlertTriangle, Plus } from "lucide-react"
 import { SingleSelectDropdown } from "@/components/ui/DropdownSelect"
+import { ruleIdsFromRuleNodesUpstream } from "../draftUtils"
 import type { DraftNode, RuleSummary } from "../types"
 
 export function FlowRuleInspector(props: {
@@ -17,6 +18,7 @@ export function FlowRuleInspector(props: {
 }) {
   const { draftNodes, selectedNodeId, selectedNode, rules, rulesById, brokenRuleIds, updateSelectedNode, onOpenRulesFrame } = props
   const isCurrentRuleBroken = !!selectedNode.rule_id && brokenRuleIds.has(selectedNode.rule_id)
+  const ruleIdsOnPathAbove = ruleIdsFromRuleNodesUpstream(draftNodes, selectedNodeId)
   return (
     <>
       <label className="block">
@@ -26,16 +28,16 @@ export function FlowRuleInspector(props: {
             options={rules.map((rule) => ({
               value: rule.id,
               label: rule.name,
-              disabled: draftNodes.some(
-                (n) => n.node_type === "rule" && n.id !== selectedNodeId && n.rule_id === rule.id,
-              ),
+              disabled: ruleIdsOnPathAbove.has(rule.id),
             }))}
             value={selectedNode.rule_id ?? ""}
             onChange={(value) => updateSelectedNode((node) => ({ ...node, rule_id: value }))}
           />
         </div>
       </label>
-      <p className="text-xs text-zinc-500">Each survey rule can only be selected on one Rule step in this flow.</p>
+      <p className="text-xs text-zinc-500">
+        A survey rule cannot appear twice on the same path from the trigger. You can use the same rule again on a different branch path.
+      </p>
       <button
         type="button"
         onClick={onOpenRulesFrame}

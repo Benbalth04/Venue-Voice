@@ -14,8 +14,15 @@ import {
   createPortalSession,
   fetchSubscription,
   extractErrorMessage,
+  type SubscriptionResponse,
 } from "@/lib/api/client"
-import { SUBSCRIBE_PLANS, type BillingInterval, type SubscribePlanId } from "@/lib/subscription/plans"
+import {
+  SUBSCRIBE_PLANS,
+  tierAllowsPrimaryAction,
+  tierIndexFromPlanDisplayName,
+  type BillingInterval,
+  type SubscribePlanId,
+} from "@/lib/subscription/plans"
 
 const STEP_LABELS = ["Your Business", "About You", "Choose Plan"]
 
@@ -63,6 +70,7 @@ function SubscribePageContent() {
   const router = useRouter()
   const { session } = useAuth()
   const [status, setStatus] = useState<string | null>(null)
+  const [subscription, setSubscription] = useState<SubscriptionResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [loadingPlanId, setLoadingPlanId] = useState<SubscribePlanId | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -76,9 +84,13 @@ function SubscribePageContent() {
           router.replace("/dashboard")
           return
         }
+        setSubscription(sub)
         setStatus(sub.status)
       })
-      .catch(() => setStatus(null))
+      .catch(() => {
+        setStatus(null)
+        setSubscription(null)
+      })
   }, [session, router])
 
   async function handleSubscribe(_planId: SubscribePlanId) {
@@ -114,6 +126,7 @@ function SubscribePageContent() {
   }
 
   const isLapsed = status === "past_due" || status === "canceled"
+  const currentTierIndex = tierIndexFromPlanDisplayName(subscription?.plan_display_name)
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-zinc-50 px-4 py-12">
@@ -166,6 +179,7 @@ function SubscribePageContent() {
               <div className="grid grid-cols-1 gap-6 md:grid-cols-3 md:items-stretch">
                 {SUBSCRIBE_PLANS.map((plan) => {
                   const isMonthly = billing === "monthly"
+                  const showSelect = tierAllowsPrimaryAction(currentTierIndex, plan.id)
                   const yearlyPriceDetails = !isMonthly
                     ? {
                         regularMonthly: `$${plan.monthlyPrice}/mo`,
@@ -186,6 +200,7 @@ function SubscribePageContent() {
                       features={plan.features}
                       onSelect={() => handleSubscribe(plan.id)}
                       loading={loading && loadingPlanId === plan.id}
+                      showSelectButton={showSelect}
                     />
                   )
                 })}

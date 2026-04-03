@@ -1,17 +1,16 @@
 "use client"
 
 import { useRouter } from "next/navigation"
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import {
   AlertTriangle,
   ArrowRight,
-  ArrowUpRight,
   CheckCircle2,
-  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   ExternalLink,
   Loader2,
-  Mail,
   MapPin,
   Pencil,
   Plus,
@@ -30,12 +29,14 @@ import { useConfirm } from "@/components/ui/ConfirmDialog"
 import { SingleSelectDropdown } from "@/components/ui/DropdownSelect"
 import { supabase } from "@/lib/supabase/client"
 
+import { FlowRunActionPill } from "@/components/flows/FlowRunActionPill"
 import { draftFromFlow, preorderDraftNodesWithPositions } from "@/components/flow-editor/draftUtils"
 import { FlowExecutionPreview } from "@/components/flow-editor/FlowExecutionPreview"
 import {
   deleteSurveyFlow,
   extractErrorMessage,
   fetchFlow,
+  FLOW_RUNS_PAGE_SIZE,
   fetchFlowRuns,
   fetchFlows,
   fetchNotificationGroups,
@@ -46,7 +47,6 @@ import {
   updateSurveyFlow,
   type FlowPayload,
   type FlowResponse,
-  type FlowRunAction,
   type FlowRunResponse,
   type FlowUpdatePayload,
   type NotificationGroupResponse,
@@ -64,91 +64,6 @@ function formatDateTime(iso: string) {
     hour: "2-digit",
     minute: "2-digit",
   })
-}
-
-function ActionPill({
-  action,
-  locationId,
-  notificationGroups,
-}: {
-  action: FlowRunAction
-  locationId: string | null
-  notificationGroups: NotificationGroupResponse[]
-}) {
-  const [open, setOpen] = useState(false)
-  const isRedirect = action.action_type === "redirect"
-
-  // Build the list of detail lines to show in the popover
-  const detailLines: string[] = []
-  if (isRedirect) {
-    const url = action.config.url as string | null | undefined
-    detailLines.push(url ? url : "Google Business URL")
-  } else {
-    const target = action.config.email_target as string | undefined
-    const email = action.config.recipient_email as string | null | undefined
-    const groupId = action.config.notification_group_id as string | null | undefined
-
-    if (target === "custom_email" && email) {
-      detailLines.push(email)
-    } else if (target === "notification_group" && groupId) {
-      const group = notificationGroups.find((g) => g.id === groupId)
-      detailLines.push(group?.name ?? groupId)
-    } else {
-      // location_notification_groups — show every group tied to this location
-      const locationGroups = locationId
-        ? notificationGroups.filter((g) => g.location_ids.includes(locationId))
-        : []
-      if (locationGroups.length > 0) {
-        for (const g of locationGroups) detailLines.push(g.name)
-      } else {
-        detailLines.push("Location notification groups")
-      }
-    }
-  }
-
-  return (
-    <div className="relative">
-      {open ? (
-        <div
-          className="fixed inset-0 z-10"
-          onClick={(e) => {
-            e.stopPropagation()
-            setOpen(false)
-          }}
-        />
-      ) : null}
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation()
-          setOpen((v) => !v)
-        }}
-        className="relative z-20 inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-medium text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-100"
-      >
-        {isRedirect ? (
-          <ArrowUpRight className="h-3 w-3 text-violet-500" />
-        ) : (
-          <Mail className="h-3 w-3 text-emerald-600" />
-        )}
-        {isRedirect ? "Redirect" : "Email"}
-        <ChevronDown className="h-3 w-3 text-zinc-400" />
-      </button>
-      {open ? (
-        <div className="absolute left-0 top-full z-30 mt-1 w-max min-w-[220px] rounded-xl border border-zinc-200 bg-white p-3 shadow-xl">
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
-            {isRedirect ? "Redirect target" : "Email recipients"}
-          </p>
-          <div className="space-y-1">
-            {detailLines.map((line, i) => (
-              <p key={i} className="whitespace-nowrap text-sm text-zinc-900">
-                {line}
-              </p>
-            ))}
-          </div>
-        </div>
-      ) : null}
-    </div>
-  )
 }
 
 function truncateDescription(value: string | null, maxLength = 120) {
@@ -412,6 +327,9 @@ export default function FlowsPage() {
   const [surveys, setSurveys] = useState<SurveySummary[]>([])
   const [flows, setFlows] = useState<FlowResponse[]>([])
   const [flowRuns, setFlowRuns] = useState<FlowRunResponse[]>([])
+  const [flowRunsTotal, setFlowRunsTotal] = useState(0)
+  const [flowRunsPage, setFlowRunsPage] = useState(1)
+  const [runsLoading, setRunsLoading] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [brokenRuleIds, setBrokenRuleIds] = useState<Set<string>>(new Set())
@@ -430,20 +348,38 @@ export default function FlowsPage() {
     return session?.access_token ?? null
   }
 
+  const loadFlowRunsPage = useCallback(async (page: number) => {
+    const token = await getToken()
+    if (!token) return
+    setRunsLoading(true)
+    try {
+      const data = await fetchFlowRuns(token, { page })
+      setFlowRuns(data.items)
+      setFlowRunsTotal(data.total)
+      setFlowRunsPage(data.page)
+    } catch (err) {
+      setError(extractErrorMessage(err, "Failed to load flow runs"))
+    } finally {
+      setRunsLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     async function load() {
       const token = await getToken()
       if (!token) return
       try {
-        const [surveyRows, flowRows, flowRunRows, notifGroups] = await Promise.all([
+        const [surveyRows, flowRows, runList, notifGroups] = await Promise.all([
           fetchSurveys(token),
           fetchFlows(token),
-          fetchFlowRuns(token),
+          fetchFlowRuns(token, { page: 1 }),
           fetchNotificationGroups(token),
         ])
         setSurveys(surveyRows)
         setFlows(flowRows)
-        setFlowRuns(flowRunRows)
+        setFlowRuns(runList.items)
+        setFlowRunsTotal(runList.total)
+        setFlowRunsPage(runList.page)
         setNotificationGroups(notifGroups)
 
         // Fetch rule bundles for each unique survey to find broken rules + build rulesById map
@@ -471,6 +407,11 @@ export default function FlowsPage() {
     }
     void load()
   }, [])
+
+  const flowRunsPageCount = Math.max(1, Math.ceil(flowRunsTotal / FLOW_RUNS_PAGE_SIZE))
+  const flowRunsRangeStart =
+    flowRunsTotal === 0 ? 0 : (flowRunsPage - 1) * FLOW_RUNS_PAGE_SIZE + 1
+  const flowRunsRangeEnd = Math.min(flowRunsPage * FLOW_RUNS_PAGE_SIZE, flowRunsTotal)
 
   async function saveFlowEdits(name: string, description: string) {
     if (!editFlow) return
@@ -706,18 +647,24 @@ export default function FlowsPage() {
 
       <Card>
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-lg font-semibold text-zinc-900">Recent flow runs</h2>
-            <span className="text-sm text-zinc-500">{flowRuns.length}</span>
+            <span className="text-sm text-zinc-500">
+              {flowRunsTotal === 0
+                ? "0 runs"
+                : flowRunsPageCount > 1
+                  ? `${flowRunsRangeStart}–${flowRunsRangeEnd} of ${flowRunsTotal}`
+                  : `${flowRunsTotal} ${flowRunsTotal === 1 ? "run" : "runs"}`}
+            </span>
           </div>
 
-          {flowRuns.length === 0 ? (
+          {flowRunsTotal === 0 && !runsLoading ? (
             <div className="rounded-2xl border border-dashed border-zinc-200 bg-zinc-50 px-4 py-8 text-center text-sm text-zinc-500">
               No flow runs recorded yet.
             </div>
           ) : (
-            <div className="space-y-3">
-              {flowRuns.slice(0, 8).map((run) => (
+            <div className={`space-y-3 ${runsLoading ? "opacity-60" : ""}`}>
+              {flowRuns.map((run) => (
                 <div key={run.id} className="rounded-2xl border border-zinc-200 bg-white px-4 py-4">
                   {/* Top row: name + status + run time */}
                   <div className="flex items-start justify-between gap-3">
@@ -760,7 +707,7 @@ export default function FlowsPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       {run.actions.length > 0 ? (
                         run.actions.map((action) => (
-                          <ActionPill
+                          <FlowRunActionPill
                             key={action.id}
                             action={action}
                             locationId={run.location_id}
@@ -789,6 +736,34 @@ export default function FlowsPage() {
               ))}
             </div>
           )}
+
+          {flowRunsTotal > FLOW_RUNS_PAGE_SIZE ? (
+            <div className="flex items-center justify-between border-t border-zinc-100 pt-4">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-9 px-3 text-sm"
+                disabled={flowRunsPage <= 1 || runsLoading}
+                onClick={() => void loadFlowRunsPage(flowRunsPage - 1)}
+              >
+                <ChevronLeft className="mr-1 h-4 w-4" />
+                Previous
+              </Button>
+              <span className="text-sm text-zinc-500">
+                Page {flowRunsPage} of {flowRunsPageCount}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-9 px-3 text-sm"
+                disabled={flowRunsPage >= flowRunsPageCount || runsLoading}
+                onClick={() => void loadFlowRunsPage(flowRunsPage + 1)}
+              >
+                Next
+                <ChevronRight className="ml-1 h-4 w-4" />
+              </Button>
+            </div>
+          ) : null}
         </div>
       </Card>
     </div>

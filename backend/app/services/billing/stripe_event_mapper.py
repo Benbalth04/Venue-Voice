@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any
 
-from .stripe_billing_display import format_billing_interval, plan_display_name_from_price
+from .stripe_billing_display import (
+    coerce_stripe_unix_timestamp,
+    format_billing_interval,
+    plan_display_name_from_price,
+)
 
 
 @dataclass
@@ -26,30 +29,6 @@ def _g(d: Any, *keys: str, default: Any = None) -> Any:
         if cur is None:
             return default
     return cur
-
-
-def _ts_display(ts: Any) -> str | None:
-    if ts is None:
-        return None
-    try:
-        if isinstance(ts, (int, float)):
-            dt = datetime.fromtimestamp(int(ts), tz=timezone.utc)
-            return dt.strftime("%d %b %Y %H:%M UTC")
-    except (OSError, ValueError, OverflowError):
-        return None
-    return None
-
-
-def _date_display(ts: Any) -> str | None:
-    if ts is None:
-        return None
-    try:
-        if isinstance(ts, (int, float)):
-            dt = datetime.fromtimestamp(int(ts), tz=timezone.utc)
-            return dt.strftime("%d %b %Y")
-    except (OSError, ValueError, OverflowError):
-        return None
-    return None
 
 
 def _line_from_subscription(sub: dict[str, Any]) -> dict[str, Any]:
@@ -78,6 +57,16 @@ def _money_display(amount: Any, currency: Any) -> str | None:
         return None
 
 
+def _attach_trial_and_period_unix(ctx: dict[str, Any], sub: dict[str, Any]) -> None:
+    """Raw Stripe unix fields for handler-side localization (popped before persist)."""
+    te = coerce_stripe_unix_timestamp(sub.get("trial_end"))
+    if te is not None:
+        ctx["trial_end_unix"] = te
+    cpe = coerce_stripe_unix_timestamp(sub.get("current_period_end"))
+    if cpe is not None:
+        ctx["current_period_end_unix"] = cpe
+
+
 def map_stripe_event(
     event: dict[str, Any],
     *,
@@ -88,6 +77,9 @@ def map_stripe_event(
 
     ``subscription`` / ``invoice`` are optional fresh API objects (dict-like) the handler
     may pass in addition to ``event['data']['object']``.
+
+    Date/time rows in emails are driven by ``*_unix`` keys; the webhook handler localizes
+    them to ``*_display`` using the subscriber's timezone before queueing.
     """
     etype = str(event.get("type") or "")
     obj = event.get("data", {})
@@ -110,13 +102,8 @@ def map_stripe_event(
             return jobs
         status = str(sub.get("status") or "")
         line = _line_from_subscription(sub)
-        trial_end = _date_display(sub.get("trial_end"))
-        next_bill = _date_display(sub.get("current_period_end"))
-        ctx = {
-            **line,
-            "trial_end_display": trial_end or "—",
-            "next_billing_display": next_bill or "—",
-        }
+        ctx = {**line}
+        _attach_trial_and_period_unix(ctx, sub)
         if status == "trialing":
             jobs.append(StripeEmailJob("trial_started", ctx))
         elif status in ("active", "past_due"):
@@ -127,13 +114,8 @@ def map_stripe_event(
         sub = subscription or obj
         status = str(sub.get("status") or "")
         line = _line_from_subscription(sub)
-        trial_end = _date_display(sub.get("trial_end"))
-        next_bill = _date_display(sub.get("current_period_end"))
-        ctx = {
-            **line,
-            "trial_end_display": trial_end or "—",
-            "next_billing_display": next_bill or "—",
-        }
+        ctx = {**line}
+        _attach_trial_and_period_unix(ctx, sub)
         if status == "trialing":
             jobs.append(StripeEmailJob("trial_started", ctx))
         elif status == "active":
@@ -143,15 +125,11 @@ def map_stripe_event(
     if etype == "customer.subscription.trial_will_end":
         sub = subscription or obj
         line = _line_from_subscription(sub)
-        jobs.append(
-            StripeEmailJob(
-                "trial_ending_soon",
-                {
-                    **line,
-                    "trial_end_display": _date_display(sub.get("trial_end")) or "—",
-                },
-            )
-        )
+        ctx = {**line}
+        te = coerce_stripe_unix_timestamp(sub.get("trial_end"))
+        if te is not None:
+            ctx["trial_end_unix"] = te
+        jobs.append(StripeEmailJob("trial_ending_soon", ctx))
         return jobs
 
     if etype == "customer.subscription.deleted":
@@ -177,15 +155,11 @@ def map_stripe_event(
             return jobs
 
         if "status" in prev and prev_status == "canceled" and status in ("active", "trialing"):
-            jobs.append(
-                StripeEmailJob(
-                    "reactivation",
-                    {
-                        **line,
-                        "next_billing_display": _date_display(sub.get("current_period_end")) or "—",
-                    },
-                )
-            )
+            ctx = {**line}
+            cpe = coerce_stripe_unix_timestamp(sub.get("current_period_end"))
+            if cpe is not None:
+                ctx["current_period_end_unix"] = cpe
+            jobs.append(StripeEmailJob("reactivation", ctx))
             return jobs
 
         # Only when Stripe reports the flag turning on (avoid duplicate emails on unrelated updates).
@@ -194,15 +168,13 @@ def map_stripe_event(
             and "cancel_at_period_end" in prev
             and not bool(prev.get("cancel_at_period_end"))
         ):
-            jobs.append(
-                StripeEmailJob(
-                    "subscription_canceled",
-                    {
-                        **line,
-                        "access_until_display": _date_display(sub.get("current_period_end")) or "—",
-                    },
-                )
-            )
+            end_ts = coerce_stripe_unix_timestamp(sub.get("current_period_end"))
+            if end_ts is None:
+                end_ts = coerce_stripe_unix_timestamp(sub.get("cancel_at"))
+            cancel_ctx = {**line}
+            if end_ts is not None:
+                cancel_ctx["access_until_unix"] = end_ts
+            jobs.append(StripeEmailJob("subscription_canceled", cancel_ctx))
             return jobs
 
         if "items" in prev:
@@ -214,41 +186,29 @@ def map_stripe_event(
                 pu, nu = p_line.get("unit_amount"), n_line.get("unit_amount")
                 try:
                     if pu is not None and nu is not None and int(nu) > int(pu):
-                        jobs.append(
-                            StripeEmailJob(
-                                "plan_upgraded",
-                                {
-                                    **n_line,
-                                    "next_billing_display": _date_display(sub.get("current_period_end")) or "—",
-                                },
-                            )
-                        )
+                        ctx = {**n_line}
+                        cpe = coerce_stripe_unix_timestamp(sub.get("current_period_end"))
+                        if cpe is not None:
+                            ctx["current_period_end_unix"] = cpe
+                        jobs.append(StripeEmailJob("plan_upgraded", ctx))
                         return jobs
                     if pu is not None and nu is not None and int(nu) < int(pu):
-                        jobs.append(
-                            StripeEmailJob(
-                                "plan_downgraded",
-                                {
-                                    **n_line,
-                                    "next_billing_display": _date_display(sub.get("current_period_end")) or "—",
-                                },
-                            )
-                        )
+                        ctx = {**n_line}
+                        cpe = coerce_stripe_unix_timestamp(sub.get("current_period_end"))
+                        if cpe is not None:
+                            ctx["current_period_end_unix"] = cpe
+                        jobs.append(StripeEmailJob("plan_downgraded", ctx))
                         return jobs
                 except (TypeError, ValueError):
                     pass
             p_int = p_line.get("billing_interval")
             n_int = n_line.get("billing_interval")
             if p_int and n_int and p_int != n_int:
-                jobs.append(
-                    StripeEmailJob(
-                        "billing_interval_changed",
-                        {
-                            **n_line,
-                            "next_billing_display": _date_display(sub.get("current_period_end")) or "—",
-                        },
-                    )
-                )
+                ctx = {**n_line}
+                cpe = coerce_stripe_unix_timestamp(sub.get("current_period_end"))
+                if cpe is not None:
+                    ctx["current_period_end_unix"] = cpe
+                jobs.append(StripeEmailJob("billing_interval_changed", ctx))
                 return jobs
 
         cancel_details = sub.get("cancellation_details") if isinstance(sub.get("cancellation_details"), dict) else {}
@@ -267,16 +227,16 @@ def map_stripe_event(
         line = _line_from_subscription(sub) if sub else {"plan_name": "Your plan", "billing_interval": "—"}
         amount = inv.get("amount_paid")
         currency = inv.get("currency")
-        next_ts = None
-        if sub:
-            next_ts = sub.get("current_period_end")
         ctx = {
             **line,
             "amount_display": _money_display(amount, currency) or "—",
-            "next_billing_display": _date_display(next_ts) or "—",
             "invoice_url": inv.get("hosted_invoice_url"),
             "receipt_url": inv.get("receipt_url") or inv.get("hosted_invoice_url"),
         }
+        if sub:
+            cpe = coerce_stripe_unix_timestamp(sub.get("current_period_end"))
+            if cpe is not None:
+                ctx["current_period_end_unix"] = cpe
         if not inv.get("subscription"):
             return jobs
         jobs.append(StripeEmailJob("payment_success", ctx))
@@ -293,9 +253,11 @@ def map_stripe_event(
             **line,
             "amount_due_display": _money_display(amount_due, currency),
             "invoice_url": inv.get("hosted_invoice_url"),
-            "next_retry_display": _ts_display(next_retry) or "—",
         }
         if next_retry:
+            nr = coerce_stripe_unix_timestamp(next_retry)
+            if nr is not None:
+                ctx["next_retry_unix"] = nr
             jobs.append(StripeEmailJob("payment_retrying", ctx))
         else:
             jobs.append(StripeEmailJob("payment_failed", ctx))

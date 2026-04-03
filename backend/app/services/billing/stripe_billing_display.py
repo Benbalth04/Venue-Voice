@@ -5,6 +5,30 @@ from __future__ import annotations
 import re
 from typing import Any
 
+
+def coerce_stripe_unix_timestamp(ts: Any) -> int | None:
+    """Parse Stripe Unix timestamps from API/webhook dicts (int, float, or numeric string)."""
+    if ts is None:
+        return None
+    if isinstance(ts, bool):
+        return None
+    if isinstance(ts, (int, float)):
+        try:
+            i = int(ts)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return i if i > 0 else None
+    if isinstance(ts, str):
+        s = ts.strip()
+        if not s or not s.isdigit():
+            return None
+        try:
+            i = int(s)
+        except ValueError:
+            return None
+        return i if i > 0 else None
+    return None
+
 _PRICE_ID_RE = re.compile(r"^price_[A-Za-z0-9]+$")
 
 

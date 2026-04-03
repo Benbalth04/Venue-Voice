@@ -14,6 +14,7 @@ function BillingSuccessContent() {
   const router = useRouter()
   const params = useSearchParams()
   const checkoutSessionId = params.get("session_id")
+  const isUpgradeFlow = params.get("upgrade") === "1"
   const { session, refreshUser } = useAuth()
   const [phase, setPhase] = useState<"verifying" | "error" | "success">("verifying")
   const [errorMessage, setErrorMessage] = useState("")
@@ -22,20 +23,30 @@ function BillingSuccessContent() {
   useEffect(() => {
     let cancelled = false
 
-    async function verify() {
+    async function run() {
+      const token = session?.access_token
+      if (!token) {
+        setPhase("error")
+        setErrorMessage("You need to be signed in to continue.")
+        return
+      }
+
+      if (isUpgradeFlow) {
+        try {
+          await refreshUser()
+        } catch {
+          /* still show success UX; subscription syncs via webhooks */
+        }
+        if (!cancelled) setPhase("success")
+        return
+      }
+
       const sid = checkoutSessionId?.trim()
       if (!sid) {
         setPhase("error")
         setErrorMessage(
           "Missing checkout session. Open billing from your account to complete payment."
         )
-        return
-      }
-
-      const token = session?.access_token
-      if (!token) {
-        setPhase("error")
-        setErrorMessage("You need to be signed in to confirm this payment.")
         return
       }
 
@@ -57,11 +68,11 @@ function BillingSuccessContent() {
       }
     }
 
-    void verify()
+    void run()
     return () => {
       cancelled = true
     }
-  }, [checkoutSessionId, session?.access_token, refreshUser])
+  }, [checkoutSessionId, session?.access_token, refreshUser, isUpgradeFlow])
 
   useEffect(() => {
     if (phase !== "success") return
@@ -81,9 +92,9 @@ function BillingSuccessContent() {
 
   useEffect(() => {
     if (phase === "success" && countdown === 0) {
-      router.replace("/dashboard?tour=1")
+      router.replace(isUpgradeFlow ? "/dashboard" : "/dashboard?tour=1")
     }
-  }, [phase, countdown, router])
+  }, [phase, countdown, router, isUpgradeFlow])
 
   if (phase === "verifying") {
     return (
@@ -99,8 +110,12 @@ function BillingSuccessContent() {
               />
             </svg>
           </div>
-          <h1 className="text-xl font-semibold text-zinc-900">Confirming your payment…</h1>
-          <p className="mt-2 text-sm text-zinc-500">This only takes a moment.</p>
+          <h1 className="text-xl font-semibold text-zinc-900">
+            {isUpgradeFlow ? "Getting your dashboard ready…" : "Confirming your payment…"}
+          </h1>
+          <p className="mt-2 text-sm text-zinc-500">
+            {isUpgradeFlow ? "Hang tight — this only takes a moment." : "This only takes a moment."}
+          </p>
         </div>
       </div>
     )
@@ -123,8 +138,15 @@ function BillingSuccessContent() {
           <h1 className="text-2xl font-bold text-zinc-900">Couldn&apos;t confirm payment</h1>
           <p className="mt-3 text-sm text-zinc-500">{errorMessage}</p>
           <div className="mt-8 flex flex-col gap-3">
-            <Button className="w-full" onClick={() => router.replace("/subscribe")}>
-              Back to billing
+            <Button
+              className="w-full"
+              onClick={() =>
+                router.replace(
+                  isUpgradeFlow ? "/dashboard/settings/manage-subscription" : "/subscribe"
+                )
+              }
+            >
+              {isUpgradeFlow ? "Back to subscription" : "Back to billing"}
             </Button>
             <Link className="text-sm font-medium text-violet-700 hover:underline" href="/dashboard">
               Go to dashboard
@@ -146,7 +168,9 @@ function BillingSuccessContent() {
 
         <h1 className="text-2xl font-bold text-zinc-900">You&apos;re all set!</h1>
         <p className="mt-2 text-sm text-zinc-500">
-          Thank you for signing up for Venue Voice. Your account is being activated.
+          {isUpgradeFlow
+            ? "Your subscription was updated successfully."
+            : "Thank you for signing up for Venue Voice. Your account is being activated."}
         </p>
 
         <div className="mt-8">
@@ -168,7 +192,7 @@ function BillingSuccessContent() {
               {countdown}
             </span>
           </div>
-          <p className="mt-3 text-sm text-zinc-500">Getting your account ready…</p>
+          <p className="mt-3 text-sm text-zinc-500">Getting your dashboard ready…</p>
         </div>
 
         <p className="mt-6 text-xs text-zinc-400">

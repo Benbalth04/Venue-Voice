@@ -27,9 +27,10 @@ interface Props {
   question: QuestionAggregation;
   /** When provided, each ChartCard gets an expand button. Not passed for old questions. */
   onExpand?: (context: ExpandChartContext, title: string) => void;
+  canExpand?: boolean;
 }
 
-export function QuestionRow({ question, onExpand }: Props) {
+export function QuestionRow({ question, onExpand, canExpand }: Props) {
   const chartData = useMemo(() => transformQuestion(question), [question]);
 
   type QuestionSubChart = Extract<ExpandChartContext, { kind: "question" }>["subChart"];
@@ -77,6 +78,7 @@ export function QuestionRow({ question, onExpand }: Props) {
                 question.rating_distribution.total === 0
               }
               onExpand={expand ? () => expand("distribution", "Rating Distribution") : undefined}
+              canExpand={canExpand}
             >
               <BarChart {...chartData.histogramProps} />
             </ChartCard>
@@ -107,6 +109,7 @@ export function QuestionRow({ question, onExpand }: Props) {
                 question.sentiment_distribution.total === 0
               }
               onExpand={expand ? () => expand("sentiment_bar", "Sentiment Distribution") : undefined}
+              canExpand={canExpand}
             >
               <BarChart {...chartData.sentimentBarProps} />
             </ChartCard>
@@ -128,6 +131,7 @@ export function QuestionRow({ question, onExpand }: Props) {
                 question.choice_distribution.total === 0
               }
               onExpand={expand ? () => expand("choice_distribution", "Selection Distribution") : undefined}
+              canExpand={canExpand}
             >
               <BarChart {...chartData.distributionBarProps} />
             </ChartCard>
@@ -135,6 +139,7 @@ export function QuestionRow({ question, onExpand }: Props) {
               title="Selection Split Over Time"
               isEmpty={!question.daily_choices || question.daily_choices.length === 0}
               onExpand={expand ? () => expand("stacked", "Selection Split Over Time") : undefined}
+              canExpand={canExpand}
             >
               <StackedBarChart {...chartData.stackedTimeProps} />
             </ChartCard>
@@ -150,6 +155,7 @@ export function QuestionRow({ question, onExpand }: Props) {
                 question.yes_no_distribution.total === 0
               }
               onExpand={expand ? () => expand("pie", "Yes / No Distribution") : undefined}
+              canExpand={canExpand}
             >
               <PieChart {...chartData.pieProps} />
             </ChartCard>

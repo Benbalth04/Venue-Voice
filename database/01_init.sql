@@ -545,11 +545,23 @@ CREATE TABLE subscriptions (
     stripe_customer_id TEXT NOT NULL UNIQUE,
     stripe_subscription_id TEXT UNIQUE,
     status TEXT NOT NULL DEFAULT 'trialing' CHECK (
-        status IN ('trialing', 'active', 'past_due', 'canceled', 'incomplete', 'incomplete_expired', 'unpaid')
+        status IN (
+            'trialing',
+            'active',
+            'pending_cancel',
+            'past_due',
+            'canceled',
+            'incomplete',
+            'incomplete_expired',
+            'unpaid'
+        )
     ),
     trial_end TIMESTAMP NULL,
     current_period_end TIMESTAMP NULL,
     plan_display_name TEXT NULL,
+    billing_interval TEXT NULL CHECK (billing_interval IN ('monthly', 'yearly')),
+    cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE,
+    price_id TEXT NULL,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -613,7 +625,7 @@ INSERT INTO question_type_settings (question_type, setting_key, setting_label, s
 ('star', 'action_alignment', 'Action alignment', 'select', FALSE, 'left', '["left","center","right","inherit"]'::jsonb, NULL),
 ('star', 'text_size', 'Text size', 'select', FALSE, 'medium', '["small","medium","large","extra_large"]'::jsonb, NULL),
 ('star', 'starCount', 'Number of stars', 'integer', TRUE, '5', NULL, '{"min":1,"max":10}'::jsonb),
-('star', 'selected_colour', 'Selected colour', 'color', FALSE, '#7C3AED', NULL, NULL),
+('star', 'selected_colour', 'Selected colour', 'color', FALSE, NULL, NULL, NULL),
 
 
 ('nps', 'optional', 'Optional question', 'boolean', FALSE, 'false', NULL, NULL),
@@ -623,7 +635,7 @@ INSERT INTO question_type_settings (question_type, setting_key, setting_label, s
 ('nps', 'max_score', 'Maximum score', 'integer', TRUE, '10', NULL, '{"min":1,"max":10}'::jsonb),
 ('nps', 'min_label', 'Min label', 'string', FALSE, 'Not likely', NULL, NULL),
 ('nps', 'max_label', 'Max label', 'string', FALSE, 'Extremely likely', NULL, NULL),
-('nps', 'selected_colour', 'Selected colour', 'color', FALSE, '#7C3AED', NULL, NULL),
+('nps', 'selected_colour', 'Selected colour', 'color', FALSE, NULL, NULL, NULL),
 
 ('text', 'optional', 'Optional question', 'boolean', FALSE, 'false', NULL, NULL),
 ('text', 'title_alignment', 'Title alignment', 'select', FALSE, 'inherit', '["left","center","right","inherit"]'::jsonb, NULL),
@@ -642,7 +654,7 @@ INSERT INTO question_type_settings (question_type, setting_key, setting_label, s
 ('multiple_choice', 'action_alignment', 'Action alignment', 'select', FALSE, 'left', '["left","center","right","inherit"]'::jsonb, NULL),
 ('multiple_choice', 'text_size', 'Text size', 'select', FALSE, 'medium', '["small","medium","large","extra_large"]'::jsonb, NULL),
 ('multiple_choice', 'options', 'Options', 'options', TRUE, NULL, NULL, '{"min_options":1}'::jsonb),
-('multiple_choice', 'selected_colour', 'Selected colour', 'color', FALSE, '#7C3AED', NULL, NULL),
+('multiple_choice', 'selected_colour', 'Selected colour', 'color', FALSE, NULL, NULL, NULL),
 
 
 ('checkbox', 'optional', 'Optional question', 'boolean', FALSE, 'false', NULL, NULL),
@@ -650,7 +662,7 @@ INSERT INTO question_type_settings (question_type, setting_key, setting_label, s
 ('checkbox', 'action_alignment', 'Action alignment', 'select', FALSE, 'left', '["left","center","right","inherit"]'::jsonb, NULL),
 ('checkbox', 'text_size', 'Text size', 'select', FALSE, 'medium', '["small","medium","large","extra_large"]'::jsonb, NULL),
 ('checkbox', 'options', 'Options', 'options', TRUE, NULL, NULL, '{"min_options":1}'::jsonb),
-('checkbox', 'selected_colour', 'Selected colour', 'color', FALSE, '#7C3AED', NULL, NULL),
+('checkbox', 'selected_colour', 'Selected colour', 'color', FALSE, NULL, NULL, NULL),
 
 ('yes_no', 'optional', 'Optional question', 'boolean', FALSE, 'false', NULL, NULL),
 ('yes_no', 'title_alignment', 'Title alignment', 'select', FALSE, 'inherit', '["left","center","right","inherit"]'::jsonb, NULL),
@@ -658,7 +670,7 @@ INSERT INTO question_type_settings (question_type, setting_key, setting_label, s
 ('yes_no', 'text_size', 'Text size', 'select', FALSE, 'medium', '["small","medium","large","extra_large"]'::jsonb, NULL),
 ('yes_no', 'yesLabel', 'Yes label', 'string', FALSE, 'Yes', NULL, NULL),
 ('yes_no', 'noLabel', 'No label', 'string', FALSE, 'No', NULL, NULL),
-('yes_no', 'selected_colour', 'Selected colour', 'color', FALSE, '#7C3AED', NULL, NULL),
+('yes_no', 'selected_colour', 'Selected colour', 'color', FALSE, NULL, NULL, NULL),
 
 ('email', 'optional', 'Optional question', 'boolean', FALSE, 'false', NULL, NULL),
 ('email', 'title_alignment', 'Title alignment', 'select', FALSE, 'inherit', '["left","center","right","inherit"]'::jsonb, NULL),
@@ -672,7 +684,7 @@ INSERT INTO question_type_settings (question_type, setting_key, setting_label, s
 ('phone', 'text_size', 'Text size', 'select', FALSE, 'medium', '["small","medium","large","extra_large"]'::jsonb, NULL),
 ('phone', 'placeholder', 'Placeholder', 'string', FALSE, '+61 400 000 000', NULL, NULL),
 
-('photo', 'optional', 'Optional question', 'boolean', TRUE, 'false', NULL, NULL),
+('photo', 'optional', 'Optional question', 'boolean', FALSE, 'true', NULL, NULL),
 ('photo', 'title_alignment', 'Title alignment', 'select', FALSE, 'inherit', '["left","center","right","inherit"]'::jsonb, NULL),
 ('photo', 'action_alignment', 'Action alignment', 'select', FALSE, 'left', '["left","center","right","inherit"]'::jsonb, NULL),
 ('photo', 'text_size', 'Text size', 'select', FALSE, 'medium', '["small","medium","large","extra_large"]'::jsonb, NULL)

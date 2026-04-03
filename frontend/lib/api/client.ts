@@ -663,6 +663,13 @@ export interface FlowRunResponse {
   created_at: string
 }
 
+export interface FlowRunListResponse {
+  items: FlowRunResponse[]
+  total: number
+  page: number
+  page_size: number
+}
+
 function ruleApiConditionToLegacy(
   condition: RuleConditionApi,
   connector: LogicConnector,
@@ -865,6 +872,8 @@ export interface AnalyticsResponseDetail {
   response_id: string
   survey_name: string
   answers: AnalyticsAnswerDetail[]
+  /** Flow automation runs for this submission (from API; may be absent on stale caches). */
+  flow_runs?: FlowRunResponse[]
 }
 
 export interface AnalyticsFilters {
@@ -1582,8 +1591,22 @@ export async function deleteNotificationGroup(
   await surveyRequest<unknown>(token, `/notification-groups/${groupId}`, "DELETE", { updated_at: updatedAt })
 }
 
-export function fetchFlowRuns(token: string): Promise<FlowRunResponse[]> {
-  return surveyRequest<FlowRunResponse[]>(token, "/flow-runs")
+export const FLOW_RUNS_PAGE_SIZE = 20
+
+export function fetchFlowRuns(
+  token: string,
+  options?: { page?: number; pageSize?: number },
+): Promise<FlowRunListResponse> {
+  const page = options?.page ?? 1
+  const pageSize = Math.min(
+    FLOW_RUNS_PAGE_SIZE,
+    Math.max(1, options?.pageSize ?? FLOW_RUNS_PAGE_SIZE),
+  )
+  const q = new URLSearchParams({
+    page: String(page),
+    page_size: String(pageSize),
+  })
+  return surveyRequest<FlowRunListResponse>(token, `/flow-runs?${q.toString()}`)
 }
 
 export function fetchSurveysList(token: string): Promise<SurveyListItem[]> {
@@ -1796,6 +1819,19 @@ export async function getEngagementBreakdown<T = unknown>(
 // Billing
 // ------------------------------------------------------------------
 
+export interface PlanLimits {
+  /** -1 means unlimited */
+  max_locations: number
+  /** -1 means unlimited */
+  max_active_surveys: number
+  /** -1 means unlimited */
+  max_active_flows: number
+  /** -1 means unlimited */
+  max_branch_nodes_per_flow: number
+  can_use_photo_feedback: boolean
+  can_expand_charts: boolean
+}
+
 export interface SubscriptionResponse {
   status: string
   trial_end: string | null
@@ -1803,7 +1839,11 @@ export interface SubscriptionResponse {
   stripe_customer_id: string | null
   stripe_subscription_id: string | null
   plan_display_name: string | null
+  billing_interval: string | null
+  cancel_at_period_end: boolean
   is_active: boolean
+  /** Plan-tier limits. Null when the user has no subscription yet. */
+  plan_limits: PlanLimits | null
 }
 
 export async function fetchSubscription(
@@ -1811,6 +1851,29 @@ export async function fetchSubscription(
 ): Promise<SubscriptionResponse> {
   return apiFetch<SubscriptionResponse>(
     `${BACKEND_BASE}/api/v1/billing/subscription`,
+    { headers: authGetHeaders(accessToken) }
+  )
+}
+
+export interface SubscriptionWarning {
+  type: string  // "OVER_LIMIT" | "FEATURE_DOWNGRADED"
+  feature: string  // "locations" | "active_surveys" | "active_flows" | "photo_feedback"
+  message: string
+  limit?: number
+  current?: number
+}
+
+export interface SubscriptionStatusResponse {
+  plan: string | null
+  over_limit: Record<string, boolean>
+  warnings: SubscriptionWarning[]
+}
+
+export async function fetchSubscriptionStatus(
+  accessToken: string
+): Promise<SubscriptionStatusResponse> {
+  return apiFetch<SubscriptionStatusResponse>(
+    `${BACKEND_BASE}/api/v1/me/subscription/status`,
     { headers: authGetHeaders(accessToken) }
   )
 }
@@ -1869,3 +1932,4 @@ export async function verifyCheckoutSession(
     { headers: authGetHeaders(accessToken) }
   )
 }
+

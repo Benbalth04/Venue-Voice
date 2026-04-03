@@ -49,11 +49,11 @@ export function QuestionCard({
           <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
             {questionTypeLabels?.[question.type] ?? questionTypeLabel(question.type)}
           </div>
-          <div className="mt-1 truncate text-base font-semibold text-zinc-950">
+          <div className="mt-1 truncate text-left text-base font-semibold text-zinc-950">
             {question.title.text || "Untitled question"}
           </div>
           {question.description?.text ? (
-            <div className="mt-1 truncate text-sm text-zinc-600">
+            <div className="mt-1 truncate text-left text-sm text-zinc-600">
               {question.description.text}
             </div>
           ) : null}

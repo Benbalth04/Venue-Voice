@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..billing.stripe_billing_display import normalize_legacy_billing_context
+from .constants import html_escape as _esc
 
 PRIMARY = "#7c3aed"
 PRIMARY_LIGHT = "#ede9fe"
@@ -49,19 +50,6 @@ ALL_STRIPE_TEMPLATES: frozenset[str] = frozenset(
         STRIPE_TEMPLATE_REACTIVATION,
     }
 )
-
-
-def _esc(v: Any) -> str:
-    if v is None:
-        return "—"
-    s = str(v)
-    return (
-        s.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-        .replace("'", "&#x27;")
-    )
 
 
 def _btn(href: str, label: str, *, primary: bool = True) -> str:

@@ -34,6 +34,16 @@ _PLAN_PRICE_IDS: dict[tuple[str, str], str | None] = {
     ("pro", "yearly"): os.getenv("PRO_PLAN_YEARLY_PRICE_ID"),
 }
 
+# Reverse map: price_id → (plan_key, display_name). Single source of truth for
+# translating a Stripe price ID back to our internal plan representation.
+PRICE_ID_TO_PLAN: dict[str, tuple[str, str]] = {
+    pid: (plan, plan.title())
+    for (plan, _interval), pid in _PLAN_PRICE_IDS.items()
+    if pid
+}
+
+_STRIPE_CUSTOMER_PORTAL_ID = os.getenv("STRIPE_CUSTOMER_PORTAL_ID")
+
 if _STRIPE_SECRET_KEY:
     stripe.api_key = _STRIPE_SECRET_KEY
 else:
@@ -47,6 +57,51 @@ if not _APP_ORIGIN:
 # ---------------------------------------------------------------------------
 _GRACE_PERIOD_DAYS = 3
 
+_ALLOWED_DB_SUBSCRIPTION_STATUSES = frozenset(
+    {
+        "trialing",
+        "active",
+        "pending_cancel",
+        "past_due",
+        "canceled",
+        "incomplete",
+        "incomplete_expired",
+        "unpaid",
+    }
+)
+
+
+def _access_within_trial_or_billing_period(sub: Subscription, now: datetime) -> bool:
+    """True if trial is still running, else if the current billing period has not ended."""
+    if sub.trial_end is not None:
+        trial_end = sub.trial_end
+        if trial_end.tzinfo is None:
+            trial_end = trial_end.replace(tzinfo=timezone.utc)
+        if trial_end > now:
+            return True
+    if sub.current_period_end is None:
+        return False
+    period_end = sub.current_period_end
+    if period_end.tzinfo is None:
+        period_end = period_end.replace(tzinfo=timezone.utc)
+    return period_end > now
+
+
+def db_subscription_status_from_stripe(stripe_sub: stripe.Subscription) -> str:
+    """Map Stripe subscription fields to the value stored on ``subscriptions.status``.
+
+    When cancellation is scheduled at period end but Stripe still reports ``active`` or
+    ``trialing``, we persist ``pending_cancel`` so the product can distinguish that state.
+    """
+    stripe_status = getattr(stripe_sub, "status", None) or "incomplete"
+    cancel_at_end = bool(getattr(stripe_sub, "cancel_at_period_end", False))
+    if cancel_at_end and stripe_status in ("active", "trialing"):
+        return "pending_cancel"
+    if stripe_status in _ALLOWED_DB_SUBSCRIPTION_STATUSES:
+        return stripe_status
+    logger.warning("Unknown Stripe subscription status %s, storing as incomplete", stripe_status)
+    return "incomplete"
+
 
 def is_subscription_active(sub: Subscription | None) -> bool:
     """Return True if the subscription grants access.
@@ -54,6 +109,7 @@ def is_subscription_active(sub: Subscription | None) -> bool:
     Rules:
     - trialing: active if trial_end is in the future (or not set)
     - active: always active
+    - pending_cancel: active until trial_end or current_period_end (same access window as before cancel)
     - past_due: granted a 3-day grace period beyond current_period_end
     - everything else (canceled, incomplete, …): blocked
     """
@@ -64,6 +120,9 @@ def is_subscription_active(sub: Subscription | None) -> bool:
 
     if sub.status == "active":
         return True
+
+    if sub.status == "pending_cancel":
+        return _access_within_trial_or_billing_period(sub, now)
 
     if sub.status == "trialing":
         if sub.trial_end is None:
@@ -255,11 +314,18 @@ def create_portal_session(user: User, db: Session) -> str:
             message="No billing account found for this user.",
         )
 
+    portal_config = (_STRIPE_CUSTOMER_PORTAL_ID or "").strip() or None
+    if not portal_config:
+        logger.warning("STRIPE_CUSTOMER_PORTAL_ID is not set — portal will use Stripe default config")
+
     try:
-        session = stripe.billing_portal.Session.create(
-            customer=sub.stripe_customer_id,
-            return_url=f"{_APP_ORIGIN}/dashboard",
-        )
+        create_params: dict = {
+            "customer": sub.stripe_customer_id,
+            "return_url": f"{_APP_ORIGIN}/dashboard/settings/manage-subscription/callback",
+        }
+        if portal_config:
+            create_params["configuration"] = portal_config
+        session = stripe.billing_portal.Session.create(**create_params)
     except stripe.StripeError as exc:
         raise ExternalAPIError(
             service_name="Stripe",
@@ -273,23 +339,62 @@ def create_portal_session(user: User, db: Session) -> str:
 # Subscription sync (used by webhook handler + reconciliation)
 # ---------------------------------------------------------------------------
 
-def _plan_display_name_from_stripe_subscription(stripe_sub: stripe.Subscription) -> str | None:
+def _price_from_stripe_subscription(stripe_sub: stripe.Subscription):
+    """Extract the first price object from a Stripe subscription, or None."""
     items = getattr(stripe_sub, "items", None)
     if not items:
         return None
     data = getattr(items, "data", None) or []
     if not data:
         return None
-    item0 = data[0]
-    price = getattr(item0, "price", None)
+    return getattr(data[0], "price", None)
+
+
+def plan_display_name_from_price_id(price_id: str | None) -> str | None:
+    """Return the human-readable plan name for a Stripe price ID, or None."""
+    if not price_id:
+        return None
+    entry = PRICE_ID_TO_PLAN.get(price_id)
+    return entry[1] if entry else None
+
+
+def _plan_display_name_from_stripe_subscription(stripe_sub: stripe.Subscription) -> str | None:
+    price = _price_from_stripe_subscription(stripe_sub)
     if price is None:
         return None
+    # Primary: look up our known price IDs via centralized map
+    price_id = getattr(price, "id", None)
+    name = plan_display_name_from_price_id(price_id)
+    if name:
+        return name
+    # Fallback: use Stripe price metadata (nickname / product name / price ID)
     try:
         price_dict = price.to_dict()
     except Exception:
         return None
     name = plan_display_name_from_price(price_dict)
     return name if name else None
+
+
+def _billing_interval_from_stripe_subscription(stripe_sub: stripe.Subscription) -> str | None:
+    price = _price_from_stripe_subscription(stripe_sub)
+    if price is None:
+        return None
+    # Primary: look up our known price IDs
+    price_id = getattr(price, "id", None)
+    if price_id:
+        for (plan, interval), pid in _PLAN_PRICE_IDS.items():
+            if pid and pid == price_id:
+                return interval  # "monthly" or "yearly"
+    # Fallback: derive from Stripe recurring.interval
+    recurring = getattr(price, "recurring", None)
+    if recurring:
+        stripe_interval = getattr(recurring, "interval", None)
+        if stripe_interval == "month":
+            return "monthly"
+        if stripe_interval == "year":
+            return "yearly"
+    return None
 
 
 def sync_subscription_from_stripe_object(stripe_sub: stripe.Subscription, db: Session) -> None:
@@ -344,7 +449,7 @@ def sync_subscription_from_stripe_object(stripe_sub: stripe.Subscription, db: Se
         print(f"[STRIPE SYNC] Found existing local subscription row id={sub.id} current_status={sub.status}")
 
     sub.stripe_subscription_id = getattr(stripe_sub, "id", None)
-    sub.status = getattr(stripe_sub, "status", "unknown")
+    sub.status = db_subscription_status_from_stripe(stripe_sub)
 
     trial_end_ts = getattr(stripe_sub, "trial_end", None)
     sub.trial_end = datetime.utcfromtimestamp(trial_end_ts) if trial_end_ts else None
@@ -353,7 +458,11 @@ def sync_subscription_from_stripe_object(stripe_sub: stripe.Subscription, db: Se
     if current_period_end_ts:
         sub.current_period_end = datetime.utcfromtimestamp(current_period_end_ts)
 
+    price = _price_from_stripe_subscription(stripe_sub)
+    sub.price_id = getattr(price, "id", None) if price else None
     sub.plan_display_name = _plan_display_name_from_stripe_subscription(stripe_sub)
+    sub.billing_interval = _billing_interval_from_stripe_subscription(stripe_sub)
+    sub.cancel_at_period_end = bool(getattr(stripe_sub, "cancel_at_period_end", False))
     sub.updated_at = datetime.utcnow()
 
     try:
@@ -374,3 +483,5 @@ def sync_subscription_from_stripe_object(stripe_sub: stripe.Subscription, db: Se
 
 def get_subscription(user: User, db: Session) -> Subscription | None:
     return db.query(Subscription).filter(Subscription.user_id == user.id).first()
+
+

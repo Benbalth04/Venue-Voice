@@ -275,14 +275,22 @@ export default function SurveyEditorPage() {
 
   function addQuestion(type: string) {
     const id = crypto.randomUUID()
+    const defaults = getDefaultsForType(type) as Record<string, unknown>
+    let optional = false
+    if (typeof defaults.optional === "boolean") {
+      optional = defaults.optional
+    } else if (type === "photo") {
+      optional = true
+    }
+    const { optional: _omitOptional, ...settingsRest } = defaults
     const q: Question = {
       id,
       version: 1,
       type: type as Question["type"],
       title: { text: "Untitled question", style: { size: "h2" } },
       description: { text: "", style: { size: "body" } },
-      optional: false,
-      settings: getDefaultsForType(type) as Question["settings"],
+      optional,
+      settings: settingsRest as Question["settings"],
     }
     setSchema((prev) => ({
       ...prev,

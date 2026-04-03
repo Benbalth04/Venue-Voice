@@ -3,24 +3,39 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
   Camera,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  Clock,
+  ExternalLink,
   Filter,
   Loader2,
+  MapPin,
+  QrCode,
   X,
+  XCircle,
 } from "lucide-react"
 import { supabase } from "@/lib/supabase/client"
 import {
   fetchAnalyticsFilters,
   fetchAnalyticsResponseDetail,
   fetchAnalyticsResponses,
+  fetchFlow,
+  fetchNotificationGroups,
   fetchPhotoSignedUrl,
+  fetchRuleBundleDirect,
   extractErrorMessage,
   type AnalyticsAnswerDetail,
   type AnalyticsFilterOption,
   type AnalyticsFilters,
   type AnalyticsResponseRow,
+  type FlowResponse,
+  type FlowRunResponse,
+  type NotificationGroupResponse,
 } from "@/lib/api/client"
+import type { RuleInfo } from "@/components/flow-editor/buildReadOnlyCanvas"
+import { FlowExecutionPreview } from "@/components/flow-editor/FlowExecutionPreview"
+import { FlowRunActionPill } from "@/components/flows/FlowRunActionPill"
 import { AiAnalysisInfoTooltip } from "@/components/analytics/AiAnalysisInfoTooltip"
 import { DataTable } from "@/components/ui/DataTable"
 import { DatePicker } from "@/components/ui/DatePicker"
@@ -64,6 +79,17 @@ function showSentimentPill(a: AnalyticsAnswerDetail): boolean {
   return Boolean(a.sentiment && String(a.sentiment).trim())
 }
 
+function formatFlowRunDateTime(iso: string) {
+  const d = new Date(iso)
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface FiltersState {
@@ -100,6 +126,8 @@ function ReviewModal({
   onMarkRead?: (id: string) => void
 }) {
   const [answers, setAnswers] = useState<AnalyticsAnswerDetail[]>([])
+  const [flowRuns, setFlowRuns] = useState<FlowRunResponse[]>([])
+  const [notificationGroups, setNotificationGroups] = useState<NotificationGroupResponse[]>([])
   const [surveyName, setSurveyName] = useState("")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -107,6 +135,12 @@ function ReviewModal({
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc")
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
   const [lightboxLoading, setLightboxLoading] = useState(false)
+  const [previewState, setPreviewState] = useState<{
+    run: FlowRunResponse
+    flow: FlowResponse
+  } | null>(null)
+  const [previewRulesById, setPreviewRulesById] = useState<Map<string, RuleInfo>>(new Map())
+  const [previewLoading, setPreviewLoading] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -114,10 +148,15 @@ function ReviewModal({
       const token = await getToken()
       if (!token) { setError("Not authenticated"); setLoading(false); return }
       try {
-        const detail = await fetchAnalyticsResponseDetail(token, responseId)
+        const [detail, groups] = await Promise.all([
+          fetchAnalyticsResponseDetail(token, responseId),
+          fetchNotificationGroups(token),
+        ])
         if (cancelled) return
         setSurveyName(detail.survey_name)
         setAnswers(detail.answers)
+        setFlowRuns(detail.flow_runs ?? [])
+        setNotificationGroups(groups)
         onMarkRead?.(responseId)
       } catch (e) {
         if (!cancelled) setError(extractErrorMessage(e, "Failed to load response"))
@@ -129,12 +168,35 @@ function ReviewModal({
     return () => { cancelled = true }
   }, [onMarkRead, responseId])
 
+  async function openExecutionPreview(run: FlowRunResponse) {
+    const token = await getToken()
+    if (!token) return
+    setPreviewLoading(run.id)
+    try {
+      const [flow, bundle] = await Promise.all([
+        fetchFlow(token, run.flow_id),
+        fetchRuleBundleDirect(token, run.survey_id),
+      ])
+      const ruleMap = new Map<string, RuleInfo>()
+      for (const rule of bundle.rules) {
+        ruleMap.set(rule.id, { name: rule.name, description: rule.description ?? null })
+      }
+      setPreviewRulesById(ruleMap)
+      setPreviewState({ run, flow })
+    } catch {
+      // flow deleted or rules unavailable
+    } finally {
+      setPreviewLoading(null)
+    }
+  }
+
   return (
+    <>
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
-      <div className="relative w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
+      <div className="relative w-full max-w-3xl rounded-2xl bg-white shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4">
           <div>
@@ -166,109 +228,197 @@ function ReviewModal({
               {error}
             </div>
           )}
-          {!loading && !error && answers.length === 0 && (
-            <p className="py-8 text-center text-sm text-zinc-400">No answers recorded.</p>
-          )}
-          {!loading && !error && answers.length > 0 && (() => {
-            const sorted = [...answers].sort((a, b) => {
-              if (sortKey === "question") {
-                const cmp = a.position - b.position
-                return sortDir === "asc" ? cmp : -cmp
-              }
-              const cmp = (a.answer_value ?? "").localeCompare(b.answer_value ?? "")
-              return sortDir === "asc" ? cmp : -cmp
-            })
-            return (
-              <DataTable<AnalyticsAnswerDetail>
-                data={sorted}
-                columns={[
-                  {
-                    key: "question",
-                    label: "Question",
-                    sortable: true,
-                    align: "left",
-                    render: (a) => {
-                      const isText =
-                        a.question_type === "text" || a.question_type === "long_text"
-                      return (
-                        <span className="flex flex-wrap items-center gap-2 text-zinc-700">
-                          <span>{a.question_text}</span>
-                          {showSentimentPill(a) && a.sentiment ? (
-                            <span
-                              className={[
-                                "inline-flex shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold",
-                                sentimentPillClass(a.sentiment),
-                              ].join(" ")}
-                            >
-                              {formatSentimentLabel(a.sentiment)}
+          {!loading && !error && (
+            <>
+              {answers.length > 0 ? (
+                (() => {
+                  const sorted = [...answers].sort((a, b) => {
+                    if (sortKey === "question") {
+                      const cmp = a.position - b.position
+                      return sortDir === "asc" ? cmp : -cmp
+                    }
+                    const cmp = (a.answer_value ?? "").localeCompare(b.answer_value ?? "")
+                    return sortDir === "asc" ? cmp : -cmp
+                  })
+                  return (
+                    <DataTable<AnalyticsAnswerDetail>
+                      data={sorted}
+                      columns={[
+                        {
+                          key: "question",
+                          label: "Question",
+                          sortable: true,
+                          align: "left",
+                          render: (a) => {
+                            const isText =
+                              a.question_type === "text" || a.question_type === "long_text"
+                            return (
+                              <span className="flex flex-wrap items-center gap-2 text-zinc-700">
+                                <span>{a.question_text}</span>
+                                {showSentimentPill(a) && a.sentiment ? (
+                                  <span
+                                    className={[
+                                      "inline-flex shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold",
+                                      sentimentPillClass(a.sentiment),
+                                    ].join(" ")}
+                                  >
+                                    {formatSentimentLabel(a.sentiment)}
+                                  </span>
+                                ) : null}
+                                {isText ? (
+                                  <AiAnalysisInfoTooltip variant="past" />
+                                ) : null}
+                              </span>
+                            )
+                          },
+                        },
+                        {
+                          key: "answer",
+                          label: "Answer",
+                          sortable: true,
+                          align: "left",
+                          render: (a) => {
+                            if (a.has_photo && a.question_id) {
+                              return (
+                                <button
+                                  type="button"
+                                  disabled={lightboxLoading}
+                                  className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1 text-xs font-medium text-violet-700 hover:border-violet-300 hover:bg-violet-50 disabled:opacity-60"
+                                  onClick={async () => {
+                                    if (lightboxLoading) return
+                                    setLightboxLoading(true)
+                                    try {
+                                      const token = await getToken()
+                                      if (!token) return
+                                      const { signed_url } = await fetchPhotoSignedUrl(
+                                        token,
+                                        responseId,
+                                        a.question_id!,
+                                      )
+                                      setLightboxUrl(signed_url)
+                                    } catch {
+                                      // silently ignore — the icon will re-enable
+                                    } finally {
+                                      setLightboxLoading(false)
+                                    }
+                                  }}
+                                >
+                                  {lightboxLoading ? (
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                                  ) : (
+                                    <Camera className="h-3.5 w-3.5" aria-hidden />
+                                  )}
+                                  View photo
+                                </button>
+                              )
+                            }
+                            const text = a.answer_value ?? ""
+                            return (
+                              <span className="font-medium text-zinc-900">
+                                {text === "" ? "—" : text}
+                              </span>
+                            )
+                          },
+                        },
+                      ]}
+                      getRowKey={(a) => a.question_id ?? `p-${a.position}-${a.question_text}`}
+                      sortKey={sortKey}
+                      sortDir={sortDir}
+                      onSort={(key) => {
+                        setSortKey(key)
+                        setSortDir((d) => (sortKey === key && d === "asc" ? "desc" : "asc"))
+                      }}
+                    />
+                  )
+                })()
+              ) : (
+                <p className="py-6 text-center text-sm text-zinc-400">No answers recorded.</p>
+              )}
+
+              <div className="mt-6 border-t border-zinc-200 pt-4">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                  Automation runs
+                </h3>
+                {flowRuns.length === 0 ? (
+                  <p className="mt-2 text-sm text-zinc-400">No flows ran for this submission.</p>
+                ) : (
+                  <div className="mt-3 space-y-2">
+                    {flowRuns.map((run) => (
+                      <div
+                        key={run.id}
+                        className="rounded-xl border border-zinc-200 bg-zinc-50/80 px-3 py-2.5"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex min-w-0 items-center gap-1.5">
+                            {run.success ? (
+                              <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                            ) : (
+                              <XCircle className="h-3.5 w-3.5 shrink-0 text-red-500" />
+                            )}
+                            <p className="truncate text-sm font-semibold text-zinc-900">
+                              {run.flow_name}
+                            </p>
+                          </div>
+                          {run.runtime_ms != null ? (
+                            <span className="shrink-0 rounded-full bg-zinc-200/80 px-2 py-0.5 text-[10px] font-medium text-zinc-600">
+                              {run.runtime_ms} ms
                             </span>
                           ) : null}
-                          {isText ? (
-                            <AiAnalysisInfoTooltip variant="past" />
+                        </div>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-zinc-500">
+                          <span className="inline-flex items-center gap-0.5">
+                            <Clock className="h-3 w-3 shrink-0" />
+                            {formatFlowRunDateTime(run.created_at)}
+                          </span>
+                          <span className="inline-flex items-center gap-0.5">
+                            <MapPin className="h-3 w-3 shrink-0" />
+                            {run.survey_name}
+                            {run.location_name ? ` · ${run.location_name}` : ""}
+                          </span>
+                          {run.qr_code_title ? (
+                            <span className="inline-flex items-center gap-0.5">
+                              <QrCode className="h-3 w-3 shrink-0" />
+                              {run.qr_code_title}
+                            </span>
                           ) : null}
-                        </span>
-                      )
-                    },
-                  },
-                  {
-                    key: "answer",
-                    label: "Answer",
-                    sortable: true,
-                    align: "left",
-                    render: (a) => {
-                      if (a.has_photo && a.question_id) {
-                        return (
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {run.actions.length > 0 ? (
+                              run.actions.map((action) => (
+                                <FlowRunActionPill
+                                  key={action.id}
+                                  action={action}
+                                  locationId={run.location_id}
+                                  notificationGroups={notificationGroups}
+                                  compact
+                                />
+                              ))
+                            ) : (
+                              <span className="text-[11px] text-zinc-400">No actions taken</span>
+                            )}
+                          </div>
                           <button
                             type="button"
-                            disabled={lightboxLoading}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1 text-xs font-medium text-violet-700 hover:border-violet-300 hover:bg-violet-50 disabled:opacity-60"
-                            onClick={async () => {
-                              if (lightboxLoading) return
-                              setLightboxLoading(true)
-                              try {
-                                const token = await getToken()
-                                if (!token) return
-                                const { signed_url } = await fetchPhotoSignedUrl(
-                                  token,
-                                  responseId,
-                                  a.question_id!,
-                                )
-                                setLightboxUrl(signed_url)
-                              } catch {
-                                // silently ignore — the icon will re-enable
-                              } finally {
-                                setLightboxLoading(false)
-                              }
-                            }}
+                            disabled={previewLoading === run.id}
+                            onClick={() => void openExecutionPreview(run)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2 py-1 text-[11px] font-medium text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
                           >
-                            {lightboxLoading ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                            {previewLoading === run.id ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
                             ) : (
-                              <Camera className="h-3.5 w-3.5" aria-hidden />
+                              <ExternalLink className="h-3 w-3" />
                             )}
-                            View photo
+                            View execution
                           </button>
-                        )
-                      }
-                      const text = a.answer_value ?? ""
-                      return (
-                        <span className="font-medium text-zinc-900">
-                          {text === "" ? "—" : text}
-                        </span>
-                      )
-                    },
-                  },
-                ]}
-                getRowKey={(a) => a.question_id ?? `p-${a.position}-${a.question_text}`}
-                sortKey={sortKey}
-                sortDir={sortDir}
-                onSort={(key) => {
-                  setSortKey(key)
-                  setSortDir((d) => (sortKey === key && d === "asc" ? "desc" : "asc"))
-                }}
-              />
-            )
-          })()}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
 
         <div className="border-t border-zinc-100 px-6 py-3 text-right">
@@ -305,6 +455,16 @@ function ReviewModal({
         </div>
       )}
     </div>
+
+    {previewState ? (
+      <FlowExecutionPreview
+        run={previewState.run}
+        flow={previewState.flow}
+        rulesById={previewRulesById}
+        onClose={() => setPreviewState(null)}
+      />
+    ) : null}
+    </>
   )
 }
 

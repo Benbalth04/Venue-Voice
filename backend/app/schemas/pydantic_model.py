@@ -9,11 +9,26 @@ from typing import Any, Literal
 class SubscriptionStatus(str, PyEnum):
     trialing = "trialing"
     active = "active"
+    pending_cancel = "pending_cancel"
     past_due = "past_due"
     canceled = "canceled"
     incomplete = "incomplete"
     incomplete_expired = "incomplete_expired"
     unpaid = "unpaid"
+
+
+class PlanLimitsResponse(BaseModel):
+    """Plan-tier limits returned alongside the subscription status.
+
+    Integer fields use -1 to represent 'unlimited'.
+    Frontend code should treat -1 as no cap.
+    """
+    max_locations: int
+    max_active_surveys: int
+    max_active_flows: int
+    max_branch_nodes_per_flow: int
+    can_use_photo_feedback: bool
+    can_expand_charts: bool
 
 
 class SubscriptionResponse(BaseModel):
@@ -23,9 +38,36 @@ class SubscriptionResponse(BaseModel):
     stripe_customer_id: str | None = None
     stripe_subscription_id: str | None = None
     plan_display_name: str | None = None
+    billing_interval: str | None = None
+    cancel_at_period_end: bool = False
+    price_id: str | None = None
     is_active: bool
+    plan_limits: PlanLimitsResponse | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class SubscriptionWarning(BaseModel):
+    """A single over-limit or feature-downgrade warning for the account."""
+
+    type: str  # "OVER_LIMIT" | "FEATURE_DOWNGRADED"
+    feature: str  # "locations" | "active_surveys" | "active_flows" | "photo_feedback"
+    message: str
+    limit: int | None = None
+    current: int | None = None
+
+
+class SubscriptionStatusResponse(BaseModel):
+    """Dynamic account status for the subscription warning banner.
+
+    Computed on request — never stored. ``over_limit`` reflects whether the
+    account currently holds more resources than the plan allows (e.g. after a
+    downgrade). ``warnings`` is the list the frontend renders verbatim.
+    """
+
+    plan: str | None
+    over_limit: dict[str, bool]  # {"locations": bool, "active_surveys": bool, "active_flows": bool}
+    warnings: list[SubscriptionWarning]
 
 
 class CheckoutSessionResponse(BaseModel):
@@ -35,6 +77,8 @@ class CheckoutSessionResponse(BaseModel):
 class CheckoutSessionRequest(BaseModel):
     plan: Literal["starter", "growth", "pro"]
     billing_interval: Literal["monthly", "yearly"]
+
+
 
 
 class PortalSessionResponse(BaseModel):
@@ -433,6 +477,7 @@ class AnalyticsResponseDetail(BaseModel):
     response_id: uuid.UUID
     survey_name: str
     answers: list[AnalyticsAnswerDetail]
+    flow_runs: list["FlowRunResponse"] = Field(default_factory=list)
 
 
 class PhotoSignedUrlResponse(BaseModel):
@@ -931,12 +976,54 @@ class FlowNodeCreate(BaseModel):
         return self
 
 
+FLOW_RULE_DUPLICATE_ON_PATH_MESSAGE = (
+    "The same survey rule cannot be used on more than one Rule step on a single path "
+    "from the start of the flow. Add a branch so each path only includes that rule once."
+)
+
+
+def assert_flow_rule_survey_ids_unique_per_path(
+    node_key_map: dict[uuid.UUID, FlowNodeCreate],
+    children_by_parent: dict[uuid.UUID | None, list[tuple[uuid.UUID, FlowNodeCreate]]],
+    root_id: uuid.UUID,
+) -> None:
+    """Raise ValueError if the same survey rule_id appears on more than one rule node along one root-to-leaf path."""
+
+    def walk(node_id: uuid.UUID, path_rule_ids: frozenset[uuid.UUID]) -> None:
+        node = node_key_map[node_id]
+        if node.node_type == FlowNodeType.rule:
+            rid = node.rule_id
+            if rid is not None:
+                if rid in path_rule_ids:
+                    raise ValueError(FLOW_RULE_DUPLICATE_ON_PATH_MESSAGE)
+                next_path = path_rule_ids.union({rid})
+            else:
+                next_path = path_rule_ids
+            for child_id, _ in children_by_parent.get(node_id, []):
+                walk(child_id, next_path)
+            return
+        if node.node_type == FlowNodeType.branch:
+            for child_id, _ in children_by_parent.get(node_id, []):
+                walk(child_id, path_rule_ids)
+            return
+        if node.node_type == FlowNodeType.action:
+            ch = children_by_parent.get(node_id, [])
+            if not ch:
+                return
+            walk(ch[0][0], path_rule_ids)
+            return
+        if node.node_type == FlowNodeType.terminate:
+            return
+
+    walk(root_id, frozenset())
+
+
 class CreateFlow(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=120)
     description: str | None = Field(default=None, max_length=240)
-    is_active: bool = True
+    is_active: bool = False
     location_survey_ids: list[uuid.UUID] = Field(default_factory=list)
     nodes: list[FlowNodeCreate] = Field(min_length=1)
 
@@ -1022,13 +1109,8 @@ class CreateFlow(BaseModel):
                     out.append(uuid.UUID(str(x)))
             return out
 
-        seen_rule_bindings: dict[uuid.UUID, uuid.UUID] = {}
-        for map_node_id, map_node in node_key_map.items():
-            if map_node.node_type != FlowNodeType.rule or map_node.rule_id is None:
-                continue
-            if map_node.rule_id in seen_rule_bindings:
-                raise ValueError("each survey rule may only be referenced by one rule node per flow")
-            seen_rule_bindings[map_node.rule_id] = map_node_id
+        root_id = roots[0].id or uuid.uuid5(uuid.NAMESPACE_URL, "flow-root")
+        assert_flow_rule_survey_ids_unique_per_path(node_key_map, children_by_parent, root_id)
 
         for _, branch_node in node_key_map.items():
             if branch_node.node_type != FlowNodeType.branch:
@@ -1091,7 +1173,6 @@ class CreateFlow(BaseModel):
             for child_id, _ in children:
                 walk(child_id)
 
-        root_id = roots[0].id or uuid.uuid5(uuid.NAMESPACE_URL, "flow-root")
         walk_redirect_limit(root_id, 0)
         walk(root_id)
         return self
@@ -1182,6 +1263,16 @@ class FlowRunResponse(BaseModel):
     runtime_ms: int | None = None
     execution_trace: dict[str, Any]
     created_at: str
+
+
+class FlowRunListResponse(BaseModel):
+    items: list[FlowRunResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+AnalyticsResponseDetail.model_rebuild()
 
 
 # ── Survey Dashboard ──────────────────────────────────────────────────────────

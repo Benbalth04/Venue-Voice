@@ -186,7 +186,7 @@ QUESTIONS = [
         "question_text": "Photo Question",
         "question_type": "photo",
         "config": {
-            "optional": False,
+            "optional": True,
             "text_size": "medium",
             "title_alignment": "inherit",
             "action_alignment": "left"

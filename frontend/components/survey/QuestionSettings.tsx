@@ -10,6 +10,7 @@ import type {
 } from "@/lib/survey/types"
 import { useSettingsSchema } from "@/contexts/SettingsSchemaContext"
 import type { QuestionSettingDefinition } from "@/lib/api/client"
+import { SingleSelectDropdown } from "@/components/ui/DropdownSelect"
 
 export function QuestionSettings({
   survey,
@@ -22,13 +23,23 @@ export function QuestionSettings({
 }) {
   const { getSettingsForType, loading } = useSettingsSchema()
   const defs = getSettingsForType(question.type)
+  const optionalDef =
+    defs.find((d) => d.key === "optional") ?? {
+      key: "optional",
+      label: "Optional question",
+      type: "boolean",
+      required: false,
+      default_value: false,
+      allowed_values: null,
+      validation_rules: null,
+    }
 
   return (
     <div className="flex flex-col gap-6">
       <Section title="Behavior">
         <div className="flex flex-col gap-3">
           <SchemaField
-            def={{ key: "optional", label: "Optional question", type: "boolean", required: false, default_value: false, allowed_values: null, validation_rules: null }}
+            def={optionalDef}
             value={question.optional}
             onChange={(v) =>
               updateQuestion(survey, question.id, onSurveyChange, (q) => ({
@@ -109,7 +120,7 @@ export function QuestionSettings({
 function getSettingValue(question: Question, def: QuestionSettingDefinition, survey: Survey): unknown {
   if (def.key === "selected_colour") {
     const s = question.settings as Record<string, unknown>
-    return s.selected_colour ?? "#7C3AED"
+    return s.selected_colour ?? survey.theme.primaryColor
   }
   const s = question.settings as Record<string, unknown>
   const v = s[def.key]
@@ -166,18 +177,12 @@ function SchemaField({
     return (
       <div className="flex items-center justify-between gap-3">
         <span className="text-sm font-medium text-zinc-800">{def.label}</span>
-        <select
-          className="w-40 appearance-none rounded-xl border border-zinc-200 bg-white px-3 py-2 pr-9 text-sm text-zinc-950 shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2"
+        <SingleSelectDropdown
+          className="w-40"
           value={String(value ?? def.default_value ?? "")}
-          onChange={(e) => onChange(e.target.value || undefined)}
-          aria-label={def.label}
-        >
-          {options.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+          onChange={(next) => onChange(next || undefined)}
+          options={options}
+        />
       </div>
     )
   }
@@ -336,22 +341,19 @@ function TextStyleControls({
         Underline
       </button>
 
-      <label className="col-span-2 flex flex-col gap-2">
+      <div className="col-span-2 flex flex-col gap-2">
         <span className="text-xs font-medium text-zinc-600">Text size</span>
-        <select
-          className="w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-950 shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2"
+        <SingleSelectDropdown
           value={style.size}
-          onChange={(e) =>
-            onChange({ ...style, size: e.target.value as TextStyle["size"] })
-          }
-          aria-label="Text size"
-        >
-          <option value="h1">H1</option>
-          <option value="h2">H2</option>
-          <option value="h3">H3</option>
-          <option value="body">Body</option>
-        </select>
-      </label>
+          onChange={(next) => onChange({ ...style, size: next as TextStyle["size"] })}
+          options={[
+            { value: "h1", label: "H1" },
+            { value: "h2", label: "H2" },
+            { value: "h3", label: "H3" },
+            { value: "body", label: "Body" },
+          ]}
+        />
+      </div>
     </div>
   )
 }

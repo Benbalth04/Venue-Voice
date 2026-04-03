@@ -9,9 +9,10 @@ import { ChartCard } from "./ChartCard";
 interface Props {
   engagement: EngagementData;
   onExpandScanCompletion?: () => void;
+  canExpand?: boolean;
 }
 
-export function EngagementSection({ engagement, onExpandScanCompletion }: Props) {
+export function EngagementSection({ engagement, onExpandScanCompletion, canExpand }: Props) {
   const totalsProps = transformEngagementTotals(engagement);
   const timeSeriesProps = transformEngagementTimeSeries(engagement);
 
@@ -32,6 +33,7 @@ export function EngagementSection({ engagement, onExpandScanCompletion }: Props)
           title="Scans vs Completions"
           isEmpty={engagement.total_scans === 0}
           onExpand={onExpandScanCompletion}
+          canExpand={canExpand}
         >
           <BarChart {...totalsProps} />
         </ChartCard>

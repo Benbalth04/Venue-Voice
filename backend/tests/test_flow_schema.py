@@ -237,7 +237,72 @@ class FlowSchemaTests(unittest.TestCase):
                     ),
                 ],
             )
-        self.assertIn("only be referenced by one rule node", str(ctx.exception).lower())
+        self.assertIn("single path", str(ctx.exception).lower())
+
+    def test_accepts_same_rule_on_separate_branch_paths(self) -> None:
+        rid_b = uuid.uuid4()
+        rid_a = uuid.uuid4()
+        n_root = uuid.uuid4()
+        n_branch = uuid.uuid4()
+        n_rule_true = uuid.uuid4()
+        n_term_true = uuid.uuid4()
+        n_rule_false = uuid.uuid4()
+        n_term_false = uuid.uuid4()
+        flow = CreateFlow(
+            name="Reuse rule A on two arms",
+            location_survey_ids=[uuid.uuid4()],
+            nodes=[
+                node(
+                    node_id=n_root,
+                    parent_id=None,
+                    node_type="rule",
+                    position=0,
+                    rule_id=str(rid_b),
+                ),
+                node(
+                    node_id=n_branch,
+                    parent_id=n_root,
+                    node_type="branch",
+                    position=0,
+                    config={
+                        "rule_conditions": [{"rule_id": str(rid_b), "expected": True}],
+                        "match_type": "all",
+                    },
+                ),
+                node(
+                    node_id=n_rule_true,
+                    parent_id=n_branch,
+                    node_type="rule",
+                    position=0,
+                    branch_type="TRUE",
+                    rule_id=str(rid_a),
+                ),
+                node(
+                    node_id=n_term_true,
+                    parent_id=n_rule_true,
+                    node_type="terminate",
+                    position=0,
+                ),
+                node(
+                    node_id=n_rule_false,
+                    parent_id=n_branch,
+                    node_type="rule",
+                    position=1,
+                    branch_type="FALSE",
+                    rule_id=str(rid_a),
+                ),
+                node(
+                    node_id=n_term_false,
+                    parent_id=n_rule_false,
+                    node_type="terminate",
+                    position=0,
+                ),
+            ],
+        )
+        self.assertEqual(
+            sum(1 for n in flow.nodes if n.node_type.value == "rule" and n.rule_id == rid_a),
+            2,
+        )
 
     def test_rejects_branch_check_when_rule_only_below_branch(self) -> None:
         branch_id = uuid.uuid4()

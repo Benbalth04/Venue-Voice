@@ -127,9 +127,7 @@ export function DashboardAccessGuard({ children }: { children: ReactNode }) {
       })
       .catch(() => setBlockReason("sub_error"))
       .finally(() => setChecking(false))
-    // Depends on `session.access_token` (string), not session object identity, so we re-check
-    // after JWT refresh (e.g. tab return) without spurious runs on unrelated session updates.
-  }, [authLoading, user, session?.access_token])
+  }, [authLoading, user, session])
   /* eslint-enable react-hooks/set-state-in-effect */
 
   // Show spinner while AuthContext or subscription check is in progress

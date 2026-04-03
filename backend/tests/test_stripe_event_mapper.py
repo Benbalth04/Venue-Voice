@@ -26,6 +26,8 @@ def test_trial_started_on_subscription_created_trialing():
     assert jobs[0].template == "trial_started"
     assert jobs[0].context.get("plan_name") == "Pro"
     assert jobs[0].context.get("billing_interval") == "Monthly"
+    assert jobs[0].context.get("trial_end_unix") == 1_700_000_000
+    assert jobs[0].context.get("current_period_end_unix") == 1_701_000_000
 
 
 def test_payment_retrying_when_next_payment_attempt_set():
@@ -45,6 +47,7 @@ def test_payment_retrying_when_next_payment_attempt_set():
     )
     assert len(jobs) == 1
     assert jobs[0].template == "payment_retrying"
+    assert jobs[0].context.get("next_retry_unix") == 1_700_000_100
 
 
 def test_plan_upgraded_when_unit_amount_increases():
@@ -83,6 +86,7 @@ def test_plan_upgraded_when_unit_amount_increases():
     )
     assert len(jobs) == 1
     assert jobs[0].template == "plan_upgraded"
+    assert jobs[0].context.get("current_period_end_unix") == 1_701_000_000
 
 
 def test_plan_name_from_expanded_product_when_no_nickname():
@@ -107,6 +111,47 @@ def test_plan_name_from_expanded_product_when_no_nickname():
     jobs = map_stripe_event(_evt("customer.subscription.created", sub))
     assert jobs[0].context.get("plan_name") == "Venue Voice Growth"
     assert jobs[0].context.get("billing_interval") == "Yearly"
+    assert jobs[0].context.get("trial_end_unix") == 1_700_000_000
+    assert jobs[0].context.get("current_period_end_unix") == 1_701_000_000
+
+
+def test_subscription_canceled_includes_access_until_unix():
+    sub = {
+        "id": "sub_1",
+        "status": "active",
+        "customer": "cus_1",
+        "cancel_at_period_end": True,
+        "current_period_end": 1_701_000_000,
+        "items": {"data": [{"price": {"nickname": "Pro", "recurring": {"interval": "month"}}}]},
+    }
+    prev = {"cancel_at_period_end": False}
+    jobs = map_stripe_event(
+        _evt("customer.subscription.updated", sub, prev=prev),
+        subscription=sub,
+    )
+    assert len(jobs) == 1
+    assert jobs[0].template == "subscription_canceled"
+    assert jobs[0].context.get("access_until_unix") == 1_701_000_000
+    assert "access_until_display" not in jobs[0].context
+
+
+def test_subscription_canceled_falls_back_to_cancel_at_timestamp():
+    sub = {
+        "id": "sub_1",
+        "status": "active",
+        "customer": "cus_1",
+        "cancel_at_period_end": True,
+        "current_period_end": None,
+        "cancel_at": 1_702_000_000,
+        "items": {"data": [{"price": {"nickname": "Pro", "recurring": {"interval": "month"}}}]},
+    }
+    prev = {"cancel_at_period_end": False}
+    jobs = map_stripe_event(
+        _evt("customer.subscription.updated", sub, prev=prev),
+        subscription=sub,
+    )
+    assert len(jobs) == 1
+    assert jobs[0].context.get("access_until_unix") == 1_702_000_000
 
 
 def test_charge_refunded():

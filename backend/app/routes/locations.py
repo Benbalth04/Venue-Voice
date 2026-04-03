@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from ..core.errors.exceptions import ConflictError, NotFoundError, StaleObjectError, ValidationError
 
 from ..auth.jwt import get_current_user
+from ..auth.plan_enforcement import assert_can_activate_location
 from ..auth.subscription import require_active_subscription
 from ..auth.user_timezone import format_dt_for_user, get_user_zoneinfo
 from ..db.postgres import get_db_connection
@@ -166,7 +167,7 @@ def create_location(
     loc = LocationORM(
         company_id=company.id,
         name=name,
-        is_active=True,
+        is_active=False,
         state=payload.state,
         country=payload.country,
         google_business_url=payload.google_business_url,
@@ -269,6 +270,13 @@ def update_location(
 ):
     company = _get_company(user, db)
     loc = _get_location_or_404(location_id, company.id, db)
+
+    if (
+        "is_active" in payload.model_fields_set
+        and payload.is_active is True
+        and not loc.is_active
+    ):
+        assert_can_activate_location(db, company.id, user)
 
     update_values: dict = {"updated_at": func.now()}
 

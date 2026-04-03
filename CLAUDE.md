@@ -12,7 +12,7 @@ Venue Voice is a QR-based customer feedback platform for physical venues. Custom
 ```bash
 docker compose up
 ```
-This starts PostgreSQL (port 5432), FastAPI backend (port 5000), and Next.js frontend (port 3000).
+This starts PostgreSQL (port 5432), Redis (port 6379), FastAPI backend (port 5000), and Next.js frontend (port 3000).
 
 ### Frontend only (outside Docker)
 ```bash
@@ -27,6 +27,15 @@ npm run lint     # ESLint
 cd backend
 uvicorn app.main:app --reload --port 5000
 ```
+
+### Backend tests
+```bash
+cd backend
+pytest                                      # Run all tests
+pytest tests/test_rule_service.py           # Run a single test file
+```
+
+Tests live in `backend/tests/`. There are no frontend tests.
 
 ### Database
 Schema lives entirely in `database/init.sql` — no active migrations (Alembic was removed). To reset the database, restart the `database` Docker service with the volume removed.
@@ -109,3 +118,46 @@ Backend reads from `.env`. Frontend env vars must be prefixed `NEXT_PUBLIC_` and
 - Soft deletes via `deleted_at` timestamp (not hard deletes)
 - JSONB used for flexible config: `survey_versions.content`, `questions.config`, `flow_nodes.config`
 - All ORM models are in the single file `backend/app/models/postgres_model.py`
+
+### Flow Execution Engine
+
+Flows are directed acyclic graphs (DAGs) stored as a tree of `flow_nodes`. Three node types:
+- **`rule`** — evaluates a condition
+- **`branch`** — routes to true/false children based on rule evaluation (`match_type`: "any"/"all", `negate` flag)
+- **`action`** — terminal node; performs redirect, sends email, or requests a review
+
+Execution (`flow_service.py → _evaluate_single_flow`):
+1. Builds node tree with parent-child relationships
+2. Builds response context from survey answers + AI analysis
+3. Traverses tree, evaluating branch conditions
+4. Collects all triggered actions and persists a `FlowRun` + `FlowRunAction` audit trail
+
+Key constraints: each flow must have exactly one root node; nodes are persisted in preorder (parent before child) to satisfy FK constraints. Each `LocationSurvey` can be assigned to at most one flow.
+
+### Background Tasks
+
+APScheduler runs inside the FastAPI process (started in the lifespan hook):
+- **Email reconciliation** — every 5 minutes; retries pending Resend emails
+- **Stripe reconciliation** — daily at 14:00 UTC; syncs subscription status
+
+Flow execution is async: `execute_flows_for_response()` dispatches either `run_flow_background()` (no AI) or `run_ai_then_flow_background()` (OpenAI sentiment first, then flow).
+
+### Error Handling
+
+Centralized error hierarchy in `backend/app/core/errors/exceptions.py`. All errors extend `AppError` (category, code, message, HTTP status, details) and are converted to a consistent JSON shape by `app_error_handler`.
+
+**Optimistic concurrency**: update requests include `updated_at`; backend raises `StaleObjectError` (409) if the row has been modified since. The frontend normalizes all API errors via `normalizeApiError()` in `lib/api/client.ts`.
+
+### Subscription Enforcement
+
+The `require_active_subscription` FastAPI dependency (in `auth/subscription.py`) is applied to all protected routes and raises 403 when no active Stripe subscription exists. Public routes (`/survey-public`, `/q`, `/stripe-webhook`) are exempt.
+
+### LocationSurvey Status Derivation
+
+A `LocationSurvey` status is computed from four independent factors: `location_survey.is_active`, the `start_date`/`end_date` window, the linked `survey.status` (must be `active`), and `location.is_active`. This logic lives in `location_survey_service.py → derive_location_survey_status()`. QR status (`qr_status`) is tracked separately from assignment status.
+
+### Integrations
+- **Email**: Resend API (`RESEND_API_KEY`). Email delivery is tracked as `EmailEvent` rows (pending → sent) with retry logic.
+- **Payments**: Stripe with three plan tiers (Starter / Growth / Pro), each with monthly + yearly price IDs. Webhook endpoint at `/api/v1/stripe-webhook` uses `Stripe-Signature` header instead of JWT.
+- **AI**: OpenAI (`gpt-4o-mini` by default via `OPENAI_SENTIMENT_MODEL`) for sentiment analysis; results stored in `ai_analysis` table and used as rule conditions.
+- **QR generation**: `segno` + `cairosvg`; assets uploaded to Supabase Storage.

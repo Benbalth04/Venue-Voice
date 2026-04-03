@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState, Suspense } from "react";
 import { RefreshCw } from "lucide-react";
 import { LoadingBlock } from "@/components/ui/LoadingSpinner";
 import { supabase } from "@/lib/supabase/client";
-import { fetchAnalyticsFilters, fetchSurveysList, type AnalyticsFilterOption, type SurveyListItem } from "@/lib/api/client";
+import { fetchAnalyticsFilters, fetchSubscription, fetchSurveysList, type AnalyticsFilterOption, type SurveyListItem } from "@/lib/api/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { DEFAULT_USER_TIMEZONE } from "@/lib/timezone/australia";
 import type { FilterState, SurveyDashboardResponse } from "@/lib/dashboard/types";
@@ -60,6 +60,7 @@ function SurveyDashboardInner() {
   const [surveys, setSurveys] = useState<SurveyListItem[]>([]);
   const [locations, setLocations] = useState<AnalyticsFilterOption[]>([]);
   const [qrCodes, setQrCodes] = useState<AnalyticsFilterOption[]>([]);
+  const [canExpandCharts, setCanExpandCharts] = useState(true);
   const [metaLoading, setMetaLoading] = useState(true);
 
   const [generated, setGenerated] = useState<string | null>(filters.surveyId);
@@ -74,14 +75,16 @@ function SurveyDashboardInner() {
     getToken().then(async (token) => {
       if (!token || !mounted) return;
       try {
-        const [surveyList, filterOpts] = await Promise.all([
+        const [surveyList, filterOpts, subscription] = await Promise.all([
           fetchSurveysList(token),
           fetchAnalyticsFilters(token),
+          fetchSubscription(token),
         ]);
         if (!mounted) return;
         setSurveys(surveyList);
         setLocations(filterOpts.locations);
         setQrCodes(filterOpts.qr_codes);
+        setCanExpandCharts(subscription.plan_limits?.can_expand_charts ?? true);
       } catch {
         // Non-critical
       } finally {
@@ -213,6 +216,7 @@ function SurveyDashboardInner() {
               onExpandScanCompletion={() =>
                 handleExpandChart({ kind: "engagement", subChart: "scan_completion" }, "Scans vs Completions")
               }
+              canExpand={canExpandCharts}
             />
           )}
 
@@ -223,6 +227,7 @@ function SurveyDashboardInner() {
                   key={q.stable_question_id}
                   question={q}
                   onExpand={handleExpandChart}
+                  canExpand={canExpandCharts}
                 />
               ))}
             </div>

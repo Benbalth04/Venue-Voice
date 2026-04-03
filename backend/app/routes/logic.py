@@ -2,7 +2,7 @@ import logging
 import uuid
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -11,6 +11,8 @@ from ..auth.jwt import get_current_user
 from ..auth.subscription import require_active_subscription
 from ..auth.user_timezone import get_user_zoneinfo
 from ..core.errors.exceptions import NotFoundError, PermissionError, ValidationError
+from ..services.plan_policy import get_policy_for_subscription
+from ..services.stripe_service import get_subscription
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import Company as CompanyORM
 from ..models.postgres_model import Survey as SurveyORM
@@ -21,6 +23,7 @@ from ..schemas.pydantic_model import (
     CreateRule,
     DeleteRequest,
     FlowResponse,
+    FlowRunListResponse,
     FlowRunResponse,
     FlowTestRequest,
     FlowTestResponse,
@@ -246,7 +249,10 @@ def create_flow_route(
 ):
     survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
     company = _ensure_survey_access(db, current_user, survey_uuid)
-    return create_flow(db, company.id, survey_uuid, payload, user_tz)
+    sub = get_subscription(current_user, db)
+    policy = get_policy_for_subscription(sub)
+    plan_key = (sub.plan_display_name or "starter").strip().lower() if sub else "starter"
+    return create_flow(db, company.id, survey_uuid, payload, user_tz, policy=policy, plan_key=plan_key)
 
 
 @router.put("/surveys/{survey_id}/flows/{flow_id}", response_model=FlowResponse)
@@ -261,7 +267,10 @@ def update_flow_route(
     survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
     flow_uuid = _parse_uuid(flow_id, code="INVALID_FLOW_ID", label="flow ID")
     company = _ensure_survey_access(db, current_user, survey_uuid)
-    return update_flow(db, company.id, survey_uuid, flow_uuid, payload, user_tz)
+    sub = get_subscription(current_user, db)
+    policy = get_policy_for_subscription(sub)
+    plan_key = (sub.plan_display_name or "starter").strip().lower() if sub else "starter"
+    return update_flow(db, company.id, survey_uuid, flow_uuid, payload, user_tz, policy=policy, plan_key=plan_key)
 
 
 @router.patch("/surveys/{survey_id}/flows/{flow_id}/active", response_model=FlowResponse)
@@ -276,6 +285,9 @@ def set_flow_active_route(
     survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
     flow_uuid = _parse_uuid(flow_id, code="INVALID_FLOW_ID", label="flow ID")
     company = _ensure_survey_access(db, current_user, survey_uuid)
+    sub = get_subscription(current_user, db)
+    policy = get_policy_for_subscription(sub)
+    plan_key = (sub.plan_display_name or "starter").strip().lower() if sub else "starter"
     return set_flow_active(
         db,
         company.id,
@@ -284,6 +296,8 @@ def set_flow_active_route(
         is_active=payload.is_active,
         updated_at=payload.updated_at,
         user_tz=user_tz,
+        policy=policy,
+        plan_key=plan_key,
     )
 
 
@@ -455,11 +469,13 @@ def delete_notification_group_route(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/flow-runs", response_model=list[FlowRunResponse])
+@router.get("/flow-runs", response_model=FlowRunListResponse)
 def list_flow_runs_route(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=20),
     current_user: UserORM = Depends(get_current_user),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
     company = _get_company_for_user(db, current_user)
-    return list_flow_runs(db, company.id, user_tz)
+    return list_flow_runs(db, company.id, user_tz, page=page, page_size=page_size)

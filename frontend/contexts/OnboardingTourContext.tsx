@@ -30,7 +30,7 @@ export const TOUR_STEPS: TourStep[] = [
     route: "/dashboard/distribution/assign_surveys",
     title: "Assign Surveys",
     description:
-      "Link a survey to a specific location to create a deployment. Each deployment gets its own QR codes and tracks responses independently.",
+      "Link a survey to a specific location to create a deployment. Each deployment can be allowed its own QR codes and tracks responses independently.",
   },
   {
     targetId: "tour-qr-codes",
@@ -65,7 +65,7 @@ export const TOUR_STEPS: TourStep[] = [
     route: "/dashboard/analytics/survey_dashboard",
     title: "Survey Dashboards",
     description:
-      "See aggregated analytics for all your surveys — response trends, rating distributions, sentiment breakdowns, and more — in one visual dashboard.",
+      "See aggregated analytics for all your surveys. Here you can view response trends, rating distributions, sentiment breakdowns, and more — all in one visual dashboard.",
   },
 ]
 

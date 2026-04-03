@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from ..auth.jwt import get_current_user
+from ..auth.plan_enforcement import require_feature
 from ..auth.subscription import require_active_subscription
 from ..auth.user_timezone import get_user_zoneinfo
 from ..db.postgres import get_db_connection
@@ -154,6 +155,7 @@ def analytics_responses(
 def analytics_response_detail(
     response_id: str,
     current_user: UserORM = Depends(get_current_user),
+    user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
     """Return full answer breakdown for a single survey response."""
@@ -163,7 +165,12 @@ def analytics_response_detail(
         raise ValidationError(code="INVALID_RESPONSE_ID", message="Invalid response_id UUID")
 
     try:
-        return get_response_detail(response_id=rid, user_id=current_user.id, db=db)
+        return get_response_detail(
+            response_id=rid,
+            user_id=current_user.id,
+            db=db,
+            user_tz=user_tz,
+        )
     except AppError:
         raise
     except Exception:
@@ -188,6 +195,7 @@ def analytics_response_photo_signed_url(
     question_id: str,
     current_user: UserORM = Depends(get_current_user),
     db: Session = Depends(get_db_connection),
+    _photo_feature: None = Depends(require_feature("photo_feedback")),
 ):
     """Return a short-lived Supabase signed URL for a survey response photo."""
     try:

@@ -3,18 +3,22 @@ from __future__ import annotations
 import logging
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import resend
 from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
+from ...core.datetime_user_tz import format_utc_instant_for_email_datetime
+from ...core.timezone_australia import effective_zoneinfo_for_stored_timezone
 from ...integrations.supabase_storage import (
     generate_photo_signed_url,
     get_supabase_service_client,
 )
 from ...models.postgres_model import (
+    Company as CompanyORM,
     EmailEvent as EmailEventORM,
     Flow as FlowORM,
     FlowRun as FlowRunORM,
@@ -27,8 +31,14 @@ from ...models.postgres_model import (
     SurveyResponseAnswer as SurveyResponseAnswerORM,
     SurveyResponsePhoto as SurveyResponsePhotoORM,
     SurveyVersion as SurveyVersionORM,
+    User as UserORM,
 )
-from .constants import EMAIL_CATEGORY_USER_NOTIFICATION
+from .constants import (
+    EMAIL_CATEGORY_USER_NOTIFICATION,
+    format_resend_from_header,
+    html_escape as _escape,
+)
+from .db_helpers import MAX_RETRIES, increment_email_retry, mark_email_events
 from .retry import call_with_exponential_backoff
 
 logger = logging.getLogger(__name__)
@@ -36,7 +46,6 @@ logger = logging.getLogger(__name__)
 _RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 _RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "")
 _FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "")
-_MAX_RETRIES = 3
 
 
 def send_emails_for_flow_run(flow_run_id: uuid.UUID, db: Session) -> None:
@@ -56,7 +65,7 @@ def send_emails_for_flow_run(flow_run_id: uuid.UUID, db: Session) -> None:
             EmailEventORM.flow_run_id == flow_run_id,
             EmailEventORM.event_category == EMAIL_CATEGORY_USER_NOTIFICATION,
             EmailEventORM.status == "pending",
-            EmailEventORM.retry_count < _MAX_RETRIES,
+            EmailEventORM.retry_count < MAX_RETRIES,
         )
         .values(status="sending")
         .returning(EmailEventORM.id, EmailEventORM.recipient_email)
@@ -72,20 +81,20 @@ def send_emails_for_flow_run(flow_run_id: uuid.UUID, db: Session) -> None:
     recipient_emails: list[str] = [row[1] for row in rows if row[1]]
 
     if not recipient_emails:
-        _mark_events(db, event_ids, status="failed_permanent", error="No valid recipient addresses")
+        mark_email_events(db, event_ids, status="failed_permanent", error="No valid recipient addresses")
         return
 
     try:
         html = _build_email_for_flow_run(flow_run_id, db)
         subject, flow_name = _get_subject(flow_run_id, db)
         _send_via_resend(recipient_emails, subject, html)
-        _mark_events(db, event_ids, status="sent", sent_at=datetime.utcnow())
+        mark_email_events(db, event_ids, status="sent", sent_at=datetime.now(timezone.utc))
         logger.info(
             "Email sent for flow_run_id=%s to %d recipient(s)", flow_run_id, len(recipient_emails)
         )
     except Exception as exc:
         logger.exception("Failed to send email for flow_run_id=%s", flow_run_id)
-        _increment_retry_and_requeue(db, event_ids, error=str(exc))
+        increment_email_retry(db, event_ids, error=str(exc))
 
 
 def reconcile_pending_emails(db: Session) -> None:
@@ -95,7 +104,7 @@ def reconcile_pending_emails(db: Session) -> None:
         .filter(
             EmailEventORM.event_category == EMAIL_CATEGORY_USER_NOTIFICATION,
             EmailEventORM.status == "pending",
-            EmailEventORM.retry_count < _MAX_RETRIES,
+            EmailEventORM.retry_count < MAX_RETRIES,
             EmailEventORM.flow_run_id.isnot(None),
         )
         .distinct()
@@ -132,6 +141,15 @@ def _build_email_for_flow_run(flow_run_id: uuid.UUID, db: Session) -> str:
     qr_title = "Unknown QR Code"
     submitted_at: datetime | None = None
     answers: list[dict[str, Any]] = []
+
+    # One BCC email for all recipients: use company owner timezone (not per-recipient).
+    user_tz = effective_zoneinfo_for_stored_timezone(None)
+    if flow_run:
+        company = db.query(CompanyORM).filter_by(id=flow_run.company_id).first()
+        if company:
+            owner = db.query(UserORM).filter_by(id=company.owner_user_id).first()
+            if owner:
+                user_tz = effective_zoneinfo_for_stored_timezone(owner.timezone)
 
     if flow_run:
         flow = db.query(FlowORM).filter_by(id=flow_run.flow_id).first()
@@ -173,6 +191,7 @@ def _build_email_for_flow_run(flow_run_id: uuid.UUID, db: Session) -> str:
         location_name=location_name,
         qr_title=qr_title,
         submitted_at=submitted_at,
+        submitted_at_tz=user_tz,
         answers=answers,
         view_url=view_url,
     )
@@ -276,9 +295,10 @@ def _send_via_resend(recipient_emails: list[str], subject: str, html: str) -> No
 
     def _send() -> None:
         resend.api_key = _RESEND_API_KEY
+        from_header = format_resend_from_header(_RESEND_FROM_EMAIL)
         params: resend.Emails.SendParams = {
-            "from": _RESEND_FROM_EMAIL,
-            "to": [_RESEND_FROM_EMAIL],
+            "from": from_header,
+            "to": [from_header],
             "bcc": recipient_emails,
             "subject": subject,
             "html": html,
@@ -288,43 +308,6 @@ def _send_via_resend(recipient_emails: list[str], subject: str, html: str) -> No
     call_with_exponential_backoff(_send, operation_name="Resend flow alert email")
 
 
-def _mark_events(
-    db: Session,
-    event_ids: list[uuid.UUID],
-    *,
-    status: str,
-    sent_at: datetime | None = None,
-    error: str | None = None,
-) -> None:
-    values: dict[str, Any] = {"status": status}
-    if sent_at is not None:
-        values["sent_at"] = sent_at
-    if error is not None:
-        values["error_message"] = error[:2000]
-    db.execute(
-        sa_update(EmailEventORM)
-        .where(EmailEventORM.id.in_(event_ids))
-        .values(**values)
-    )
-    db.commit()
-
-
-def _increment_retry_and_requeue(
-    db: Session, event_ids: list[uuid.UUID], *, error: str
-) -> None:
-    events = db.query(EmailEventORM).filter(EmailEventORM.id.in_(event_ids)).all()
-    for ev in events:
-        new_count = (ev.retry_count or 0) + 1
-        ev.retry_count = new_count
-        ev.error_message = error[:2000]
-        ev.status = "pending" if new_count < _MAX_RETRIES else "failed_permanent"
-        if ev.status == "failed_permanent":
-            logger.warning(
-                "Email event %s permanently failed after %d retries", ev.id, new_count
-            )
-    db.commit()
-
-
 def _build_email_html(
     *,
     flow_name: str,
@@ -332,12 +315,15 @@ def _build_email_html(
     location_name: str,
     qr_title: str,
     submitted_at: datetime | None,
+    submitted_at_tz: ZoneInfo,
     answers: list[dict[str, Any]],
     view_url: str,
 ) -> str:
     submitted_str = (
-        submitted_at.strftime("%d %b %Y, %H:%M UTC") if submitted_at else "—"
-    )
+        format_utc_instant_for_email_datetime(submitted_at, submitted_at_tz)
+        if submitted_at
+        else None
+    ) or "—"
 
     context_rows = "".join(
         f"""
@@ -467,14 +453,3 @@ def _build_email_html(
 </html>"""
 
 
-def _escape(value: Any) -> str:
-    if value is None:
-        return "—"
-    s = str(value)
-    return (
-        s.replace("&", "&amp;")
-         .replace("<", "&lt;")
-         .replace(">", "&gt;")
-         .replace('"', "&quot;")
-         .replace("'", "&#x27;")
-    )

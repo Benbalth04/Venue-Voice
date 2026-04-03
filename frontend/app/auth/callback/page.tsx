@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { supabase } from "@/lib/supabase/client"
 import { confirmEmail, fetchUser } from "@/lib/api/client"
+import { useAuth } from "@/contexts/AuthContext"
 import { Card } from "@/components/ui/card"
 
 type CallbackState = "loading" | "error" | "success"
@@ -31,6 +32,7 @@ function decodeJwtSub(accessToken: string): string | null {
 
 export default function AuthCallbackPage() {
   const router = useRouter()
+  const { refreshUser } = useAuth()
   const [state, setState] = useState<CallbackState>("loading")
   const [errorMessage, setErrorMessage] = useState<string>("")
 
@@ -111,6 +113,10 @@ export default function AuthCallbackPage() {
 
       try {
         await confirmEmail(finalSession.access_token)
+        // Refresh AuthContext so EmailVerifiedGuard sees email_verified=true
+        // before we navigate away. Without this, the stale context value
+        // (fetched before confirmEmail ran) bounces the user back to /verify-email.
+        await refreshUser()
         const me = await fetchUser(finalSession.access_token)
         setState("success")
         router.replace(me.onboarding_complete ? "/dashboard" : "/onboarding")
@@ -121,7 +127,7 @@ export default function AuthCallbackPage() {
     }
 
     void handleCallback()
-  }, [router])
+  }, [router, refreshUser])
 
   if (state === "loading") {
     return (

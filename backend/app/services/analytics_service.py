@@ -46,6 +46,7 @@ from ..schemas.pydantic_model import (
 from ..core.errors.app_error import AppError
 from ..core.errors.error_category import ErrorCategory
 from ..core.errors.exceptions import NotFoundError, PermissionError, ValidationError
+from ..services.flow_service import list_flow_runs_for_response
 
 _VALID_SORT_COLUMNS = {
     "scan_time", "time_to_complete", "questions_answered",
@@ -400,7 +401,11 @@ def _answer_value_from_norm_answer(a: SurveyResponseAnswerORM, *, has_photo: boo
 
 
 def get_response_detail(
-    *, response_id: uuid.UUID, user_id: uuid.UUID, db: Session
+    *,
+    response_id: uuid.UUID,
+    user_id: uuid.UUID,
+    db: Session,
+    user_tz: ZoneInfo,
 ) -> AnalyticsResponseDetail:
     company = _get_company_or_403(user_id, db)
 
@@ -614,10 +619,13 @@ def get_response_detail(
                 )
             )
 
+    flow_run_payloads = list_flow_runs_for_response(db, company.id, response_id, user_tz)
+
     return AnalyticsResponseDetail(
         response_id=resp.id,
         survey_name=survey_name,
         answers=answer_details,
+        flow_runs=flow_run_payloads,
     )
 
 

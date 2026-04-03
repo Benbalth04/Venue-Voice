@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import resend
@@ -13,14 +12,19 @@ from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
 from ...models.postgres_model import EmailEvent as EmailEventORM
-from .constants import EMAIL_CATEGORY_STRIPE_BILLING, STRIPE_BCC_EMAIL, STRIPE_FROM_EMAIL
+from .constants import (
+    EMAIL_CATEGORY_STRIPE_BILLING,
+    STRIPE_BCC_EMAIL,
+    STRIPE_FROM_EMAIL,
+    format_resend_from_header,
+)
+from .db_helpers import MAX_RETRIES, increment_email_retry, mark_email_events
 from .retry import call_with_exponential_backoff
 from .stripe_email_templates import ALL_STRIPE_TEMPLATES, render_stripe_template
 
 logger = logging.getLogger(__name__)
 
 _RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
-_MAX_RETRIES = 3
 
 
 def send_stripe_email(
@@ -46,7 +50,7 @@ def send_stripe_email(
     def _send() -> None:
         resend.api_key = _RESEND_API_KEY
         params: resend.Emails.SendParams = {
-            "from": STRIPE_FROM_EMAIL,
+            "from": format_resend_from_header(STRIPE_FROM_EMAIL),
             "to": [to_email],
             "bcc": [STRIPE_BCC_EMAIL],
             "subject": subject,
@@ -69,7 +73,7 @@ def process_pending_stripe_emails(db: Session, *, limit: int = 50) -> None:
         .filter(
             EmailEventORM.event_category == EMAIL_CATEGORY_STRIPE_BILLING,
             EmailEventORM.status == "pending",
-            EmailEventORM.retry_count < _MAX_RETRIES,
+            EmailEventORM.retry_count < MAX_RETRIES,
             EmailEventORM.flow_run_id.is_(None),
         )
         .limit(limit)
@@ -101,13 +105,13 @@ def process_pending_stripe_emails(db: Session, *, limit: int = 50) -> None:
     for row in rows:
         eid, recipient, template, ctx = row[0], row[1], row[2], row[3] or {}
         if not recipient or not template:
-            _mark_stripe_events(
+            mark_email_events(
                 db, [eid], status="failed_permanent", error="Missing recipient or template_name"
             )
             continue
         try:
             send_stripe_email(to_email=recipient, template=template, context=dict(ctx))
-            _mark_stripe_events(db, [eid], status="sent", sent_at=datetime.utcnow())
+            mark_email_events(db, [eid], status="sent", sent_at=datetime.now(timezone.utc))
             processed += 1
             logger.info("Stripe email queue processed email_event_id=%s template=%s", eid, template)
         except Exception as exc:
@@ -116,7 +120,7 @@ def process_pending_stripe_emails(db: Session, *, limit: int = 50) -> None:
                 eid,
                 template,
             )
-            _increment_stripe_retry(db, [eid], error=str(exc))
+            increment_email_retry(db, [eid], error=str(exc))
 
     if processed:
         logger.info("Stripe email queue: sent %d message(s)", processed)
@@ -128,36 +132,3 @@ def reconcile_stripe_billing_emails(db: Session) -> None:
         process_pending_stripe_emails(db, limit=100)
     except Exception:
         logger.exception("reconcile_stripe_billing_emails failed")
-
-
-def _mark_stripe_events(
-    db: Session,
-    event_ids: list[uuid.UUID],
-    *,
-    status: str,
-    sent_at: datetime | None = None,
-    error: str | None = None,
-) -> None:
-    values: dict[str, Any] = {"status": status}
-    if sent_at is not None:
-        values["sent_at"] = sent_at
-    if error is not None:
-        values["error_message"] = error[:2000]
-    db.execute(sa_update(EmailEventORM).where(EmailEventORM.id.in_(event_ids)).values(**values))
-    db.commit()
-
-
-def _increment_stripe_retry(db: Session, event_ids: list[uuid.UUID], *, error: str) -> None:
-    events = db.query(EmailEventORM).filter(EmailEventORM.id.in_(event_ids)).all()
-    for ev in events:
-        new_count = (ev.retry_count or 0) + 1
-        ev.retry_count = new_count
-        ev.error_message = error[:2000]
-        ev.status = "pending" if new_count < _MAX_RETRIES else "failed_permanent"
-        if ev.status == "failed_permanent":
-            logger.warning(
-                "Stripe email event %s permanently failed after %d retries",
-                ev.id,
-                new_count,
-            )
-    db.commit()

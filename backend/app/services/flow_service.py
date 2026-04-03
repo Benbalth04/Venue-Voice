@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from ..core.datetime_user_tz import to_iso8601_zoned
@@ -16,7 +17,9 @@ from ..core.errors.exceptions import (
     FlowExecutionError,
     NotFoundError,
     StaleObjectError,
+    SubscriptionLimitError,
     ValidationError,
+    suggest_upgrade_plan,
 )
 from ..db.postgres import SessionLocal
 from ..services.email.constants import EMAIL_CATEGORY_USER_NOTIFICATION
@@ -40,6 +43,7 @@ from ..models.postgres_model import (
     EmailEvent as EmailEventORM,
 )
 from ..schemas.pydantic_model import (
+    FLOW_RULE_DUPLICATE_ON_PATH_MESSAGE,
     FlowActionType,
     FlowBranchMatchType,
     FlowBranchType,
@@ -47,6 +51,7 @@ from ..schemas.pydantic_model import (
     FlowNodeType,
     FlowRedirectTargetType,
     RuleConditionType,
+    assert_flow_rule_survey_ids_unique_per_path,
 )
 from .rule_service import (
     build_response_contexts_for_mock,
@@ -313,12 +318,50 @@ def _preorder_flow_nodes_for_persist(nodes: list) -> list:
     return ordered
 
 
+_MANAGE_SUBSCRIPTION_PATH = "/dashboard/settings/manage-subscription"
+
+
+def _assert_flow_rule_ids_unique_per_root_path(nodes: list) -> None:
+    """Same path rule check as CreateFlow (id resolution must match validate_structure)."""
+    roots = [n for n in nodes if n.parent_id is None]
+    if len(roots) != 1:
+        return
+    node_key_map: dict[uuid.UUID, Any] = {}
+    for index, node in enumerate(nodes):
+        node_id = node.id or uuid.uuid5(uuid.NAMESPACE_URL, f"flow-node-{index}")
+        node_key_map[node_id] = node
+    children_by_parent: dict[uuid.UUID | None, list[tuple[uuid.UUID, Any]]] = {}
+    for index, node in enumerate(nodes):
+        node_id = node.id or uuid.uuid5(uuid.NAMESPACE_URL, f"flow-node-{index}")
+        children_by_parent.setdefault(node.parent_id, []).append((node_id, node))
+    for ch in children_by_parent.values():
+        ch.sort(key=lambda item: item[1].position)
+    root_id = roots[0].id or uuid.uuid5(uuid.NAMESPACE_URL, "flow-root")
+    try:
+        assert_flow_rule_survey_ids_unique_per_path(node_key_map, children_by_parent, root_id)
+    except ValueError as exc:
+        raise ValidationError(
+            code="FLOW_RULE_DUPLICATE_ON_PATH",
+            message=FLOW_RULE_DUPLICATE_ON_PATH_MESSAGE,
+            status_code=422,
+        ) from exc
+
+
 def _validate_nodes(
     db: Session,
     company_id: uuid.UUID,
     survey_id: uuid.UUID,
     nodes: list,
 ) -> None:
+    if sum(1 for node in nodes if node.node_type == FlowNodeType.action) < 1:
+        raise ValidationError(
+            code="FLOW_REQUIRES_ACTION",
+            message="Flows must include at least one action step (for example, send email or redirect).",
+            status_code=422,
+        )
+
+    _assert_flow_rule_ids_unique_per_root_path(nodes)
+
     rule_ids = sorted({node.rule_id for node in nodes if node.rule_id is not None})
     branch_rule_ids: list[uuid.UUID] = []
     if rule_ids:
@@ -449,12 +492,50 @@ def list_company_flows(db: Session, company_id: uuid.UUID, user_tz: ZoneInfo) ->
 
 
 def create_flow(
-    db: Session, company_id: uuid.UUID, survey_id: uuid.UUID, payload, user_tz: ZoneInfo
+    db: Session, company_id: uuid.UUID, survey_id: uuid.UUID, payload, user_tz: ZoneInfo,
+    *, policy=None, plan_key: str | None = None,
 ) -> dict[str, Any]:
     _get_survey_or_404(db, company_id, survey_id)
     _ensure_unique_flow_name(db, company_id, payload.name)
     _validate_location_survey_ids(db, company_id, survey_id, payload.location_survey_ids)
     _validate_nodes(db, company_id, survey_id, payload.nodes)
+
+    if policy is not None:
+        # Active flow limit — only applies when the new flow starts active
+        if payload.is_active:
+            from ..auth.plan_enforcement import acquire_company_resource_lock, count_active_flows
+            acquire_company_resource_lock(db, company_id, "active_flows")
+            current = count_active_flows(db, company_id)
+            if policy.max_active_flows != -1 and current >= policy.max_active_flows:
+                raise SubscriptionLimitError(
+                    resource="active_flows",
+                    limit=policy.max_active_flows,
+                    current=current,
+                    is_over_limit=(current > policy.max_active_flows),
+                    plan=plan_key,
+                    upgrade_to=suggest_upgrade_plan(plan_key),
+                )
+
+        # Branch node limit per flow
+        if policy.max_branch_nodes_per_flow != -1:
+            branch_count = sum(
+                1 for n in payload.nodes
+                if n.node_type.value == "branch"
+            )
+            if branch_count > policy.max_branch_nodes_per_flow:
+                lim = policy.max_branch_nodes_per_flow
+                raise SubscriptionLimitError(
+                    resource="branch_nodes_per_flow",
+                    limit=lim,
+                    current=branch_count,
+                    message=(
+                        f"This flow has {branch_count} branch steps, but your plan allows at most {lim} per flow. "
+                        "Remove branch steps or upgrade your plan."
+                    ),
+                    plan=plan_key,
+                    upgrade_to=suggest_upgrade_plan(plan_key),
+                    extra_details={"manage_subscription_path": _MANAGE_SUBSCRIPTION_PATH},
+                )
 
     flow = FlowORM(
         company_id=company_id,
@@ -496,8 +577,24 @@ def set_flow_active(
     is_active: bool,
     updated_at,
     user_tz: ZoneInfo,
+    policy=None,
+    plan_key: str | None = None,
 ) -> dict[str, Any]:
     flow = _get_flow_or_404(db, company_id, survey_id, flow_id)
+
+    if is_active and policy is not None:
+        from ..auth.plan_enforcement import acquire_company_resource_lock, count_active_flows
+        acquire_company_resource_lock(db, company_id, "active_flows")
+        current = count_active_flows(db, company_id)
+        if policy.max_active_flows != -1 and current >= policy.max_active_flows:
+            raise SubscriptionLimitError(
+                resource="active_flows",
+                limit=policy.max_active_flows,
+                current=current,
+                is_over_limit=(current > policy.max_active_flows),
+                plan=plan_key,
+                upgrade_to=suggest_upgrade_plan(plan_key),
+            )
 
     rowcount = (
         db.query(FlowORM)
@@ -521,6 +618,7 @@ def update_flow(
     flow_id: uuid.UUID,
     payload,
     user_tz: ZoneInfo,
+    *, policy=None, plan_key: str | None = None,
 ) -> dict[str, Any]:
     flow = _get_flow_or_404(db, company_id, survey_id, flow_id)
     _ensure_unique_flow_name(db, company_id, payload.name, exclude_flow_id=flow.id)
@@ -532,6 +630,30 @@ def update_flow(
         exclude_flow_id=flow.id,
     )
     _validate_nodes(db, company_id, survey_id, payload.nodes)
+
+    # Branch node limit — applies on edit because user could add branch nodes.
+    # We always block if the submitted node count exceeds the plan limit, whether
+    # the account is exactly at-limit (normal) or over-limit (post-downgrade).
+    if policy is not None and policy.max_branch_nodes_per_flow != -1:
+        branch_count = sum(
+            1 for n in payload.nodes
+            if n.node_type.value == "branch"
+        )
+        if branch_count > policy.max_branch_nodes_per_flow:
+            lim = policy.max_branch_nodes_per_flow
+            raise SubscriptionLimitError(
+                resource="branch_nodes_per_flow",
+                limit=lim,
+                current=branch_count,
+                is_over_limit=True,  # edit path: user is actively trying to worsen a violation
+                plan=plan_key,
+                upgrade_to=suggest_upgrade_plan(plan_key),
+                message=(
+                    f"This flow has {branch_count} branch steps, but your plan allows at most {lim} per flow. "
+                    "Remove branch steps or upgrade your plan."
+                ),
+                extra_details={"manage_subscription_path": _MANAGE_SUBSCRIPTION_PATH},
+            )
 
     rowcount = (
         db.query(FlowORM)
@@ -1307,7 +1429,95 @@ def test_flow(
     }
 
 
-def list_flow_runs(db: Session, company_id: uuid.UUID, user_tz: ZoneInfo) -> list[dict[str, Any]]:
+def _flow_run_to_response_dict(
+    run: FlowRunORM,
+    flow: FlowORM,
+    survey: SurveyORM,
+    location: LocationORM | None,
+    qr: QRCodeORM | None,
+    user_tz: ZoneInfo,
+) -> dict[str, Any]:
+    trace = run.execution_trace if isinstance(run.execution_trace, dict) else {}
+    return {
+        "id": run.id,
+        "company_id": run.company_id,
+        "flow_id": run.flow_id,
+        "flow_name": flow.name,
+        "survey_id": survey.id,
+        "survey_name": survey.name,
+        "response_id": run.response_id,
+        "success": run.success,
+        "location_survey_id": run.location_survey_id,
+        "location_id": location.id if location else None,
+        "location_name": location.name if location else None,
+        "qr_code_id": run.qr_code_id,
+        "qr_code_title": qr.title if qr else None,
+        "actions": [
+            {
+                "id": a.id,
+                "action_type": a.action_type,
+                "config": a.config,
+                "created_at": to_iso8601_zoned(a.created_at, user_tz) or "",
+            }
+            for a in sorted(run.flow_run_actions, key=lambda a: a.created_at)
+        ],
+        "runtime_ms": int(trace.get("runtime_ms"))
+        if trace.get("runtime_ms") is not None
+        else None,
+        "execution_trace": trace,
+        "created_at": to_iso8601_zoned(run.created_at, user_tz) or "",
+    }
+
+
+def list_flow_runs_for_response(
+    db: Session,
+    company_id: uuid.UUID,
+    response_id: uuid.UUID,
+    user_tz: ZoneInfo,
+) -> list[dict[str, Any]]:
+    rows = (
+        db.query(FlowRunORM, FlowORM, SurveyORM, LocationORM, QRCodeORM)
+        .options(joinedload(FlowRunORM.flow_run_actions))
+        .join(FlowORM, FlowORM.id == FlowRunORM.flow_id)
+        .join(SurveyORM, SurveyORM.id == FlowORM.survey_id)
+        .outerjoin(LocationSurveyORM, LocationSurveyORM.id == FlowRunORM.location_survey_id)
+        .outerjoin(LocationORM, LocationORM.id == LocationSurveyORM.location_id)
+        .outerjoin(QRCodeORM, QRCodeORM.id == FlowRunORM.qr_code_id)
+        .filter(FlowRunORM.company_id == company_id)
+        .filter(FlowRunORM.response_id == response_id)
+        .order_by(FlowRunORM.created_at.desc(), FlowRunORM.id.desc())
+        .all()
+    )
+    return [
+        _flow_run_to_response_dict(run, flow, survey, location, qr, user_tz)
+        for run, flow, survey, location, qr in rows
+    ]
+
+
+def list_flow_runs(
+    db: Session,
+    company_id: uuid.UUID,
+    user_tz: ZoneInfo,
+    *,
+    page: int = 1,
+    page_size: int = 20,
+) -> dict[str, Any]:
+    if page < 1:
+        page = 1
+    if page_size < 1:
+        page_size = 20
+    if page_size > 20:
+        page_size = 20
+
+    total = (
+        db.query(func.count(FlowRunORM.id))
+        .select_from(FlowRunORM)
+        .filter(FlowRunORM.company_id == company_id)
+        .scalar()
+        or 0
+    )
+
+    offset = (page - 1) * page_size
     rows = (
         db.query(FlowRunORM, FlowORM, SurveyORM, LocationORM, QRCodeORM)
         .options(joinedload(FlowRunORM.flow_run_actions))
@@ -1318,38 +1528,15 @@ def list_flow_runs(db: Session, company_id: uuid.UUID, user_tz: ZoneInfo) -> lis
         .outerjoin(QRCodeORM, QRCodeORM.id == FlowRunORM.qr_code_id)
         .filter(FlowRunORM.company_id == company_id)
         .order_by(FlowRunORM.created_at.desc(), FlowRunORM.id.desc())
+        .offset(offset)
+        .limit(page_size)
         .all()
     )
-    return [
-        {
-            "id": run.id,
-            "company_id": run.company_id,
-            "flow_id": run.flow_id,
-            "flow_name": flow.name,
-            "survey_id": survey.id,
-            "survey_name": survey.name,
-            "response_id": run.response_id,
-            "success": run.success,
-            "location_survey_id": run.location_survey_id,
-            "location_id": location.id if location else None,
-            "location_name": location.name if location else None,
-            "qr_code_id": run.qr_code_id,
-            "qr_code_title": qr.title if qr else None,
-            "actions": [
-                {
-                    "id": a.id,
-                    "action_type": a.action_type,
-                    "config": a.config,
-                    "created_at": to_iso8601_zoned(a.created_at, user_tz) or "",
-                }
-                for a in sorted(run.flow_run_actions, key=lambda a: a.created_at)
-            ],
-            "runtime_ms": int(run.execution_trace.get("runtime_ms")) if isinstance(run.execution_trace, dict) and run.execution_trace.get("runtime_ms") is not None else None,
-            "execution_trace": run.execution_trace,
-            "created_at": to_iso8601_zoned(run.created_at, user_tz) or "",
-        }
+    items = [
+        _flow_run_to_response_dict(run, flow, survey, location, qr, user_tz)
         for run, flow, survey, location, qr in rows
     ]
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 def get_company_broken_flow_count(db: Session, company_id: uuid.UUID) -> int:

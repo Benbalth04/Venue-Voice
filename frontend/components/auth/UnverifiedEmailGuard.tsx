@@ -15,12 +15,17 @@ export function UnverifiedEmailGuard({ children }: { children: ReactNode }) {
     }
   }, [loading, user, router])
 
-  if (loading || !user) {
+  if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-zinc-50">
         Loading...
       </div>
     )
+  }
+
+  // No session yet (e.g. just signed up, pending email confirmation) — show the page.
+  if (!user) {
+    return children
   }
 
   if (user.email_verified) {

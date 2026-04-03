@@ -13,6 +13,7 @@ import type {
   TextStyle,
   YesNoSettings,
 } from "@/lib/survey/types"
+import { resolveQuestionTextAlign } from "@/lib/survey/alignment"
 import { StarQuestion } from "@/components/survey/StarQuestion"
 import { TextQuestion } from "@/components/survey/TextQuestion"
 import { PhotoQuestion } from "@/components/survey/PhotoQuestion"
@@ -169,23 +170,30 @@ function QuestionRenderer({
   onResponseChange: (questionId: string, next: SurveyResponseValue) => void
   showRequiredError?: boolean
 }) {
-  const align = question.contentAlign ?? surveyAlign
+  const align = resolveQuestionTextAlign(question, surveyAlign)
 
   const textColor = survey.theme.textColor ?? "#1E1E1E"
   return (
-    <div className="flex flex-col gap-3" style={{ textAlign: align }}>
+    <div className="flex flex-col gap-3">
       <div className="flex flex-col gap-1">
-        <div className="flex items-baseline gap-1">
-          <TextBlock content={question.title} align={align} textColor={textColor} />
+        <div className="w-full min-w-0" style={{ textAlign: align }}>
+          <TextBlock as="span" content={question.title} align={align} textColor={textColor} />
           {!question.optional && (
-            <span className="text-red-500" aria-label="required">*</span>
+            <span className="text-red-500" aria-label="required">
+              {" "}
+              *
+            </span>
           )}
         </div>
         {question.description ? (
-          <TextBlock content={question.description} muted align={align} textColor={textColor} />
+          <div className="w-full min-w-0">
+            <TextBlock content={question.description} muted align={align} textColor={textColor} />
+          </div>
         ) : null}
         {showRequiredError ? (
-          <p className="text-sm text-red-600">This question is required</p>
+          <p className="w-full text-sm text-red-600" style={{ textAlign: align }}>
+            This question is required
+          </p>
         ) : null}
       </div>
 
@@ -202,6 +210,7 @@ function QuestionRenderer({
       {question.type === "nps" && (
         <NpsQuestion
           settings={question.settings as NpsQuestionSettings}
+          primaryColor={survey.theme.primaryColor}
           value={response?.type === "nps" ? response.value : null}
           onChange={(v) => onResponseChange(question.id, { type: "nps", value: v ?? null })}
         />
@@ -263,17 +272,25 @@ function QuestionRenderer({
 
 function NpsQuestion({
   settings,
+  primaryColor,
   value,
   onChange,
 }: {
   settings: NpsQuestionSettings
+  primaryColor: string
   value: number | null
   onChange: (v: number | null) => void
 }) {
-  const selectedColor = settings.selected_colour ?? "#7C3AED"
+  const selectedColor = settings.selected_colour ?? primaryColor
+  const hoverBg = hexToRgba(selectedColor, 0.12)
   const count = Math.max(1, Math.min(10, settings.max_score ?? 10)) + 1
   const minLabel = settings.minLabel ?? settings.min_label ?? "Not likely"
   const maxLabel = settings.maxLabel ?? settings.max_label ?? "Extremely likely"
+
+  const unselectedStyle = {
+    ["--nps-accent" as string]: selectedColor,
+    ["--nps-hover-bg" as string]: hoverBg,
+  } as CSSProperties
 
   return (
     <div className="w-full max-w-full">
@@ -297,13 +314,13 @@ function NpsQuestion({
               style={
                 value === score
                   ? { borderColor: selectedColor, backgroundColor: selectedColor }
-                  : undefined
+                  : unselectedStyle
               }
               className={[
                 "flex min-h-9 min-w-0 w-full items-center justify-center rounded-lg border text-sm font-medium transition-colors",
                 value === score
                   ? "border-current text-white"
-                  : "border-zinc-200 bg-white text-zinc-700 hover:border-violet-300 hover:bg-zinc-50",
+                  : "border-zinc-200 bg-white text-zinc-700 hover:border-[color:var(--nps-accent)] hover:bg-[var(--nps-hover-bg)]",
               ].join(" ")}
             >
               {score}
@@ -313,6 +330,24 @@ function NpsQuestion({
       </div>
     </div>
   )
+}
+
+/** Lighten a hex colour to rgba for NPS / star hover fills. */
+function hexToRgba(hex: string, alpha: number): string {
+  const normalized = hex.replace("#", "").trim()
+  const full =
+    normalized.length === 3
+      ? normalized
+          .split("")
+          .map((c) => c + c)
+          .join("")
+      : normalized
+  if (full.length !== 6) return `rgba(124, 58, 237, ${alpha})`
+
+  const r = parseInt(full.slice(0, 2), 16)
+  const g = parseInt(full.slice(2, 4), 16)
+  const b = parseInt(full.slice(4, 6), 16)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
 function ChoiceQuestion({
@@ -418,16 +453,24 @@ function TextBlock({
   muted,
   align,
   textColor = "#1E1E1E",
+  as: Comp = "div",
 }: {
   content: TextContent
   muted?: boolean
   align: Align
   textColor?: string
+  as?: "div" | "span"
 }) {
   const style = getTextStyle(content.style)
+  const inline = Comp === "span"
   return (
-    <div
-      className={style.className}
+    <Comp
+      className={[
+        style.className,
+        inline ? "inline-block max-w-full align-baseline break-words" : "w-full min-w-0",
+      ]
+        .filter(Boolean)
+        .join(" ")}
       style={{
         ...style.style,
         textAlign: align,
@@ -436,7 +479,7 @@ function TextBlock({
       }}
     >
       {content.text}
-    </div>
+    </Comp>
   )
 }
 

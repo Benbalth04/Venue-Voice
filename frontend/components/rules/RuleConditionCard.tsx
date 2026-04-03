@@ -75,11 +75,11 @@ export function defaultOperatorForConditionType(ct: RuleConditionType): RuleOper
 }
 
 const NUMERIC_OPERATOR_OPTIONS: Array<{ value: RuleOperatorApi; label: string }> = [
-  { value: "gte", label: "at least (≥)" },
-  { value: "gt", label: "greater than (>)" },
-  { value: "eq", label: "equal to (=)" },
-  { value: "lte", label: "at most (≤)" },
-  { value: "lt", label: "less than (<)" },
+  { value: "gte", label: "at least" },
+  { value: "gt", label: "greater than" },
+  { value: "eq", label: "equal to" },
+  { value: "lte", label: "at most" },
+  { value: "lt", label: "less than" },
 ]
 
 const SENTIMENT_OPTIONS = [
@@ -307,7 +307,9 @@ export function RuleConditionCard({
           <div className={showOperator ? "grid gap-3 md:grid-cols-2" : undefined}>
             {showOperator && (
               <div>
-                <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Operator</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Operator</span>
+                </div>
                 <div className="mt-1">
                   <SingleSelectDropdown
                     options={NUMERIC_OPERATOR_OPTIONS}

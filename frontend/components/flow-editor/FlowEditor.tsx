@@ -2,7 +2,8 @@
 
 import "@xyflow/react/dist/style.css"
 
-import { useParams, useRouter, useSearchParams } from "next/navigation"
+import Link from "next/link"
+import { useParams, useRouter } from "next/navigation"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Background, ReactFlow, type Edge, type Node, type ReactFlowInstance } from "@xyflow/react"
 import { ArrowLeft, Loader2, RotateCcw, Save, X } from "lucide-react"
@@ -14,6 +15,7 @@ import { supabase } from "@/lib/supabase/client"
 import {
   createSurveyFlow,
   extractErrorMessage,
+  isNormalizedError,
   fetchFlow,
   fetchFlows,
   fetchLocationSurveys,
@@ -54,15 +56,15 @@ import { FlowTriggerInspector } from "./inspector/trigger-node"
 import type { DraftNode, FlowDraft, RuleSummary } from "./types"
 import { validateFlowDraft } from "./validateFlowDraft"
 
+const FLOW_EDITOR_HYDRATE_PREFIX = "vv_flow_editor_hydrate_"
+const FLOW_EDITOR_SAVE_NOTICE_KEY = "vv_flow_editor_save_notice"
+
 export function FlowEditor() {
   const params = useParams<{ flowId: string }>()
-  const searchParams = useSearchParams()
   const router = useRouter()
   const { confirm, ConfirmDialogRender } = useConfirm()
   const flowId = String(params.flowId)
   const isNew = flowId === "new"
-  const initialSurveyId = searchParams.get("surveyId") ?? ""
-  const initialName = searchParams.get("name") ?? ""
 
   const [surveys, setSurveys] = useState<SurveySummary[]>([])
   const [existingFlows, setExistingFlows] = useState<FlowResponse[]>([])
@@ -74,6 +76,7 @@ export function FlowEditor() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [errorSubscriptionHref, setErrorSubscriptionHref] = useState<string | null>(null)
   const [saveBanner, setSaveBanner] = useState<string | null>(null)
   const [savedSnapshot, setSavedSnapshot] = useState("")
   const [flowMissing, setFlowMissing] = useState(false)
@@ -84,11 +87,28 @@ export function FlowEditor() {
   const flowRef = useRef<ReactFlowInstance<Node, Edge> | null>(null)
   const hasFitView = useRef(false)
 
+  const clearEditorError = useCallback(() => {
+    setError(null)
+    setErrorSubscriptionHref(null)
+  }, [])
+
   async function getToken() {
     const {
       data: { session },
     } = await supabase.auth.getSession()
     return session?.access_token ?? null
+  }
+
+  function consumePendingSaveNotice() {
+    try {
+      const notice = sessionStorage.getItem(FLOW_EDITOR_SAVE_NOTICE_KEY)
+      if (notice) {
+        sessionStorage.removeItem(FLOW_EDITOR_SAVE_NOTICE_KEY)
+        setSaveBanner(notice)
+      }
+    } catch {
+      // ignore
+    }
   }
 
   async function loadSurveyContext(token: string, surveyId: string) {
@@ -128,13 +148,16 @@ export function FlowEditor() {
         }
 
         if (isNew) {
+          const sp = new URLSearchParams(window.location.search)
+          const initialSurveyId = sp.get("surveyId") ?? ""
+          const initialName = sp.get("name") ?? ""
           const resolvedSurveyId = initialSurveyId || surveyRows[0]?.id || ""
           await loadSurveyContext(token, resolvedSurveyId)
           const nextDraft: FlowDraft = {
             survey_id: resolvedSurveyId,
             name: initialName,
             description: "",
-            is_active: true,
+            is_active: false,
             location_survey_ids: [],
             nodes: [],
           }
@@ -142,12 +165,31 @@ export function FlowEditor() {
           setSavedSnapshot("")
           setFlowMissing(false)
         } else {
+          const hydrateRaw = sessionStorage.getItem(`${FLOW_EDITOR_HYDRATE_PREFIX}${flowId}`)
+          if (hydrateRaw) {
+            try {
+              const flow = JSON.parse(hydrateRaw) as FlowResponse
+              sessionStorage.removeItem(`${FLOW_EDITOR_HYDRATE_PREFIX}${flowId}`)
+              if (flow.id === flowId) {
+                await loadSurveyContext(token, flow.survey_id)
+                const nextDraft = draftFromFlow(flow)
+                setDraft(nextDraft)
+                setSavedSnapshot(serializeDraft(nextDraft))
+                setFlowMissing(false)
+                consumePendingSaveNotice()
+                return
+              }
+            } catch {
+              sessionStorage.removeItem(`${FLOW_EDITOR_HYDRATE_PREFIX}${flowId}`)
+            }
+          }
           const flow = await fetchFlow(token, flowId)
           await loadSurveyContext(token, flow.survey_id)
           const nextDraft = draftFromFlow(flow)
           setDraft(nextDraft)
           setSavedSnapshot(serializeDraft(nextDraft))
           setFlowMissing(false)
+          consumePendingSaveNotice()
         }
       } catch (err) {
         const message = extractErrorMessage(err, "Failed to load flow editor")
@@ -155,6 +197,7 @@ export function FlowEditor() {
           setFlowMissing(true)
           setDraft(null)
         } else {
+          setErrorSubscriptionHref(null)
           setError(message)
         }
       } finally {
@@ -162,7 +205,7 @@ export function FlowEditor() {
       }
     }
     void load()
-  }, [flowId, initialName, initialSurveyId, isNew])
+  }, [flowId, isNew])
 
   const rulesById = useMemo(() => new Map(rules.map((rule) => [rule.id, rule])), [rules])
   const brokenRuleIds = useMemo(() => new Set(rules.filter((r) => r.status === "broken").map((r) => r.id)), [rules])
@@ -286,15 +329,18 @@ export function FlowEditor() {
   }
 
   const handleOpenRulesFrame = useCallback(() => {
-    setOverlayFrame({ type: "rules", nodeId: selectedNodeId })
+    const nodeId = selectedNodeId
+    queueMicrotask(() => setOverlayFrame({ type: "rules", nodeId }))
   }, [selectedNodeId])
 
   const handleOpenLocationsFrame = useCallback(() => {
-    setOverlayFrame({ type: "locations", nodeId: selectedNodeId })
+    const nodeId = selectedNodeId
+    queueMicrotask(() => setOverlayFrame({ type: "locations", nodeId }))
   }, [selectedNodeId])
 
   const handleOpenNotificationGroupsFrame = useCallback(() => {
-    setOverlayFrame({ type: "notification_groups", nodeId: selectedNodeId })
+    const nodeId = selectedNodeId
+    queueMicrotask(() => setOverlayFrame({ type: "notification_groups", nodeId }))
   }, [selectedNodeId])
 
   const selectNodeOnCanvas = useCallback((id: string) => {
@@ -362,7 +408,7 @@ export function FlowEditor() {
 
     setNodes((nodes) => [...nodes, normalizeNode(node)])
     setSelectedNodeId(node.id)
-    setError(null)
+    clearEditorError()
   }
 
   async function removeNodeCascade(nodeId: string) {
@@ -450,7 +496,7 @@ export function FlowEditor() {
       ])
     })
     setSelectedNodeId(newNodeId)
-    setError(null)
+    clearEditorError()
   }
 
   async function saveFlow() {
@@ -462,13 +508,14 @@ export function FlowEditor() {
       selectedTriggerLocations,
     })
     if (validation.message) {
+      setErrorSubscriptionHref(null)
       setError(validation.message)
       setValidationHighlightNodeId(validation.highlightNodeId)
       return
     }
 
     setSaving(true)
-    setError(null)
+    clearEditorError()
     setValidationHighlightNodeId(null)
     setSaveBanner(null)
     try {
@@ -485,14 +532,28 @@ export function FlowEditor() {
       const nextDraft = draftFromFlow(saved)
       setDraft(nextDraft)
       setSavedSnapshot(serializeDraft(nextDraft))
-      setSelectedNodeId(TRIGGER_NODE_ID)
-      hasFitView.current = false
-      router.replace(`/dashboard/automations/flows/${saved.id}`)
-      setSaveBanner("Changes saved.")
+      const notice = draft.id ? "Flow saved." : "Flow created."
+      if (saved.id !== flowId) {
+        try {
+          sessionStorage.setItem(`${FLOW_EDITOR_HYDRATE_PREFIX}${saved.id}`, JSON.stringify(saved))
+          sessionStorage.setItem(FLOW_EDITOR_SAVE_NOTICE_KEY, notice)
+        } catch {
+          // ignore quota / private mode
+        }
+        router.replace(`/dashboard/automations/flows/${saved.id}`, { scroll: false })
+      } else {
+        setSaveBanner(notice)
+      }
     } catch (err) {
       if (isStaleObjectError(err)) {
+        setErrorSubscriptionHref(null)
         setError("This flow was updated elsewhere. Please refresh.")
+      } else if (isNormalizedError(err)) {
+        setError(err.message || extractErrorMessage(err, "Failed to save flow"))
+        const p = err.details?.manage_subscription_path
+        setErrorSubscriptionHref(typeof p === "string" ? p : null)
       } else {
+        setErrorSubscriptionHref(null)
         setError(extractErrorMessage(err, "Failed to save flow"))
       }
     } finally {
@@ -656,7 +717,7 @@ export function FlowEditor() {
         </div>
       ) : null}
 
-      <div className="flex items-center gap-3 border-b border-zinc-200 bg-white px-6 py-3">
+      <div className="flex shrink-0 items-center gap-3 border-b border-zinc-200 bg-white px-6 py-3">
         <Button variant="ghost" onClick={() => void navigateWithGuard("/dashboard/automations/flows")}>
           <ArrowLeft className="mr-1.5 h-4 w-4" />
           Back to flows
@@ -665,8 +726,7 @@ export function FlowEditor() {
           <p className="truncate text-sm font-semibold text-zinc-950">{draft.name || "Untitled flow"}</p>
           <p className="text-xs text-zinc-400">{surveyName}</p>
         </div>
-        <div className="flex flex-col items-end gap-1">
-          {saveBanner ? <span className="text-xs font-medium text-emerald-600">{saveBanner}</span> : null}
+        <div className="flex items-center">
           <Button onClick={() => void saveFlow()} disabled={saving}>
             {saving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Save className="mr-1.5 h-4 w-4" />}
             Save flow
@@ -674,20 +734,42 @@ export function FlowEditor() {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
+      {saveBanner ? (
+        <div
+          className="shrink-0 border-b border-emerald-200 bg-emerald-50 px-6 py-2.5 text-center text-sm font-medium text-emerald-900"
+          role="status"
+          aria-live="polite"
+        >
+          {saveBanner}
+        </div>
+      ) : null}
+
+      <div className="flex min-h-0 flex-1 flex-col px-6 pb-6 pt-3">
         {error ? (
-          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
+          <div className="mb-3 shrink-0 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <p>{error}</p>
+            {errorSubscriptionHref ? (
+              <p className="mt-2">
+                <Link
+                  href={errorSubscriptionHref}
+                  className="font-medium text-red-900 underline underline-offset-2 hover:text-red-950"
+                >
+                  Manage subscription
+                </Link>
+              </p>
+            ) : null}
+          </div>
         ) : null}
 
-        <Card className="relative mb-6 flex min-h-[540px] flex-col overflow-hidden p-0 lg:flex-row">
-          <div className="relative min-h-[360px] min-w-0 flex-1 bg-[radial-gradient(circle_at_1px_1px,rgba(113,113,122,0.18)_1px,transparent_0)] bg-[size:28px_28px] lg:min-h-[540px]">
+        <Card className="relative flex min-h-0 flex-1 flex-col overflow-hidden p-0 lg:flex-row">
+          <div className="relative flex min-h-[280px] min-w-0 flex-1 flex-col bg-[radial-gradient(circle_at_1px_1px,rgba(113,113,122,0.18)_1px,transparent_0)] bg-[size:28px_28px] lg:min-h-0">
             <div className="absolute right-4 top-4 z-10">
               <Button variant="outline" onClick={() => flowRef.current?.fitView({ padding: 0.45, duration: 300 })}>
                 <RotateCcw className="mr-1.5 h-4 w-4" />
                 Reset view
               </Button>
             </div>
-            <div className="h-[min(540px,calc(100vh-220px))] min-h-[320px] w-full lg:h-[540px] lg:min-h-[540px]">
+            <div className="min-h-0 flex-1 w-full">
               <ReactFlow
                 className="h-full w-full [&_.react-flow__edgelabel-renderer]:z-[1000]"
                 nodes={canvas.nodes}
@@ -713,8 +795,8 @@ export function FlowEditor() {
             </div>
           </div>
 
-          <aside className="flex w-full max-w-full flex-col border-t border-zinc-200 bg-white lg:w-[400px] lg:max-w-[400px] lg:shrink-0 lg:border-l lg:border-t-0">
-            <div className="flex max-h-[min(480px,50vh)] flex-1 flex-col overflow-y-auto p-4 lg:max-h-none lg:min-h-[540px]">
+          <aside className="flex max-h-[min(360px,45vh)] w-full max-w-full shrink-0 flex-col border-t border-zinc-200 bg-white lg:max-h-none lg:min-h-0 lg:w-[400px] lg:max-w-[400px] lg:shrink-0 lg:border-l lg:border-t-0">
+            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4">
               <div className="space-y-5">
                 {selectedNode?.node_type !== "terminate" ? (
                   <h3 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">

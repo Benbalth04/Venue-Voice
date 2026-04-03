@@ -5,7 +5,6 @@ import { useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { supabase } from "@/lib/supabase/client"
 import { useAuth } from "@/contexts/AuthContext"
-import { AuthGuard } from "@/components/auth/AuthGuard"
 import { UnverifiedEmailGuard } from "@/components/auth/UnverifiedEmailGuard"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -104,12 +103,10 @@ function VerifyEmailContent() {
 
 export default function VerifyEmailPage() {
   return (
-    <AuthGuard>
-      <UnverifiedEmailGuard>
-        <Suspense>
-          <VerifyEmailContent />
-        </Suspense>
-      </UnverifiedEmailGuard>
-    </AuthGuard>
+    <UnverifiedEmailGuard>
+      <Suspense>
+        <VerifyEmailContent />
+      </Suspense>
+    </UnverifiedEmailGuard>
   )
 }

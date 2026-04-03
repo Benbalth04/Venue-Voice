@@ -1,18 +1,28 @@
 from fastapi import APIRouter, Depends
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..auth.jwt import get_current_user
+from ..auth.plan_enforcement import get_over_limit_status
 from ..core.timezone_australia import assert_allowed_timezone_string
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import Company as CompanyORM
 from ..models.postgres_model import Location as LocationORM
+from ..models.postgres_model import Question as QuestionORM
 from ..models.postgres_model import Subscription as SubscriptionORM
+from ..models.postgres_model import Survey as SurveyORM
+from ..models.postgres_model import SurveyStatus
+from ..models.postgres_model import SurveyVersion as SurveyVersionORM
 from ..models.postgres_model import User as UserORM
 from ..schemas.pydantic_model import (
     SetupAccountRequest,
+    SubscriptionStatusResponse,
+    SubscriptionWarning,
     UpdateUserTimezoneRequest,
     UserResponse,
 )
+from ..services.plan_policy import get_policy_for_subscription
+from ..services.stripe_service import get_subscription
 
 router = APIRouter()
 
@@ -84,6 +94,98 @@ def confirm_email(
         user.email_verified = True
         db.commit()
     return {"ok": True}
+
+
+def _company_has_photo_questions(db: Session, company_id) -> bool:
+    """Return True if the company has any (non-deleted) survey questions of type 'photo'."""
+    count = (
+        db.query(func.count(QuestionORM.id))
+        .join(SurveyVersionORM, QuestionORM.survey_version_id == SurveyVersionORM.id)
+        .join(SurveyORM, SurveyVersionORM.survey_id == SurveyORM.id)
+        .filter(
+            SurveyORM.company_id == company_id,
+            SurveyORM.deleted_at.is_(None),
+            QuestionORM.question_type == "photo",
+            QuestionORM.deleted_at.is_(None),
+        )
+        .scalar()
+        or 0
+    )
+    return count > 0
+
+
+@router.get("/me/subscription/status", response_model=SubscriptionStatusResponse)
+def get_subscription_status(
+    current_user: UserORM = Depends(get_current_user),
+    db: Session = Depends(get_db_connection),
+):
+    """Return dynamic over-limit and feature-downgrade warnings for the account.
+
+    Does not require an active subscription so that users who have just
+    downgraded or cancelled can still see their account state.
+    """
+    sub = get_subscription(current_user, db)
+    policy = get_policy_for_subscription(sub)
+    plan_name = (sub.plan_display_name or "starter").strip().lower() if sub else "starter"
+
+    company = (
+        db.query(CompanyORM)
+        .filter(
+            CompanyORM.owner_user_id == current_user.id,
+            CompanyORM.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if not company:
+        return SubscriptionStatusResponse(plan=plan_name, over_limit={}, warnings=[])
+
+    status = get_over_limit_status(db, company.id, policy)
+    warnings: list[SubscriptionWarning] = []
+
+    resource_labels: list[tuple[str, str, bool]] = [
+        ("locations", "active locations", status.locations),
+        ("active_surveys", "active surveys", status.active_surveys),
+        ("active_flows", "active flows", status.active_flows),
+    ]
+    for resource, label, is_over in resource_labels:
+        if is_over:
+            limit = status.limits[resource]
+            current = status.counts[resource]
+            warnings.append(
+                SubscriptionWarning(
+                    type="OVER_LIMIT",
+                    feature=resource,
+                    message=(
+                        f"Your account has {current} {label} but your {plan_name.capitalize()} "
+                        f"plan allows {limit}. You cannot create new {label} until you reduce "
+                        f"your usage or upgrade your plan."
+                    ),
+                    limit=limit,
+                    current=current,
+                )
+            )
+
+    if not policy.can_use_photo_feedback and _company_has_photo_questions(db, company.id):
+        warnings.append(
+            SubscriptionWarning(
+                type="FEATURE_DOWNGRADED",
+                feature="photo_feedback",
+                message=(
+                    "Your plan no longer includes photo feedback. "
+                    "Photo responses in your surveys are hidden until you upgrade."
+                ),
+            )
+        )
+
+    return SubscriptionStatusResponse(
+        plan=plan_name,
+        over_limit={
+            "locations": status.locations,
+            "active_surveys": status.active_surveys,
+            "active_flows": status.active_flows,
+        },
+        warnings=warnings,
+    )
 
 
 @router.post("/setup-account")

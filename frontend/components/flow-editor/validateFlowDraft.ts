@@ -42,17 +42,18 @@ export function validateFlowDraft(
   if (!root) {
     return invalid("Add at least one step after the trigger.", TRIGGER_NODE_ID)
   }
-
-  const seenRuleBinding = new Map<string, string>()
-  for (const n of currentDraft.nodes) {
-    if (n.node_type !== "rule" || !n.rule_id) continue
-    if (seenRuleBinding.has(n.rule_id)) {
-      return invalid("Each survey rule can only be used on one Rule step in this flow.", n.id)
-    }
-    seenRuleBinding.set(n.rule_id, n.id)
+  if (!currentDraft.nodes.some((n) => n.node_type === "action")) {
+    return invalid("Add at least one action step (send email or redirect).", root.id)
   }
 
-  const walk = (node: DraftNode, redirectsOnPath: number): FlowDraftValidationResult | null => {
+  const duplicateRuleOnPathMessage =
+    "The same survey rule cannot be used on more than one Rule step on a single path. Add a branch so each path only includes that rule once."
+
+  const walk = (
+    node: DraftNode,
+    redirectsOnPath: number,
+    pathRuleIds: Set<string>,
+  ): FlowDraftValidationResult | null => {
     if (node.node_type === "terminate") {
       return null
     }
@@ -61,11 +62,16 @@ export function validateFlowDraft(
       if (!node.rule_id) {
         return invalid("Every rule widget must reference a rule.", node.id)
       }
+      if (pathRuleIds.has(node.rule_id)) {
+        return invalid(duplicateRuleOnPathMessage, node.id)
+      }
+      const nextPath = new Set(pathRuleIds)
+      nextPath.add(node.rule_id)
       const children = childrenOf(currentDraft.nodes, node.id)
       if (children.length !== 1) {
         return invalid("Rule widgets must connect to exactly one next step.", node.id)
       }
-      return walk(children[0], redirectsOnPath)
+      return walk(children[0], redirectsOnPath, nextPath)
     }
 
     if (node.node_type === "branch") {
@@ -97,8 +103,9 @@ export function validateFlowDraft(
       if (truePath.length !== 1 || falsePath.length !== 1) {
         return invalid("Branch widgets need exactly one step on the True path and one on the False path.", node.id)
       }
+      const pathAtBranch = new Set(pathRuleIds)
       for (const child of branchChildren) {
-        const failure = walk(child, redirectsOnPath)
+        const failure = walk(child, redirectsOnPath, new Set(pathAtBranch))
         if (failure) return failure
       }
       return null
@@ -153,12 +160,12 @@ export function validateFlowDraft(
       if ((next.node_type !== "action" && next.node_type !== "terminate") || next.branch_type != null) {
         return invalid("Actions can only chain to another action or a terminate node.", node.id)
       }
-      return walk(next, pathRedirects)
+      return walk(next, pathRedirects, pathRuleIds)
     }
     return null
   }
 
-  const failure = walk(root, 0)
+  const failure = walk(root, 0, new Set())
   if (failure) return failure
   return { message: null, highlightNodeId: null }
 }

@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { MapPin, Pencil, Plus, ToggleLeft, ToggleRight, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -14,6 +14,7 @@ import {
   fetchLocations,
   fetchNotificationGroups,
   getLocationFlowDependencies,
+  isNormalizedError,
   isStaleObjectError,
   syncLocationNotificationGroups,
   updateLocation,
@@ -23,6 +24,21 @@ import {
   type LocationUpdate,
   type NotificationGroupResponse,
 } from "@/lib/api/client"
+
+/** Shown when PATCH is_active would exceed plan max **active** locations (backend: LIMIT_EXCEEDED / resource locations). */
+const ACTIVE_LOCATION_PLAN_LIMIT_MESSAGE =
+  "You've reached the maximum number of active locations for your plan. Deactivate another location first, or upgrade your subscription."
+
+function formatLocationActivationError(err: unknown): string {
+  if (
+    isNormalizedError(err) &&
+    err.code === "LIMIT_EXCEEDED" &&
+    err.details?.resource === "locations"
+  ) {
+    return ACTIVE_LOCATION_PLAN_LIMIT_MESSAGE
+  }
+  return extractErrorMessage(err, "Something went wrong")
+}
 
 // ─── Modal ────────────────────────────────────────────────────────────────────
 
@@ -186,7 +202,31 @@ export default function LocationsPage() {
   const [locations, setLocations] = useState<LocationResponse[]>([])
   const [notificationGroups, setNotificationGroups] = useState<NotificationGroupResponse[]>([])
   const [loading, setLoading] = useState(true)
+  /** Set only from initial load failure — replaces main content until refresh/reload. */
   const [error, setError] = useState<string | null>(null)
+  /** Inline banner for toggle/save failures; does not hide the locations table. */
+  const [pageBanner, setPageBanner] = useState<string | null>(null)
+  const pageBannerTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const showTransientPageBanner = useCallback((message: string, durationMs = 5000) => {
+    if (pageBannerTimeoutRef.current) {
+      clearTimeout(pageBannerTimeoutRef.current)
+      pageBannerTimeoutRef.current = null
+    }
+    setPageBanner(message)
+    pageBannerTimeoutRef.current = setTimeout(() => {
+      setPageBanner(null)
+      pageBannerTimeoutRef.current = null
+    }, durationMs)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (pageBannerTimeoutRef.current) {
+        clearTimeout(pageBannerTimeoutRef.current)
+      }
+    }
+  }, [])
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editTarget, setEditTarget] = useState<LocationResponse | null>(null)
@@ -296,8 +336,7 @@ export default function LocationsPage() {
         if (msg.toLowerCase().includes("not found") || msg.includes("404")) {
           setModalOpen(false)
           await load()
-          setError("Location no longer exists. Data has been refreshed.")
-          setTimeout(() => setError(null), 1000)
+          showTransientPageBanner("Location no longer exists. Data has been refreshed.")
         } else {
           setFormError(msg)
         }
@@ -326,15 +365,14 @@ export default function LocationsPage() {
     } catch (err) {
       if (isStaleObjectError(err)) {
         await load()
-        setError("This location was updated. Please try again.")
+        showTransientPageBanner("This location was updated. Please try again.")
       } else {
-        const msg = extractErrorMessage(err, "Something went wrong")
+        const msg = formatLocationActivationError(err)
         if (msg.toLowerCase().includes("not found") || msg.includes("404")) {
           await load()
-          setError("Location no longer exists. Data has been refreshed.")
-          setTimeout(() => setError(null), 4000)
+          showTransientPageBanner("Location no longer exists. Data has been refreshed.")
         } else {
-          setError(msg)
+          showTransientPageBanner(msg)
         }
       }
     }
@@ -466,7 +504,7 @@ export default function LocationsPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-950">Locations</h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Manage your physical business locations.
+            Manage your physical business locations. New locations start inactive; your plan limits how many can be active at once.
           </p>
         </div>
         <Button onClick={openCreate}>
@@ -484,26 +522,35 @@ export default function LocationsPage() {
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
         </div>
-      ) : locations.length === 0 ? (
-        <Card className="flex flex-col items-center gap-3 py-16">
-          <MapPin className="h-8 w-8 text-zinc-300" />
-          <p className="text-sm font-medium text-zinc-500">No locations yet</p>
-          <Button variant="ghost" onClick={openCreate}>
-            Add your first location
-          </Button>
-        </Card>
       ) : (
-        <DataTable<LocationResponse>
-          data={sortedLocations}
-          columns={columns}
-          getRowKey={(loc) => loc.id}
-          sortKey={sortKey}
-          sortDir={sortDir}
-          onSort={(key) => {
-            setSortKey(key)
-            setSortDir((d) => (sortKey === key && d === "asc" ? "desc" : "asc"))
-          }}
-        />
+        <div className="space-y-4">
+          {pageBanner ? (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {pageBanner}
+            </div>
+          ) : null}
+          {locations.length === 0 ? (
+            <Card className="flex flex-col items-center gap-3 py-16">
+              <MapPin className="h-8 w-8 text-zinc-300" />
+              <p className="text-sm font-medium text-zinc-500">No locations yet</p>
+              <Button variant="ghost" onClick={openCreate}>
+                Add your first location
+              </Button>
+            </Card>
+          ) : (
+            <DataTable<LocationResponse>
+              data={sortedLocations}
+              columns={columns}
+              getRowKey={(loc) => loc.id}
+              sortKey={sortKey}
+              sortDir={sortDir}
+              onSort={(key) => {
+                setSortKey(key)
+                setSortDir((d) => (sortKey === key && d === "asc" ? "desc" : "asc"))
+              }}
+            />
+          )}
+        </div>
       )}
 
       {/* Modal */}

@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Loader2, Pencil, Plus, Save, Trash2, UserPlus, X } from "lucide-react"
+import { Check, Loader2, Pencil, Plus, Save, Trash2, UserPlus, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner"
 import { Card } from "@/components/ui/card"
@@ -65,6 +65,7 @@ export default function NotificationGroupsPage() {
   const [groups, setGroups] = useState<NotificationGroupResponse[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [saveSuccess, setSaveSuccess] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [draft, setDraft] = useState<GroupDraft | null>(null)
   const [draftSnapshot, setDraftSnapshot] = useState<string | null>(null)
@@ -95,6 +96,12 @@ export default function NotificationGroupsPage() {
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    if (!saveSuccess) return
+    const t = setTimeout(() => setSaveSuccess(false), 3000)
+    return () => clearTimeout(t)
+  }, [saveSuccess])
 
   const selectedGroupMemberCount = useMemo(() => draft?.members.length ?? 0, [draft])
   const hasUnsavedChanges = useMemo(
@@ -199,6 +206,7 @@ export default function NotificationGroupsPage() {
         setDraftSnapshot(serializeDraft(nextDraft))
       }
       setError(null)
+      setSaveSuccess(true)
     } catch (err) {
       if (isStaleObjectError(err)) {
         setError("This group was updated elsewhere. Please refresh.")
@@ -372,7 +380,13 @@ export default function NotificationGroupsPage() {
                   </p>
                 </div>
 
-                <div className="flex flex-shrink-0 gap-2">
+                <div className="flex flex-shrink-0 items-center gap-2">
+                  {saveSuccess && (
+                    <span className="flex items-center gap-1 text-sm font-medium text-green-600">
+                      <Check className="h-4 w-4" />
+                      Saved
+                    </span>
+                  )}
                   <Button
                     variant="ghost"
                     onClick={async () => {

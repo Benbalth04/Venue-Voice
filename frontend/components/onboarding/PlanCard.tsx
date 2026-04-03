@@ -20,6 +20,8 @@ export interface PlanCardProps {
   features: string[]
   onSelect: () => void
   loading?: boolean
+  /** When false, no checkout button (e.g. tier below the user's current plan). */
+  showSelectButton?: boolean
 }
 
 export function PlanCard({
@@ -34,6 +36,7 @@ export function PlanCard({
   features,
   onSelect,
   loading,
+  showSelectButton = true,
 }: PlanCardProps) {
   const isSubdued = popular === false
   const showPopularBadge = popular === true
@@ -97,11 +100,17 @@ export function PlanCard({
         ))}
       </ul>
 
-      <Button className="mt-6 w-full py-3 text-base" onClick={onSelect} disabled={loading}>
-        {loading ? "Redirecting to checkout…" : "Start Free Trial"}
-      </Button>
+      {showSelectButton ? (
+        <Button className="mt-6 w-full py-3 text-base" onClick={onSelect} disabled={loading}>
+          {loading ? "Redirecting to checkout…" : "Start Free Trial"}
+        </Button>
+      ) : (
+        <p className="mt-6 rounded-lg bg-zinc-50 px-3 py-3 text-center text-sm text-zinc-500">
+          Your current plan is above this tier. Manage your subscription from the dashboard to change plans.
+        </p>
+      )}
 
-      {trialLabel && (
+      {trialLabel && showSelectButton && (
         <p className="mt-3 text-center text-xs text-zinc-400">No charge until your trial ends. Cancel anytime.</p>
       )}
     </div>

@@ -32,7 +32,9 @@ def to_iso8601_zoned(dt: datetime | None, tz: ZoneInfo) -> str | None:
     if utc is None:
         return None
     local = utc.astimezone(tz)
-    return local.isoformat(timespec="seconds")
+    # Preserve microseconds so optimistic-lock fields (e.g. updated_at) round-trip
+    # through JSON without StaleObjectError when DB timestamps have sub-second precision.
+    return local.isoformat(timespec="microseconds")
 
 
 def local_date_start_utc(d: date, tz: ZoneInfo) -> datetime:
@@ -65,6 +67,55 @@ def naive_utc_for_sql(dt: datetime) -> datetime:
     if aware is None:
         raise ValueError("datetime required")
     return aware.astimezone(dt_timezone.utc).replace(tzinfo=None)
+
+
+def _zone_abbreviation(local_dt: datetime, zone: ZoneInfo) -> str:
+    """Best-effort short zone label for transactional email copy."""
+    abbr = (local_dt.strftime("%Z") or "").strip()
+    if abbr:
+        return abbr
+    return zone.key.split("/")[-1].replace("_", " ")
+
+
+def format_utc_instant_for_email_datetime(dt: datetime | None, tz: ZoneInfo) -> str | None:
+    """Format a UTC instant (naive = UTC wall) as local date, time, and zone abbrev."""
+    utc = assume_utc(dt)
+    if utc is None:
+        return None
+    local = utc.astimezone(tz)
+    abbr = _zone_abbreviation(local, tz)
+    return f"{local.strftime('%d %b %Y, %H:%M')} {abbr}"
+
+
+def format_utc_instant_for_email_date_only(dt: datetime | None, tz: ZoneInfo) -> str | None:
+    """Format a UTC instant as the calendar date in ``tz`` (avoids UTC day-boundary skew)."""
+    utc = assume_utc(dt)
+    if utc is None:
+        return None
+    local = utc.astimezone(tz)
+    return local.strftime("%d %b %Y")
+
+
+def format_unix_epoch_for_email_datetime(unix_ts: int | None, tz: ZoneInfo) -> str | None:
+    """Unix epoch seconds (Stripe-style) → local datetime string for emails."""
+    if unix_ts is None or unix_ts <= 0:
+        return None
+    try:
+        dt_utc = datetime.fromtimestamp(unix_ts, tz=dt_timezone.utc)
+    except (OSError, ValueError, OverflowError):
+        return None
+    return format_utc_instant_for_email_datetime(dt_utc, tz)
+
+
+def format_unix_epoch_for_email_date_only(unix_ts: int | None, tz: ZoneInfo) -> str | None:
+    """Unix epoch seconds → local calendar date string for emails."""
+    if unix_ts is None or unix_ts <= 0:
+        return None
+    try:
+        dt_utc = datetime.fromtimestamp(unix_ts, tz=dt_timezone.utc)
+    except (OSError, ValueError, OverflowError):
+        return None
+    return format_utc_instant_for_email_date_only(dt_utc, tz)
 
 
 def user_local_date_sql(column: ColumnElement[Any], tz: ZoneInfo) -> ColumnElement[Any]:

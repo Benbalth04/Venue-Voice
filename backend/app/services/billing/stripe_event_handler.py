@@ -10,10 +10,20 @@ import stripe
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from ...core.datetime_user_tz import (
+    assume_utc,
+    format_unix_epoch_for_email_date_only,
+    format_unix_epoch_for_email_datetime,
+)
+from ...core.timezone_australia import effective_zoneinfo_for_stored_timezone
 from ...models.email_event import EmailEvent
+from ...auth.plan_enforcement import get_over_limit_status
 from ...models.postgres_model import Company, Subscription, User
+from ...services.plan_policy import get_policy_for_subscription
+from ...services.stripe_service import get_subscription
 from ...models.stripe_webhook_event import StripeWebhookEvent
 from ..email.constants import EMAIL_CATEGORY_STRIPE_BILLING
+from .stripe_billing_display import coerce_stripe_unix_timestamp
 from .stripe_event_mapper import StripeEmailJob, map_stripe_event
 from ..stripe_service import sync_subscription_from_stripe_object
 
@@ -175,6 +185,37 @@ def handle_stripe_webhook_event(db: Session, event: dict[str, Any]) -> None:
     for job in jobs:
         _enqueue_billing_email(db, evt_id, user, company, job, base_ctx)
 
+    # After a downgrade, log the over-limit state for observability.
+    # No data is modified — this is purely a diagnostic log.
+    if any(j.template == "plan_downgraded" for j in jobs):
+        try:
+            sub_orm = get_subscription(user, db)
+            policy = get_policy_for_subscription(sub_orm)
+            new_plan = (sub_orm.plan_display_name or "unknown").lower() if sub_orm else "unknown"
+            over_limit = get_over_limit_status(db, company.id, policy)
+            if over_limit.any_over_limit():
+                logger.warning(
+                    "Account over limit after subscription downgrade user_id=%s plan=%s "
+                    "over_limit=%s counts=%s limits=%s",
+                    user.id,
+                    new_plan,
+                    {
+                        "locations": over_limit.locations,
+                        "active_surveys": over_limit.active_surveys,
+                        "active_flows": over_limit.active_flows,
+                    },
+                    over_limit.counts,
+                    over_limit.limits,
+                )
+            else:
+                logger.info(
+                    "Subscription downgrade within limits user_id=%s plan=%s",
+                    user.id,
+                    new_plan,
+                )
+        except Exception:
+            logger.exception("Failed to compute over-limit state after downgrade user_id=%s", user.id)
+
 
 def _run_subscription_sync(etype: str, obj: dict[str, Any], db: Session) -> None:
     if etype == "checkout.session.completed":
@@ -256,9 +297,78 @@ def _base_email_context(user: User) -> dict[str, Any]:
     origin = _FRONTEND_ORIGIN or "https://app.venuevoice.com.au"
     return {
         "first_name": user.first_name or "there",
-        "manage_subscription_url": f"{origin}/manage-subscription",
+        "manage_subscription_url": f"{origin}/dashboard/settings/manage-subscription",
         "dashboard_url": f"{origin}/dashboard",
     }
+
+
+_TEMPLATES_TRIAL_END = frozenset({"trial_started", "trial_ending_soon"})
+_TEMPLATES_NEXT_BILLING = frozenset(
+    {
+        "subscription_activated",
+        "plan_upgraded",
+        "plan_downgraded",
+        "billing_interval_changed",
+        "payment_success",
+        "reactivation",
+    }
+)
+
+
+def apply_user_timezone_to_billing_context(
+    db: Session,
+    user: User,
+    merged: dict[str, Any],
+    *,
+    template: str,
+) -> None:
+    """Convert ``*_unix`` fields from ``stripe_event_mapper`` into localized ``*_display`` strings.
+
+    Internal unix keys are removed so ``context_json`` never stores them. Queued rows created
+    before this change may lack unix fields; optional ``setdefault`` keeps prior strings or "—".
+    """
+    tz = effective_zoneinfo_for_stored_timezone(user.timezone)
+
+    if "trial_end_unix" in merged:
+        raw = merged.pop("trial_end_unix")
+        coerced = coerce_stripe_unix_timestamp(raw)
+        merged["trial_end_display"] = (
+            (format_unix_epoch_for_email_date_only(coerced, tz) or "—") if coerced else "—"
+        )
+    elif template in _TEMPLATES_TRIAL_END:
+        merged.setdefault("trial_end_display", "—")
+
+    if "current_period_end_unix" in merged:
+        raw = merged.pop("current_period_end_unix")
+        coerced = coerce_stripe_unix_timestamp(raw)
+        merged["next_billing_display"] = (
+            (format_unix_epoch_for_email_date_only(coerced, tz) or "—") if coerced else "—"
+        )
+    elif template in _TEMPLATES_NEXT_BILLING:
+        merged.setdefault("next_billing_display", "—")
+
+    if "next_retry_unix" in merged:
+        raw = merged.pop("next_retry_unix")
+        coerced = coerce_stripe_unix_timestamp(raw)
+        merged["next_retry_display"] = (
+            (format_unix_epoch_for_email_datetime(coerced, tz) or "—") if coerced else "—"
+        )
+    elif template == "payment_retrying":
+        merged.setdefault("next_retry_display", "—")
+
+    if template == "subscription_canceled":
+        raw = merged.pop("access_until_unix", None)
+        unix = coerce_stripe_unix_timestamp(raw)
+        if unix is None:
+            sub = db.query(Subscription).filter(Subscription.user_id == user.id).first()
+            if sub and sub.current_period_end is not None:
+                aware = assume_utc(sub.current_period_end)
+                if aware is not None:
+                    unix = int(aware.timestamp())
+        if unix is not None:
+            merged["access_until_display"] = format_unix_epoch_for_email_datetime(unix, tz) or "—"
+        else:
+            merged.setdefault("access_until_display", "—")
 
 
 def _enqueue_billing_email(
@@ -271,6 +381,7 @@ def _enqueue_billing_email(
 ) -> None:
     idempotency_key = f"{stripe_event_id}:{job.template}"
     merged = {**base_ctx, **job.context}
+    apply_user_timezone_to_billing_context(db, user, merged, template=job.template)
     row = EmailEvent(
         company_id=company.id,
         flow_run_id=None,

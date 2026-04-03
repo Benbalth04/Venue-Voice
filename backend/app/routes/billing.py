@@ -13,10 +13,12 @@ from ..models.postgres_model import User
 from ..schemas.pydantic_model import (
     CheckoutSessionRequest,
     CheckoutSessionResponse,
+    PlanLimitsResponse,
     PortalSessionResponse,
     SubscriptionResponse,
     VerifyCheckoutSessionResponse,
 )
+from ..services.plan_policy import get_policy_for_subscription
 from ..services.stripe_service import (
     create_checkout_session,
     create_portal_session,
@@ -41,7 +43,17 @@ def get_subscription_status(
             status="none",
             is_active=False,
             plan_display_name=None,
+            plan_limits=None,
         )
+    policy = get_policy_for_subscription(sub)
+    plan_limits = PlanLimitsResponse(
+        max_locations=policy.max_locations,
+        max_active_surveys=policy.max_active_surveys,
+        max_active_flows=policy.max_active_flows,
+        max_branch_nodes_per_flow=policy.max_branch_nodes_per_flow,
+        can_use_photo_feedback=policy.can_use_photo_feedback,
+        can_expand_charts=policy.can_expand_charts,
+    )
     return SubscriptionResponse(
         status=sub.status,
         trial_end=to_iso8601_zoned(sub.trial_end, user_tz),
@@ -49,7 +61,11 @@ def get_subscription_status(
         stripe_customer_id=sub.stripe_customer_id,
         stripe_subscription_id=sub.stripe_subscription_id,
         plan_display_name=sub.plan_display_name,
+        billing_interval=sub.billing_interval,
+        cancel_at_period_end=sub.cancel_at_period_end,
+        price_id=sub.price_id,
         is_active=is_subscription_active(sub),
+        plan_limits=plan_limits,
     )
 
 

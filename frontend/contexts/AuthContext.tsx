@@ -2,8 +2,10 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react"
@@ -29,49 +31,60 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [session, setSession] = useState<Session | null>(null)
   const [user, setUser] = useState<UserResponse | null>(null)
+  /** Supabase auth user id we last completed fetchUser for; avoids stale closures in onAuthStateChange. */
+  const loadedAuthUserIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
 
-    const { data: sub } = supabase.auth.onAuthStateChange(
-      async (event, nextSession) => {
-        if (cancelled) return
+    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, nextSession) => {
+      if (cancelled) return
 
-        setSession(nextSession)
+      setSession(nextSession)
 
-        // Tab focus / background refresh — update JWT only; keep dashboard mounted.
-        if (event === "TOKEN_REFRESHED") {
-          return
-        }
+      if (!nextSession) {
+        loadedAuthUserIdRef.current = null
+        setUser(null)
+        setLoading(false)
+        return
+      }
 
-        if (!nextSession) {
-          setUser(null)
-          setLoading(false)
-          return
-        }
+      const authUserId = nextSession.user.id
+      const sameUserAlreadyLoaded =
+        loadedAuthUserIdRef.current !== null && loadedAuthUserIdRef.current === authUserId
 
-        // Profile sync without blanking the whole app (e.g. metadata updates).
-        if (event === "USER_UPDATED" || event === "MFA_CHALLENGE_VERIFIED") {
-          try {
-            const me = await fetchUser(nextSession.access_token)
-            if (!cancelled) setUser(me)
-          } catch {
-            if (!cancelled) setUser(null)
-          }
-          return
-        }
-
-        setLoading(true)
+      if (sameUserAlreadyLoaded) {
         try {
           const me = await fetchUser(nextSession.access_token)
-          if (!cancelled) setUser(me)
+          if (!cancelled) {
+            setUser(me)
+            loadedAuthUserIdRef.current = me.id
+          }
         } catch {
-          if (!cancelled) setUser(null)
-        } finally {
-          if (!cancelled) setLoading(false)
+          if (!cancelled) {
+            setUser(null)
+            loadedAuthUserIdRef.current = null
+          }
         }
-      },
-    )
+        return
+      }
+
+      setLoading(true)
+      try {
+        const me = await fetchUser(nextSession.access_token)
+        if (!cancelled) {
+          setUser(me)
+          loadedAuthUserIdRef.current = me.id
+        }
+      } catch {
+        if (!cancelled) {
+          setUser(null)
+          loadedAuthUserIdRef.current = null
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })
 
     return () => {
       cancelled = true
@@ -79,21 +92,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  const refreshUser = async () => {
+  const refreshUser = useCallback(async () => {
     const {
       data: { session: s },
     } = await supabase.auth.getSession()
     if (!s) {
+      loadedAuthUserIdRef.current = null
       setUser(null)
       return
     }
     try {
       const me = await fetchUser(s.access_token)
       setUser(me)
+      loadedAuthUserIdRef.current = me.id
     } catch {
+      loadedAuthUserIdRef.current = null
       setUser(null)
     }
-  }
+  }, [])
 
   return (
     <AuthContext.Provider value={{ loading, session, user, refreshUser }}>
