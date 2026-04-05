@@ -2,7 +2,7 @@
 
 import { motion } from 'framer-motion'
 import { CheckCircle2, Zap, Star, Mail } from 'lucide-react'
-import Image from 'next/image'
+import FlowAnimationMock from './FlowAnimationMock'
 
 const bullets = [
   {
@@ -104,15 +104,8 @@ export default function AutomatedFlows() {
                 <div className="w-3 h-3 rounded-full bg-red-500/70" />
                 <div className="w-3 h-3 rounded-full bg-amber-500/70" />
                 <div className="w-3 h-3 rounded-full bg-green-500/70" />
-                <span className="ml-3 text-xs font-mono text-white/30">Flow Editor</span>
               </div>
-              <Image
-                src="/landing_page/flow_image.png"
-                alt="Venue Voice automation flow builder showing feedback routing rules"
-                width={800}
-                height={500}
-                className="w-full h-auto"
-              />
+              <FlowAnimationMock />
             </div>
           </motion.div>
 
