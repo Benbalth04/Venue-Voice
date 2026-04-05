@@ -1,7 +1,7 @@
 'use client'
 
 import { motion } from 'framer-motion'
-import { CheckCircle2 } from 'lucide-react'
+import { CheckCircle2, ArrowRight } from 'lucide-react'
 import { ReactNode } from 'react'
 
 export interface FeatureSectionProps {
@@ -13,6 +13,7 @@ export interface FeatureSectionProps {
   screenshot: ReactNode
   reverse?: boolean
   tint?: boolean
+  cta?: { label: string; href: string }
 }
 
 const containerVariants = {
@@ -34,6 +35,7 @@ export default function FeatureSection({
   screenshot,
   reverse = false,
   tint = false,
+  cta,
 }: FeatureSectionProps) {
   return (
     <section
@@ -64,7 +66,7 @@ export default function FeatureSection({
             <motion.h2
               variants={fadeUp}
               className="text-3xl lg:text-4xl font-extrabold text-zinc-900 leading-tight"
-              style={{ fontFamily: 'var(--font-syne)' }}
+              style={{ fontFamily: 'var(--font-bricolage)' }}
             >
               {headline}
             </motion.h2>
@@ -92,6 +94,21 @@ export default function FeatureSection({
                 ))}
               </motion.ul>
             )}
+
+            {cta && (
+              <motion.div variants={fadeUp}>
+                <motion.a
+                  href={cta.href}
+                  whileHover={{ scale: 1.03 }}
+                  whileTap={{ scale: 0.97 }}
+                  className="inline-flex items-center gap-2 h-10 px-5 bg-violet-600 text-white text-sm font-semibold rounded-full hover:bg-violet-700 transition-colors duration-200 self-start"
+                  style={{ fontFamily: 'var(--font-manrope)' }}
+                >
+                  {cta.label}
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </motion.a>
+              </motion.div>
+            )}
           </motion.div>
 
           {/* Screenshot block */}
@@ -117,7 +134,7 @@ export default function FeatureSection({
   )
 }
 
-/* ── Placeholder screenshot components ─────────────────────────── */
+/* ── Screenshot components ─────────────────────────── */
 
 export function SentimentMock() {
   const items = [
@@ -161,45 +178,12 @@ export function SentimentMock() {
   )
 }
 
-export function MultiLocationMock() {
-  const locations = [
-    { name: 'Kensington Bar', city: 'London', rating: 4.7, responses: 142, trend: '+5%' },
-    { name: 'City Centre Cafe', city: 'Manchester', rating: 3.9, responses: 88, trend: '-2%' },
-    { name: 'Rooftop Lounge', city: 'Birmingham', rating: 4.5, responses: 201, trend: '+12%' },
-    { name: 'Harbor Grill', city: 'Bristol', rating: 4.2, responses: 67, trend: '+1%' },
-  ]
-  return (
-    <div className="bg-white p-5">
-      <div className="text-xs font-bold text-zinc-500 uppercase tracking-wide mb-4">All Locations</div>
-      <div className="flex flex-col gap-2">
-        {locations.map((loc) => (
-          <div key={loc.name} className="flex items-center gap-3 p-3 rounded-xl bg-zinc-50 hover:bg-violet-50/50 transition-colors">
-            <div className="w-8 h-8 rounded-lg bg-violet-100 flex items-center justify-center shrink-0">
-              <span className="text-xs font-bold text-violet-600">{loc.name[0]}</span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-semibold text-zinc-800 truncate">{loc.name}</div>
-              <div className="text-xs text-zinc-400">{loc.city}</div>
-            </div>
-            <div className="text-right shrink-0">
-              <div className="text-sm font-bold text-zinc-900">★ {loc.rating}</div>
-              <div className={`text-xs font-medium ${loc.trend.startsWith('+') ? 'text-emerald-500' : 'text-red-500'}`}>
-                {loc.trend}
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
 export function PhotoQuestionMock() {
   return (
     <div className="bg-white p-6">
       <div className="text-xs font-bold text-zinc-500 uppercase tracking-wide mb-4">Survey Preview</div>
       <div className="rounded-2xl bg-zinc-50 border border-zinc-100 p-5">
-        <div className="text-sm font-semibold text-zinc-800 mb-1" style={{ fontFamily: 'var(--font-syne)' }}>
+        <div className="text-sm font-semibold text-zinc-800 mb-1" style={{ fontFamily: 'var(--font-bricolage)' }}>
           How does your table look right now?
         </div>
         <div className="text-xs text-zinc-400 mb-4">Take a quick photo to help us improve.</div>
@@ -231,7 +215,7 @@ export function QRMock() {
             {Array.from({ length: 25 }).map((_, i) => (
               <div
                 key={i}
-                className={`w-2.5 h-2.5 rounded-[1px] ${Math.random() > 0.5 ? 'bg-zinc-800' : 'bg-transparent'}`}
+                className={`w-2.5 h-2.5 rounded-[1px] ${[0,2,4,6,10,12,14,18,20,22,24,1,3,7,9,11,13,17,19,23].includes(i) ? 'bg-zinc-800' : 'bg-transparent'}`}
               />
             ))}
           </div>

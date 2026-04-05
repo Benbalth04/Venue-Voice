@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Menu, X } from 'lucide-react'
+import Link from 'next/link'
 
 export default function Navbar() {
   const [scrolled, setScrolled] = useState(false)
@@ -15,9 +16,8 @@ export default function Navbar() {
   }, [])
 
   const navLinks = [
-    { label: 'How it works', href: '#how-it-works' },
     { label: 'Features', href: '#features' },
-    { label: 'Flows', href: '#flows' },
+    { label: 'Pricing', href: '#pricing' },
   ]
 
   return (
@@ -30,15 +30,13 @@ export default function Navbar() {
     >
       <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
         {/* Logo */}
-        <a href="/" className="flex items-center gap-1.5 group">
-          <span
-            className="text-xl font-bold text-zinc-900 tracking-tight"
-            style={{ fontFamily: 'var(--font-syne)' }}
-          >
-            Venue Voice
-          </span>
-          <span className="w-1.5 h-1.5 rounded-full bg-violet-500 mb-0.5 group-hover:scale-125 transition-transform duration-200" />
-        </a>
+        <Link
+          href="/"
+          className="flex items-center shrink-0 text-xl sm:text-2xl md:text-3xl font-bold text-violet-600 tracking-tight hover:text-violet-700 transition-colors"
+          style={{ fontFamily: 'var(--font-bricolage)' }}
+        >
+          Venue Voice
+        </Link>
 
         {/* Desktop nav */}
         <nav className="hidden md:flex items-center gap-8">
@@ -61,16 +59,16 @@ export default function Navbar() {
             className="text-sm font-medium text-zinc-600 hover:text-zinc-900 transition-colors"
             style={{ fontFamily: 'var(--font-manrope)' }}
           >
-            Sign in
+            Log in
           </a>
           <motion.a
-            href="#waitlist"
+            href="/signup"
             whileHover={{ scale: 1.03 }}
             whileTap={{ scale: 0.97 }}
             className="h-9 px-5 bg-violet-600 text-white text-sm font-semibold rounded-full hover:bg-violet-700 transition-colors duration-200 flex items-center"
             style={{ fontFamily: 'var(--font-manrope)' }}
           >
-            Join waitlist
+            Start your free trial
           </motion.a>
         </div>
 
@@ -104,12 +102,20 @@ export default function Navbar() {
               </a>
             ))}
             <a
-              href="#waitlist"
+              href="/login"
+              onClick={() => setMobileOpen(false)}
+              className="text-sm font-medium text-zinc-600 hover:text-zinc-900 py-1"
+              style={{ fontFamily: 'var(--font-manrope)' }}
+            >
+              Log in
+            </a>
+            <a
+              href="/signup"
               onClick={() => setMobileOpen(false)}
               className="mt-2 h-10 px-5 bg-violet-600 text-white text-sm font-semibold rounded-full flex items-center justify-center"
               style={{ fontFamily: 'var(--font-manrope)' }}
             >
-              Join waitlist
+              Get started free
             </a>
           </nav>
         </motion.div>

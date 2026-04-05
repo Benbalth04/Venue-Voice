@@ -1,22 +1,23 @@
 import Navbar from '@/components/landing/Navbar'
 import Hero from '@/components/landing/Hero'
-import AutomatedFlows from '@/components/landing/AutomatedFlows'
 import HowItWorks from '@/components/landing/HowItWorks'
+import AutomatedFlows from '@/components/landing/AutomatedFlows'
 import FeatureSection, {
   SentimentMock,
-  MultiLocationMock,
   PhotoQuestionMock,
   QRMock,
 } from '@/components/landing/FeatureSection'
+import PricingSection from '@/components/landing/PricingSection'
 import CTASection from '@/components/landing/CTASection'
+import Image from 'next/image'
 
 export default function Home() {
   return (
     <main className="overflow-x-hidden">
       <Navbar />
       <Hero />
-      <AutomatedFlows />
       <HowItWorks />
+      <AutomatedFlows />
 
       {/* AI Sentiment Analysis */}
       <FeatureSection
@@ -42,7 +43,15 @@ export default function Home() {
           'Per-location benchmarking and trend comparisons',
           'Role-based access — managers see their own venue',
         ]}
-        screenshot={<MultiLocationMock />}
+        screenshot={
+          <Image
+            src="/landing_page/locations_image.png"
+            alt="Multi-location management dashboard showing all venues"
+            width={720}
+            height={460}
+            className="w-full h-auto"
+          />
+        }
         reverse
         tint
       />
@@ -63,7 +72,7 @@ export default function Home() {
       {/* QR + Review Control */}
       <FeatureSection
         label="Review Control"
-        headline="Take control of your reviews."
+        headline="Take control of your Google reviews."
         body="Use reusable QR codes to capture feedback at the point of experience. Route happy customers straight to Google Reviews. Keep critical feedback in your private inbox where you can act on it first."
         bullets={[
           'Permanent, reusable QR codes per location',
@@ -73,8 +82,10 @@ export default function Home() {
         screenshot={<QRMock />}
         reverse
         tint
+        cta={{ label: 'Start protecting your reviews', href: '/signup' }}
       />
 
+      <PricingSection />
       <CTASection />
     </main>
   )

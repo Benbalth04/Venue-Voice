@@ -1,7 +1,8 @@
 'use client'
 
 import { motion } from 'framer-motion'
-import { CheckCircle2, Zap, Mail, Star, ArrowRight } from 'lucide-react'
+import { CheckCircle2, Zap, Star, Mail } from 'lucide-react'
+import Image from 'next/image'
 
 const bullets = [
   {
@@ -17,128 +18,9 @@ const bullets = [
   {
     icon: Mail,
     title: 'Automate internal notifications',
-    desc: 'Email, Slack, or webhook — reach your team however they work.',
+    desc: 'Create notification groups to alert the right people at the right time.',
   },
 ]
-
-function MockFlowBuilder() {
-  return (
-    <div className="w-full rounded-2xl overflow-hidden" style={{ background: '#1A1030' }}>
-      {/* Window chrome */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
-        <div className="w-3 h-3 rounded-full bg-red-500/70" />
-        <div className="w-3 h-3 rounded-full bg-amber-500/70" />
-        <div className="w-3 h-3 rounded-full bg-green-500/70" />
-        <span className="ml-3 text-xs font-mono text-white/30">Flow Editor — Alert on Low Rating</span>
-      </div>
-
-      {/* Flow canvas */}
-      <div className="p-6 relative" style={{ minHeight: 320 }}>
-
-        {/* SVG connecting lines */}
-        <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 0 }}>
-          {/* Trigger → Condition */}
-          <line x1="160" y1="80" x2="260" y2="80" stroke="rgba(139,92,246,0.4)" strokeWidth="2" strokeDasharray="6 4" />
-          {/* Condition → Action 1 */}
-          <line x1="400" y1="70" x2="500" y2="50" stroke="rgba(139,92,246,0.4)" strokeWidth="2" strokeDasharray="6 4" />
-          {/* Condition → Action 2 */}
-          <line x1="400" y1="90" x2="500" y2="130" stroke="rgba(34,197,94,0.3)" strokeWidth="2" strokeDasharray="6 4" />
-        </svg>
-
-        <div className="relative z-10 flex flex-col gap-8">
-          {/* Row 1: Trigger node */}
-          <div className="flex items-start gap-8 flex-wrap">
-            <FlowNode
-              label="TRIGGER"
-              title="Survey Submitted"
-              color="violet"
-              icon="⚡"
-            />
-            <div className="flex items-center self-center text-white/20">
-              <ArrowRight className="w-5 h-5" />
-            </div>
-            <FlowNode
-              label="CONDITION"
-              title="Rating ≤ 2 stars"
-              color="amber"
-              icon="⚖️"
-            />
-          </div>
-
-          {/* Row 2: Action nodes */}
-          <div className="flex items-start gap-6 flex-wrap ml-0 lg:ml-48">
-            <FlowNode
-              label="ACTION"
-              title="Send Email Alert"
-              subtitle="ops@venue.com"
-              color="red"
-              icon="📧"
-            />
-            <FlowNode
-              label="ACTION"
-              title="Create Internal Note"
-              subtitle="Manager notified"
-              color="emerald"
-              icon="📋"
-            />
-          </div>
-        </div>
-
-        {/* Execution badge */}
-        <motion.div
-          initial={{ opacity: 0, scale: 0.9 }}
-          whileInView={{ opacity: 1, scale: 1 }}
-          transition={{ delay: 0.6 }}
-          className="absolute bottom-4 right-4 flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold"
-          style={{ background: 'rgba(34,197,94,0.15)', color: '#4ADE80', border: '1px solid rgba(34,197,94,0.25)' }}
-        >
-          <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
-          Flow active — 14 executions today
-        </motion.div>
-      </div>
-    </div>
-  )
-}
-
-function FlowNode({
-  label,
-  title,
-  subtitle,
-  color,
-  icon,
-}: {
-  label: string
-  title: string
-  subtitle?: string
-  color: 'violet' | 'amber' | 'red' | 'emerald'
-  icon: string
-}) {
-  const colors = {
-    violet: { bg: 'rgba(139,92,246,0.15)', border: 'rgba(139,92,246,0.35)', label: '#A78BFA' },
-    amber: { bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.3)', label: '#FCD34D' },
-    red: { bg: 'rgba(239,68,68,0.12)', border: 'rgba(239,68,68,0.3)', label: '#FCA5A5' },
-    emerald: { bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.3)', label: '#6EE7B7' },
-  }
-  const c = colors[color]
-
-  return (
-    <div
-      className="rounded-xl px-4 py-3 min-w-[150px] max-w-[180px]"
-      style={{ background: c.bg, border: `1px solid ${c.border}` }}
-    >
-      <div className="text-[9px] font-bold tracking-widest mb-1.5" style={{ color: c.label }}>
-        {label}
-      </div>
-      <div className="flex items-center gap-2">
-        <span className="text-base">{icon}</span>
-        <div>
-          <div className="text-xs font-semibold text-white leading-tight">{title}</div>
-          {subtitle && <div className="text-[10px] text-white/40 mt-0.5">{subtitle}</div>}
-        </div>
-      </div>
-    </div>
-  )
-}
 
 const containerVariants = {
   hidden: {},
@@ -167,7 +49,7 @@ export default function AutomatedFlows() {
 
       <div className="relative max-w-7xl mx-auto px-6">
 
-        {/* Section header — centered */}
+        {/* Section header */}
         <motion.div
           initial={{ opacity: 0, y: 24 }}
           whileInView={{ opacity: 1, y: 0 }}
@@ -181,32 +63,31 @@ export default function AutomatedFlows() {
               color: '#A78BFA',
               background: 'rgba(139,92,246,0.15)',
               border: '1px solid rgba(139,92,246,0.25)',
-              textShadow: '0 0 20px rgba(139,92,246,0.5)',
             }}
           >
             Automated Flows
           </span>
           <h2
             className="text-4xl lg:text-5xl xl:text-6xl font-extrabold text-white leading-tight max-w-3xl mx-auto"
-            style={{ fontFamily: 'var(--font-syne)' }}
+            style={{ fontFamily: 'var(--font-bricolage)' }}
           >
-            Automate your entire
+            Stop negative reviews
             <br />
-            <span style={{ color: '#A78BFA' }}>feedback pipeline.</span>
+            <span style={{ color: '#A78BFA' }}>before they go live.</span>
           </h2>
           <p
             className="mt-5 text-lg max-w-xl mx-auto leading-relaxed"
             style={{ color: 'rgba(255,255,255,0.45)', fontFamily: 'var(--font-manrope)' }}
           >
-            Instantly respond to customer sentiment with smart workflows. Route feedback,
-            trigger alerts, and take action without lifting a finger.
+            Build smart workflows that automatically route feedback, send alerts, and
+            redirect happy customers to your Google review page — without any manual work.
           </p>
         </motion.div>
 
-        {/* Main layout: flow builder + bullets */}
+        {/* Main layout: screenshot + bullets */}
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-12 items-center">
 
-          {/* Flow builder screenshot */}
+          {/* Flow screenshot */}
           <motion.div
             initial={{ opacity: 0, scale: 0.96 }}
             whileInView={{ opacity: 1, scale: 1 }}
@@ -217,7 +98,22 @@ export default function AutomatedFlows() {
               borderRadius: 16,
             }}
           >
-            <MockFlowBuilder />
+            <div className="w-full rounded-2xl overflow-hidden" style={{ background: '#1A1030' }}>
+              {/* Window chrome */}
+              <div className="flex items-center gap-2 px-4 py-3 border-b" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
+                <div className="w-3 h-3 rounded-full bg-red-500/70" />
+                <div className="w-3 h-3 rounded-full bg-amber-500/70" />
+                <div className="w-3 h-3 rounded-full bg-green-500/70" />
+                <span className="ml-3 text-xs font-mono text-white/30">Flow Editor</span>
+              </div>
+              <Image
+                src="/landing_page/flow_image.png"
+                alt="Venue Voice automation flow builder showing feedback routing rules"
+                width={800}
+                height={500}
+                className="w-full h-auto"
+              />
+            </div>
           </motion.div>
 
           {/* Feature bullets */}
