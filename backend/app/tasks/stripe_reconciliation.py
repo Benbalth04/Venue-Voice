@@ -23,12 +23,24 @@ logger = logging.getLogger(__name__)
 
 def stripe_reconciliation_job() -> None:
     """Entry point called by APScheduler.  Opens its own DB session."""
+    from datetime import datetime, timezone
+
     from ..db.postgres import SessionLocal
+    from ..models.postgres_model import JobRun
     from ..services.stripe_service import sync_subscription_from_stripe_object
+
+    triggered_at = datetime.now(timezone.utc)
+
+    # Separate session for the audit record so it persists even if the job session fails.
+    run_db = SessionLocal()
+    run = JobRun(job_name="stripe_reconciliation", triggered_at=triggered_at, status="running", data={})
+    run_db.add(run)
+    run_db.commit()
 
     db = SessionLocal()
     synced = 0
     errors = 0
+    status = "failed"
 
     try:
         logger.info("Stripe reconciliation job starting")
@@ -67,8 +79,16 @@ def stripe_reconciliation_job() -> None:
             synced,
             errors,
         )
+        status = "success"
 
     except Exception:
         logger.exception("Unhandled error in Stripe reconciliation job")
     finally:
         db.close()
+        completed_at = datetime.now(timezone.utc)
+        run.completed_at = completed_at
+        run.duration_ms = int((completed_at - triggered_at).total_seconds() * 1000)
+        run.status = status
+        run.data = {"subscriptions_synced": synced, "subscriptions_failed": errors}
+        run_db.commit()
+        run_db.close()

@@ -19,19 +19,41 @@ scheduler = BackgroundScheduler(timezone="UTC")
 
 def reconciliation_job() -> None:
     """Entry point called by APScheduler. Opens its own DB session."""
+    from datetime import datetime, timezone
+
     from ..db.postgres import SessionLocal
+    from ..models.postgres_model import JobRun
     from ..services.email import reconcile_pending_emails, reconcile_stripe_billing_emails
 
+    triggered_at = datetime.now(timezone.utc)
+
+    # Separate session for the audit record so it persists even if the job session fails.
+    run_db = SessionLocal()
+    run = JobRun(job_name="email_reconciliation", triggered_at=triggered_at, status="running", data={})
+    run_db.add(run)
+    run_db.commit()
+
     db = SessionLocal()
+    status = "failed"
+    data: dict = {}
     try:
         logger.debug("Email reconciliation job starting")
-        reconcile_pending_emails(db)
-        reconcile_stripe_billing_emails(db)
+        flow_result = reconcile_pending_emails(db)
+        stripe_result = reconcile_stripe_billing_emails(db)
+        data = {"flow_emails": flow_result, "stripe_emails": stripe_result}
+        status = "success"
         logger.debug("Email reconciliation job complete")
     except Exception:
         logger.exception("Unhandled error in email reconciliation job")
     finally:
         db.close()
+        completed_at = datetime.now(timezone.utc)
+        run.completed_at = completed_at
+        run.duration_ms = int((completed_at - triggered_at).total_seconds() * 1000)
+        run.status = status
+        run.data = data
+        run_db.commit()
+        run_db.close()
 
 
 def start_scheduler() -> None:

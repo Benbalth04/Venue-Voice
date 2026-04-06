@@ -486,6 +486,21 @@ CREATE INDEX idx_email_events_event_category ON email_events(event_category);
 CREATE INDEX idx_email_events_stripe_event_id ON email_events(stripe_event_id) WHERE stripe_event_id IS NOT NULL;
 
 --------------------------------------------------
+-- JOB RUNS
+--------------------------------------------------
+CREATE TABLE job_runs (
+    id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    job_name       TEXT NOT NULL,
+    triggered_at   TIMESTAMP NOT NULL,
+    completed_at   TIMESTAMP,
+    duration_ms    INTEGER,
+    status         TEXT NOT NULL CHECK (status IN ('running', 'success', 'failed')),
+    data           JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX idx_job_runs_job_name     ON job_runs(job_name);
+CREATE INDEX idx_job_runs_triggered_at ON job_runs(triggered_at);
+
+--------------------------------------------------
 -- AI ANALYSIS
 --------------------------------------------------
 CREATE TABLE ai_analysis (
