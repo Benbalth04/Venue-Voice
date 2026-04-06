@@ -80,7 +80,7 @@ export default function AutomatedFlows() {
             style={{ color: 'rgba(255,255,255,0.45)', fontFamily: 'var(--font-manrope)' }}
           >
             Build smart workflows that automatically route feedback, send alerts, and
-            redirect happy customers to your Google review page — without any manual work.
+            redirect happy customers to your Google review page.
           </p>
         </motion.div>
 

@@ -15,19 +15,19 @@ const FEATURES = [
     icon: GitBranch,
     title: 'Smart Feedback Routing',
     description:
-      'Automatically route feedback based on sentiment. Direct happy customers to leave Google reviews while capturing negative feedback privately — before it impacts your rating.',
+      'Automatically route feedback based on sentiment. Direct happy customers to leave Google reviews while capturing negative feedback privately before it impacts your rating.',
   },
   {
     icon: QrCode,
     title: 'Flexible QR Codes',
     description:
-      'Create QR codes once and reuse them forever. Update what each code links to without ever reprinting materials, saving time and cost while staying agile.',
+      'Create QR codes once and reuse them forever. Update which location and survey each code links to without ever reprinting materials, saving time and cost while staying agile.',
   },
   {
     icon: BellRing,
     title: 'Real-Time Alerts',
     description:
-      'Set custom rules to trigger instant alerts when negative feedback arrives. Your team knows exactly when and where to act — before small issues become big problems.',
+      'Set custom rules to trigger instant alerts when negative feedback arrives. Allowing your team to know exactly when and where to act before small issues become big problems.',
   },
   {
     icon: Sparkles,
@@ -45,7 +45,7 @@ const FEATURES = [
     icon: Users,
     title: 'Team Access & Roles',
     description:
-      'Give every team member the right level of access. From operations managers who configure surveys to staff who only need to view results — everyone gets what they need.',
+      'Give every team member the right level of access. From operations managers who configure surveys to staff who only need to view results, everyone gets what they need.',
   },
 ]
 
