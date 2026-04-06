@@ -12,27 +12,32 @@ export default function TermsPage() {
   return (
     <LegalDocumentShell
       title="Venue Voice – Terms and Conditions"
-      lastUpdated={{ display: "30/03/2026", isoDate: "2026-03-30" }}
+      lastUpdated={{ display: "30 March 2026", isoDate: "2026-03-30" }}
     >
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-zinc-900">1. Agreement to Terms</h2>
         <p>
           These Terms and Conditions (&quot;Terms&quot;) govern your access to and use of the Venue Voice platform
-          (&quot;Service&quot;) (&quot;we&quot;, &quot;us&quot;, &quot;our&quot;).
+          (&quot;Service&quot;), operated by Venue Voice (&quot;we&quot;, &quot;us&quot;, &quot;our&quot;).
         </p>
-        <p>By accessing or using the Service, you agree to be bound by these Terms.</p>
-        <p>If you do not agree, you must not use the Service.</p>
+        <p>
+          By accessing or using the Service, you agree to be bound by these Terms. If you do not agree, you must not use
+          the Service.
+        </p>
       </section>
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-zinc-900">2. Description of Service</h2>
-        <p>Venue Voice provides a platform that enables businesses to:</p>
+        <p>
+          Venue Voice provides a platform that enables businesses to collect, manage, and analyse customer feedback.
+          Core features include:
+        </p>
         <BulletList
           items={[
-            "Collect customer feedback via QR codes and surveys",
-            "Analyse feedback using automated tools, including artificial intelligence",
-            "Configure automated workflows, alerts, and routing of feedback",
-            "Access dashboards and analytics relating to customer sentiment",
+            "Collecting customer feedback via QR codes and surveys",
+            "Analysing feedback using automated tools, including artificial intelligence",
+            "Configuring automated workflows, alerts, and feedback routing",
+            "Accessing dashboards and analytics relating to customer sentiment",
           ]}
         />
         <p>We may modify, update, or discontinue features at any time.</p>
@@ -41,38 +46,37 @@ export default function TermsPage() {
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-zinc-900">3. Eligibility</h2>
         <p>
-          You must be at least 18 years old and have the legal capacity to enter into a binding agreement to use the
-          Service.
+          You must be at least 18 years old and have the legal capacity to enter into a binding agreement in order to
+          use the Service.
         </p>
       </section>
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-zinc-900">4. Accounts</h2>
-        <p>To use certain features, you must create an account.</p>
-        <p>You agree to:</p>
+        <p>To access certain features, you must create an account. By doing so, you agree to:</p>
         <BulletList
           items={[
-            "Provide accurate and complete information",
-            "Keep your login credentials secure",
-            "Be responsible for all activity under your account",
+            "Provide accurate and complete registration information",
+            "Keep your login credentials secure and confidential",
+            "Accept responsibility for all activity that occurs under your account",
           ]}
         />
-        <p>We are not liable for any unauthorised access resulting from your failure to secure your account.</p>
+        <p>We are not liable for any loss or damage resulting from your failure to keep your account credentials secure.</p>
       </section>
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-zinc-900">5. Acceptable Use</h2>
-        <p>You agree not to:</p>
+        <p>You agree to use the Service only for lawful purposes and in a manner consistent with these Terms. You must not:</p>
         <BulletList
           items={[
-            "Use the Service for unlawful purposes",
+            "Use the Service for any unlawful or fraudulent purpose",
             "Upload or collect data in violation of applicable laws",
-            "Interfere with or disrupt the Service",
-            "Attempt to reverse engineer or exploit the platform",
+            "Interfere with or disrupt the operation of the Service or its infrastructure",
+            "Attempt to reverse engineer, decompile, or otherwise exploit the platform",
             "Use the Service to send spam or unsolicited communications",
           ]}
         />
-        <p>We may suspend or terminate access if you breach these Terms.</p>
+        <p>We reserve the right to suspend or terminate access if you breach these Terms.</p>
       </section>
 
       <section className="space-y-3">
@@ -81,127 +85,239 @@ export default function TermsPage() {
           You may submit or collect data through the Service, including feedback from your customers (&quot;Customer
           Data&quot;).
         </p>
-        <p>You:</p>
         <BulletList
           items={[
-            "Retain ownership of your Customer Data",
-            "Are responsible for ensuring you have the right to collect and use that data",
+            "You retain ownership of all Customer Data you submit through the Service.",
+            "You are solely responsible for ensuring you have the necessary rights, consents, and authorisations to collect and use that data.",
+            "You must comply with all applicable privacy and data protection laws, including the Privacy Act 1988 (Cth) and the Australian Privacy Principles.",
           ]}
         />
-        <p>You must comply with all applicable privacy and data protection laws.</p>
       </section>
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-zinc-900">7. Data Processing and AI Use</h2>
-        <p>The Service uses automated systems, including artificial intelligence, to analyse and process Customer Data.</p>
-        <p>You acknowledge that:</p>
-        <BulletList
-          items={[
-            "Outputs may not always be accurate or complete",
-            "Insights are provided for general informational purposes only",
-          ]}
-        />
-        <p>You are responsible for verifying and acting on any insights generated.</p>
-      </section>
-
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-zinc-900">8. Third-Party Integrations</h2>
-        <p>The Service may integrate with third-party platforms (e.g. review platforms, email providers).</p>
-        <p>We are not responsible for:</p>
-        <BulletList
-          items={[
-            "The availability or functionality of third-party services",
-            "Any data shared with or processed by third parties",
-          ]}
-        />
-        <p>Your use of third-party services is subject to their terms.</p>
-      </section>
-
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-zinc-900">9. Fees and Payments</h2>
-        <p>Certain features of the Service require payment.</p>
-        <p>By subscribing to a paid plan, you agree to:</p>
-        <BulletList items={["Pay all applicable fees", "Provide accurate billing information"]} />
-        <p>Subscriptions may:</p>
-        <BulletList
-          items={["Renew automatically unless cancelled", "Be subject to pricing changes with reasonable notice"]}
-        />
-        <p>All fees are non-refundable unless required by law.</p>
-      </section>
-
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-zinc-900">10. Cancellation and Termination</h2>
-        <p>You may cancel your subscription at any time.</p>
-        <p>We may suspend or terminate your access if:</p>
-        <BulletList items={["You breach these Terms", "Required by law", "We discontinue the Service"]} />
-        <p>Upon termination:</p>
-        <BulletList items={["Your access will cease", "We may delete your data after a reasonable period"]} />
-      </section>
-
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-zinc-900">11. Intellectual Property</h2>
-        <p>All rights, title, and interest in the Service (excluding Customer Data) remain with us.</p>
-        <p>You are granted a limited, non-exclusive, non-transferable licence to use the Service.</p>
-        <p>You must not:</p>
-        <BulletList items={["Copy, modify, or distribute the platform", "Use our branding without permission"]} />
-      </section>
-
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-zinc-900">12. Service Availability</h2>
-        <p>We aim to provide a reliable Service but do not guarantee:</p>
-        <BulletList items={["Continuous availability", "Error-free operation", "Uninterrupted access"]} />
-        <p>The Service is provided &quot;as is&quot; and &quot;as available&quot;.</p>
-      </section>
-
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-zinc-900">13. Limitation of Liability</h2>
-        <p>To the maximum extent permitted by law:</p>
-        <p>We are not liable for:</p>
-        <BulletList
-          items={[
-            "Loss of profits, revenue, or business",
-            "Loss of data",
-            "Indirect or consequential damages",
-          ]}
-        />
-        <p>Our total liability is limited to the amount you paid us in the 12 months preceding the claim.</p>
-      </section>
-
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-zinc-900">14. Indemnity</h2>
-        <p>You agree to indemnify and hold us harmless from any claims arising from:</p>
-        <BulletList items={["Your use of the Service", "Your Customer Data", "Your breach of these Terms"]} />
-      </section>
-
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-zinc-900">15. Privacy</h2>
         <p>
-          Your use of the Service is also governed by our{" "}
+          The Service uses automated systems, including artificial intelligence, to analyse and process Customer Data. By
+          using the Service, you acknowledge that:
+        </p>
+        <BulletList
+          items={[
+            "AI-generated outputs may not always be accurate, complete, or suitable for your specific purposes.",
+            "Insights provided by the Service are for general informational purposes only and do not constitute professional advice.",
+            "You are responsible for independently verifying and making decisions based on any insights generated.",
+          ]}
+        />
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-zinc-900">8. Review Management and ACCC Compliance</h2>
+        <p>
+          Venue Voice is designed to support lawful and ethical management of customer feedback. Our platform operates
+          in accordance with Australian Consumer Law and the guidelines published by the Australian Competition and
+          Consumer Commission (ACCC).
+        </p>
+
+        <div className="space-y-3 pt-1">
+          <h3 className="text-base font-semibold text-zinc-900">8.1 Prohibition on Suppressing Genuine Negative Reviews</h3>
+          <p>
+            Venue Voice includes features which allow you to conditionally invite users to provide reviews; however, you
+            must not use our platform, or any of its features, to suppress, hide, delete, or otherwise obscure genuine
+            negative reviews or feedback from real customers. Under Australian Consumer Law, suppressing honest customer
+            feedback to create a false or misleading impression of your business may constitute misleading or deceptive
+            conduct and can result in significant penalties.
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          <h3 className="text-base font-semibold text-zinc-900">8.2 When Review Removal Is Permitted</h3>
+          <p>
+            You may report or request the removal of a review only where there are legitimate grounds to do so.
+            Permitted grounds include reviews that are:
+          </p>
+          <BulletList
+            items={[
+              "Fake or spam: not left by a genuine customer or generated artificially",
+              "Defamatory: containing false statements of fact that damage your reputation",
+              "Offensive or abusive: containing inappropriate, threatening, or harassing content",
+              "In breach of the relevant review platform's community guidelines or policies",
+            ]}
+          />
+        </div>
+
+        <div className="space-y-3">
+          <h3 className="text-base font-semibold text-zinc-900">8.3 Extortion and Review Blackmail</h3>
+          <p>
+            If a customer threatens to leave a negative review in order to obtain a benefit they are not entitled to
+            (such as an unwarranted refund or free service), this may constitute extortion or blackmail under Australian
+            law. In such cases, you may report the review through the relevant platform and, where appropriate, seek
+            independent legal advice.
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          <h3 className="text-base font-semibold text-zinc-900">8.4 Recommended Approach</h3>
+          <p>
+            Rather than seeking removal of negative reviews, we encourage you to respond to reviews professionally and
+            constructively. Major review platforms including Google allow businesses to publicly reply to reviews, which
+            is generally considered a more effective and legally appropriate way to address concerns and correct
+            inaccuracies.
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          <h3 className="text-base font-semibold text-zinc-900">8.5 Your Responsibility</h3>
+          <p>
+            You are solely responsible for ensuring your use of the Service complies with all applicable laws, including
+            the Australian Consumer Law and the Competition and Consumer Act 2010 (Cth). Venue Voice does not accept
+            liability for any penalties, fines, or claims arising from your misuse of the platform in connection with
+            review management.
+          </p>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-zinc-900">9. Third-Party Integrations</h2>
+        <p>
+          The Service may integrate with third-party platforms, such as review platforms and email service providers. We
+          are not responsible for:
+        </p>
+        <BulletList
+          items={[
+            "The availability, reliability, or functionality of any third-party service",
+            "Any data shared with or processed by third parties as a result of your use of those integrations",
+          ]}
+        />
+        <p>Your use of any third-party services is subject to their own terms and conditions.</p>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-zinc-900">10. Fees and Payments</h2>
+        <p>Certain features of the Service require a paid subscription. By subscribing, you agree to:</p>
+        <BulletList
+          items={[
+            "Pay all applicable fees as set out in your chosen plan",
+            "Provide accurate and current billing information",
+          ]}
+        />
+        <p>Please note:</p>
+        <BulletList
+          items={[
+            "Subscriptions renew automatically at the end of each billing period unless cancelled prior to renewal.",
+            "We may adjust pricing with reasonable advance notice.",
+            "All fees are non-refundable except where required by law, including the Australian Consumer Law.",
+          ]}
+        />
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-zinc-900">11. Cancellation and Termination</h2>
+        <p>You may cancel your subscription at any time through your account settings.</p>
+        <p>We may suspend or terminate your access to the Service if:</p>
+        <BulletList
+          items={[
+            "You breach these Terms",
+            "We are required to do so by law",
+            "We elect to discontinue the Service",
+          ]}
+        />
+        <p>
+          Upon termination, your access to the Service will cease. We may retain or delete your data in accordance with
+          our{" "}
           <Link href="/legal/privacy" className="font-medium text-violet-700 underline-offset-2 hover:underline">
             Privacy Policy
-          </Link>
-          .
+          </Link>{" "}
+          and applicable law.
         </p>
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-zinc-900">16. Changes to Terms</h2>
-        <p>We may update these Terms from time to time.</p>
-        <p>We will notify you of material changes.</p>
-        <p>Continued use of the Service constitutes acceptance of the updated Terms.</p>
+        <h2 className="text-lg font-semibold text-zinc-900">12. Intellectual Property</h2>
+        <p>All rights, title, and interest in the Service (excluding Customer Data) remain with Venue Voice or its licensors.</p>
+        <p>
+          You are granted a limited, non-exclusive, non-transferable licence to access and use the Service in accordance
+          with these Terms. You must not:
+        </p>
+        <BulletList
+          items={[
+            "Copy, modify, adapt, or distribute any part of the platform",
+            "Use our name, logo, or branding without our prior written permission",
+          ]}
+        />
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-zinc-900">17. Governing Law</h2>
-        <p>These Terms are governed by the laws of Queensland, Australia.</p>
-        <p>You submit to the exclusive jurisdiction of the courts of Queensland.</p>
+        <h2 className="text-lg font-semibold text-zinc-900">13. Service Availability</h2>
+        <p>We take reasonable steps to provide a reliable Service, but we do not guarantee:</p>
+        <BulletList items={["Continuous or uninterrupted availability", "Error-free operation at all times"]} />
+        <p>The Service is provided on an &quot;as is&quot; and &quot;as available&quot; basis.</p>
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-zinc-900">18. Contact</h2>
-        <p>If you have any questions, contact:</p>
+        <h2 className="text-lg font-semibold text-zinc-900">14. Limitation of Liability</h2>
+        <p>To the maximum extent permitted by law, Venue Voice is not liable for:</p>
+        <BulletList
+          items={[
+            "Loss of profits, revenue, or business opportunity",
+            "Loss of data or corruption of data",
+            "Indirect, incidental, or consequential loss or damage of any kind",
+          ]}
+        />
+        <p>
+          Where liability cannot be excluded, our total aggregate liability to you is limited to the fees you paid us in
+          the 12 months immediately preceding the relevant claim.
+        </p>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-zinc-900">15. Indemnity</h2>
+        <p>
+          You agree to indemnify, defend, and hold harmless Venue Voice and its officers, employees, and agents from and
+          against any claims, liabilities, costs, and expenses (including reasonable legal fees) arising from:
+        </p>
+        <BulletList
+          items={[
+            "Your use of the Service",
+            "Your Customer Data",
+            "Your breach of these Terms or any applicable law",
+          ]}
+        />
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-zinc-900">16. Privacy</h2>
+        <p>
+          Your use of the Service is governed by our{" "}
+          <Link href="/legal/privacy" className="font-medium text-violet-700 underline-offset-2 hover:underline">
+            Privacy Policy
+          </Link>
+          , which is incorporated into these Terms by reference. Please read our Privacy Policy to understand how we
+          collect, use, and protect your personal information.
+        </p>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-zinc-900">17. Changes to These Terms</h2>
+        <p>
+          We may update these Terms from time to time to reflect changes to our Service, legal requirements, or business
+          practices. We will notify you of any material changes prior to them taking effect. Your continued use of the
+          Service after such notice constitutes your acceptance of the updated Terms.
+        </p>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-zinc-900">18. Governing Law</h2>
+        <p>
+          These Terms are governed by the laws of Queensland, Australia. You agree to submit to the exclusive jurisdiction
+          of the courts of Queensland for any disputes arising in connection with these Terms or the Service.
+        </p>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-zinc-900">19. Contact Us</h2>
+        <p>If you have any questions about these Terms or the Service, please contact us at:</p>
         <p className="font-medium text-zinc-900">Venue Voice</p>
         <p>
+          Email:{" "}
           <a
             href="mailto:info@venuevoice.com.au"
             className="font-medium text-violet-700 underline-offset-2 hover:underline"
