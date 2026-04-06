@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Syne, Manrope, Bricolage_Grotesque } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
+import { SpeedInsights } from "@vercel/speed-insights/next"
 import "./globals.css";
 import { AuthProvider } from "@/contexts/AuthContext"
 
@@ -48,6 +49,7 @@ export default function RootLayout({
       <body className={`${geistSans.variable} ${geistMono.variable} ${syne.variable} ${manrope.variable} ${bricolage.variable} antialiased`}>
         <AuthProvider>{children}</AuthProvider>
         <Analytics />
+        <SpeedInsights />
       </body>
     </html>
   );
