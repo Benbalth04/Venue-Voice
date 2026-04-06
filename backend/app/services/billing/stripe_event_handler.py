@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 import stripe
@@ -26,10 +25,11 @@ from ..email.constants import EMAIL_CATEGORY_STRIPE_BILLING
 from .stripe_billing_display import coerce_stripe_unix_timestamp
 from .stripe_event_mapper import StripeEmailJob, map_stripe_event
 from ..stripe_service import sync_subscription_from_stripe_object
+from ...core.config import settings
 
 logger = logging.getLogger(__name__)
 
-_FRONTEND_ORIGIN = (os.getenv("FRONTEND_ORIGIN") or "").rstrip("/")
+_FRONTEND_ORIGIN = settings.app_origin.rstrip("/")
 
 # Expand Product on the subscription item price so emails show product name, not bare price IDs.
 _SUBSCRIPTION_RETRIEVE_EXPAND: list[str] = ["items.data.price.product"]

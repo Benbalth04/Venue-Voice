@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from datetime import datetime, timezone
 from typing import Any
 
@@ -21,10 +20,11 @@ from .constants import (
 from .db_helpers import MAX_RETRIES, increment_email_retry, mark_email_events
 from .retry import call_with_exponential_backoff
 from .stripe_email_templates import ALL_STRIPE_TEMPLATES, render_stripe_template
+from ...core.config import settings
 
 logger = logging.getLogger(__name__)
 
-_RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+_RESEND_API_KEY = settings.resend_api_key
 
 
 def send_stripe_email(
@@ -62,11 +62,14 @@ def send_stripe_email(
     logger.info("Stripe billing email sent template=%s to=%s", template, to_email)
 
 
-def process_pending_stripe_emails(db: Session, *, limit: int = 50) -> None:
-    """Claim pending stripe_billing rows and send one Resend message per row."""
+def process_pending_stripe_emails(db: Session, *, limit: int = 50) -> dict:
+    """Claim pending stripe_billing rows and send one Resend message per row.
+
+    Returns a dict with keys: sent, failed.
+    """
     if not _RESEND_API_KEY:
         logger.warning("RESEND_API_KEY not configured — skipping Stripe email queue")
-        return
+        return {"sent": 0, "failed": 0}
 
     id_rows = (
         db.query(EmailEventORM.id)
@@ -81,7 +84,7 @@ def process_pending_stripe_emails(db: Session, *, limit: int = 50) -> None:
     )
     claim_ids = [r[0] for r in id_rows]
     if not claim_ids:
-        return
+        return {"sent": 0, "failed": 0}
 
     stmt = (
         sa_update(EmailEventORM)
@@ -99,15 +102,17 @@ def process_pending_stripe_emails(db: Session, *, limit: int = 50) -> None:
     db.commit()
 
     if not rows:
-        return
+        return {"sent": 0, "failed": 0}
 
     processed = 0
+    failed = 0
     for row in rows:
         eid, recipient, template, ctx = row[0], row[1], row[2], row[3] or {}
         if not recipient or not template:
             mark_email_events(
                 db, [eid], status="failed_permanent", error="Missing recipient or template_name"
             )
+            failed += 1
             continue
         try:
             send_stripe_email(to_email=recipient, template=template, context=dict(ctx))
@@ -121,14 +126,20 @@ def process_pending_stripe_emails(db: Session, *, limit: int = 50) -> None:
                 template,
             )
             increment_email_retry(db, [eid], error=str(exc))
+            failed += 1
 
     if processed:
         logger.info("Stripe email queue: sent %d message(s)", processed)
+    return {"sent": processed, "failed": failed}
 
 
-def reconcile_stripe_billing_emails(db: Session) -> None:
-    """Scheduler entry: drain pending Stripe billing emails."""
+def reconcile_stripe_billing_emails(db: Session) -> dict:
+    """Scheduler entry: drain pending Stripe billing emails.
+
+    Returns a dict with keys: sent, failed.
+    """
     try:
-        process_pending_stripe_emails(db, limit=100)
+        return process_pending_stripe_emails(db, limit=100)
     except Exception:
         logger.exception("reconcile_stripe_billing_emails failed")
+        return {"sent": 0, "failed": 0}

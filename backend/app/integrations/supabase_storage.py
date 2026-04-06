@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import logging
-import os
 import time
 from supabase import Client, create_client
 
+from ..core.config import settings
 from ..core.errors.exceptions import ExternalAPIError, ValidationError
 
 logger = logging.getLogger(__name__)
@@ -25,16 +25,7 @@ MIME_BY_FORMAT: dict[str, str] = {
 
 
 def get_supabase_service_client() -> Client:
-    url = os.getenv("PUBLIC_SUPABASE_URL")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-    if not url or not key:
-        raise ExternalAPIError(
-            service_name="supabase",
-            error_message="Supabase storage is not configured (PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)",
-            code="SUPABASE_NOT_CONFIGURED",
-            status_code=503,
-        )
-    return create_client(url, key)
+    return create_client(settings.public_supabase_url, settings.supabase_service_role_key)
 
 
 def _public_url_for_path(client: Client, bucket: str, storage_path: str) -> str:

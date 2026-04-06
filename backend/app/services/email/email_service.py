@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -40,12 +39,13 @@ from .constants import (
 )
 from .db_helpers import MAX_RETRIES, increment_email_retry, mark_email_events
 from .retry import call_with_exponential_backoff
+from ...core.config import settings
 
 logger = logging.getLogger(__name__)
 
-_RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
-_RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "")
-_FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "")
+_RESEND_API_KEY = settings.resend_api_key
+_RESEND_FROM_EMAIL = settings.resend_from_email
+_FRONTEND_ORIGIN = settings.app_origin
 
 
 def send_emails_for_flow_run(flow_run_id: uuid.UUID, db: Session) -> None:
@@ -97,8 +97,11 @@ def send_emails_for_flow_run(flow_run_id: uuid.UUID, db: Session) -> None:
         increment_email_retry(db, event_ids, error=str(exc))
 
 
-def reconcile_pending_emails(db: Session) -> None:
-    """Find all pending flow email events grouped by flow_run and attempt delivery."""
+def reconcile_pending_emails(db: Session) -> dict:
+    """Find all pending flow email events grouped by flow_run and attempt delivery.
+
+    Returns a dict with keys: flow_runs_found, sent, failed.
+    """
     rows = (
         db.query(EmailEventORM.flow_run_id)
         .filter(
@@ -113,14 +116,19 @@ def reconcile_pending_emails(db: Session) -> None:
 
     flow_run_ids = [row[0] for row in rows]
     if not flow_run_ids:
-        return
+        return {"flow_runs_found": 0, "sent": 0, "failed": 0}
 
     logger.info("Reconciliation: found %d flow run(s) with pending emails", len(flow_run_ids))
+    sent = 0
+    failed = 0
     for frid in flow_run_ids:
         try:
             send_emails_for_flow_run(frid, db)
+            sent += 1
         except Exception:
             logger.exception("Reconciliation failed for flow_run_id=%s", frid)
+            failed += 1
+    return {"flow_runs_found": len(flow_run_ids), "sent": sent, "failed": failed}
 
 
 def _get_subject(flow_run_id: uuid.UUID, db: Session) -> tuple[str, str]:

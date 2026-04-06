@@ -1188,6 +1188,22 @@ class RedirectConfirmation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
+class JobRun(Base):
+    __tablename__ = "job_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.uuid_generate_v4(),
+    )
+    job_name: Mapped[str] = mapped_column(String, nullable=False)
+    triggered_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    data: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+
+
 # Register models that reference tables defined above (relationship resolution).
 from .email_event import EmailEvent  # noqa: E402
 from .stripe_webhook_event import StripeWebhookEvent  # noqa: E402

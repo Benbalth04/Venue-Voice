@@ -1,5 +1,4 @@
 import json
-import os
 import time
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -10,6 +9,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import jwt
 from sqlalchemy.orm import Session
 
+from ..core.config import settings
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import User as UserORM
 from ..core.errors.exceptions import AuthError
@@ -18,14 +18,11 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 _JWKS_CACHE: dict[str, Any] = {"fetched_at": 0.0, "jwks": None}
 _JWKS_TTL_SECONDS = 60 * 10
-_JKW_URL = os.getenv("PUBLIC_SUPABASE_JWT_URL")
+_JKW_URL = settings.public_supabase_jwt_url
 
 
 def _get_supabase_url() -> str:
-    url = os.getenv("PUBLIC_SUPABASE_URL")
-    if not url:
-        raise RuntimeError("PUBLIC_SUPABASE_URL is not set")
-    return url.rstrip("/")
+    return settings.public_supabase_url.rstrip("/")
 
 
 def _fetch_jwks() -> dict[str, Any]:
@@ -67,7 +64,7 @@ def verify_supabase_jwt(token: str) -> dict[str, Any]:
         if not key:
             raise AuthError(code="UNKNOWN_KID", message="Unknown kid")
 
-        audience = os.getenv("PUBLIC_SUPABASE_JWT_AUD")
+        audience = settings.public_supabase_jwt_aud
         payload = jwt.decode(
             token,
             key,

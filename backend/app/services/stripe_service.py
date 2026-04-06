@@ -6,12 +6,12 @@ handler, and the reconciliation job share one consistent layer.
 from __future__ import annotations
 
 import logging
-import os
 from datetime import datetime, timezone
 
 import stripe
 from sqlalchemy.orm import Session
 
+from ..core.config import settings
 from ..core.errors.exceptions import ExternalAPIError, NotFoundError, PermissionError, ValidationError
 from ..models.postgres_model import Subscription, User
 from ..services.billing.stripe_billing_display import plan_display_name_from_price
@@ -21,17 +21,16 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Stripe client initialisation
 # ---------------------------------------------------------------------------
-_STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
-_FREE_TRIAL_DAYS = int(os.getenv("DEFAULT_FREE_TRIAL_DAYS"))
-_APP_ORIGIN = os.getenv("FRONTEND_ORIGIN")
+_FREE_TRIAL_DAYS = settings.default_free_trial_days
+_APP_ORIGIN = settings.app_origin
 
 _PLAN_PRICE_IDS: dict[tuple[str, str], str | None] = {
-    ("starter", "monthly"): os.getenv("STARTER_PLAN_MONTHLY_PRICE_ID"),
-    ("starter", "yearly"): os.getenv("STARTER_PLAN_YEARLY_PRICE_ID"),
-    ("growth", "monthly"): os.getenv("GROWTH_PLAN_MONTHLY_PRICE_ID"),
-    ("growth", "yearly"): os.getenv("GROWTH_PLAN_YEARLY_PRICE_ID"),
-    ("pro", "monthly"): os.getenv("PRO_PLAN_MONTHLY_PRICE_ID"),
-    ("pro", "yearly"): os.getenv("PRO_PLAN_YEARLY_PRICE_ID"),
+    ("starter", "monthly"): settings.starter_plan_monthly_price_id,
+    ("starter", "yearly"): settings.starter_plan_yearly_price_id,
+    ("growth", "monthly"): settings.growth_plan_monthly_price_id,
+    ("growth", "yearly"): settings.growth_plan_yearly_price_id,
+    ("pro", "monthly"): settings.pro_plan_monthly_price_id,
+    ("pro", "yearly"): settings.pro_plan_yearly_price_id,
 }
 
 # Reverse map: price_id → (plan_key, display_name). Single source of truth for
@@ -42,15 +41,9 @@ PRICE_ID_TO_PLAN: dict[str, tuple[str, str]] = {
     if pid
 }
 
-_STRIPE_CUSTOMER_PORTAL_ID = os.getenv("STRIPE_CUSTOMER_PORTAL_ID")
+_STRIPE_CUSTOMER_PORTAL_ID = settings.stripe_customer_portal_id
 
-if _STRIPE_SECRET_KEY:
-    stripe.api_key = _STRIPE_SECRET_KEY
-else:
-    logger.warning("STRIPE_SECRET_KEY is not set — Stripe calls will fail")
-
-if not _APP_ORIGIN:
-    logger.warning("_APP_ORIGIN not set - Stripe calls wiill fail")
+stripe.api_key = settings.stripe_secret_key
 
 # ---------------------------------------------------------------------------
 # Active subscription check (shared logic)

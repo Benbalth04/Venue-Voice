@@ -1,5 +1,6 @@
 uvicorn
 fastapi
+pydantic-settings>=2.0
 supabase
 psycopg2-binary
 pydantic[email]

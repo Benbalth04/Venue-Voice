@@ -1,3 +1,17 @@
+# Usage:
+#   Development:  docker compose --env-file .env.development up --build
+#   Production:   docker compose --env-file .env.production \
+#                   -f docker-compose.yml -f docker-compose.production.yml up -d
+#
+# env_file: in each service passes vars to the container at runtime.
+#
+# Blue/green switch (zero-downtime):
+#   1. Build and start the idle container:
+#        docker compose --env-file .env.development up -d --build backend_green
+#   2. Edit nginx/nginx.conf — swap the active server line (blue ↔ green)
+#   3. Reload nginx without downtime:
+#        docker compose exec nginx nginx -s reload
+
 services:
   redis:
     image: redis:7-alpine
@@ -7,74 +21,85 @@ services:
 
   database:
     build: ./database
-    ports: 
-      - "5432:5432" 
+    ports:
+      - "5432:5432"
     restart: always
+    env_file: .env.development
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${DATABASE_USER}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+      POSTGRES_DB: ${DATABASE_NAME}
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ./database:/docker-entrypoint-initdb.d/
     networks:
       - backend
-  backend:
+
+  backend_blue:
     build: ./backend
+    container_name: backend_blue
     restart: always
-    ports:
-      - "5000:5000"
+    expose:
+      - "5000"
     depends_on:
       - database
       - redis
-    environment:
-      DATABASE_URL: ${DATABASE_URL}
-      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
-      SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET}
-      PUBLIC_SUPABASE_URL: ${PUBLIC_SUPABASE_URL} 
-      PUBLIC_SUPABASE_JWT_URL: ${PUBLIC_SUPABASE_JWT_URL}
-      PUBLIC_SUPABASE_JWT_AUD: ${PUBLIC_SUPABASE_JWT_AUD}
-      FRONTEND_ORIGIN: ${APP_ORIGIN}
-      QR_LOGO_URL: ${QR_LOGO_URL:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      OPENAI_SENTIMENT_MODEL: ${OPENAI_SENTIMENT_MODEL}
-      REDIS_URL: redis://redis:6379/0
-      RESEND_API_KEY: ${RESEND_API_KEY}
-      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL}
-      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
-      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
-      STRIPE_CUSTOMER_PORTAL_ID: ${STRIPE_CUSTOMER_PORTAL_ID}
-      DEFAULT_FREE_TRIAL_DAYS: ${DEFAULT_FREE_TRIAL_DAYS}
-      STARTER_PLAN_MONTHLY_PRICE_ID: ${STARTER_PLAN_MONTHLY_PRICE_ID}
-      STARTER_PLAN_YEARLY_PRICE_ID: ${STARTER_PLAN_YEARLY_PRICE_ID}
-      GROWTH_PLAN_MONTHLY_PRICE_ID: ${GROWTH_PLAN_MONTHLY_PRICE_ID}
-      GROWTH_PLAN_YEARLY_PRICE_ID: ${GROWTH_PLAN_YEARLY_PRICE_ID}
-      PRO_PLAN_MONTHLY_PRICE_ID: ${PRO_PLAN_MONTHLY_PRICE_ID}
-      PRO_PLAN_YEARLY_PRICE_ID: ${PRO_PLAN_YEARLY_PRICE_ID}
+    env_file: .env.development
     networks:
       - backend
     healthcheck:
-      test: ["CMD", "curl", "-f", "${BACKEND_BASE_URL}/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 5s
+
+  backend_green:
+    build: ./backend
+    container_name: backend_green
+    restart: always
+    expose:
+      - "5000"
+    depends_on:
+      - database
+      - redis
+    env_file: .env.development
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  nginx:
+    image: nginx:alpine
+    container_name: nginx_gateway
+    ports:
+      - "5000:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend_blue
+      - backend_green
+    networks:
+      - backend
 
   frontend:
     build:
       context: ./frontend
       args:
         NEXT_PUBLIC_SUPABASE_URL: ${PUBLIC_SUPABASE_URL}
-        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${PUBLIC_SUPABASE_ANON_KEY}
+        NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY: ${PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY}
     restart: always
     depends_on:
-      - backend
+      - nginx
     ports:
       - "3000:3000"
+    env_file: .env.development
     environment:
       NODE_ENV: development
-      NEXT_PUBLIC_BACKEND_BASE_URL: ${BACKEND_BASE_URL}
-      NEXT_PUBLIC_APP_ORIGIN: ${APP_ORIGIN}
     command: npm run dev
     networks:
       - backend

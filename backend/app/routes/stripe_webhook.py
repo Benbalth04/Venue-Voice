@@ -14,7 +14,6 @@ charge.refunded.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 import stripe
@@ -22,6 +21,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, 
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
+from ..core.config import settings
 from ..db.postgres import SessionLocal, get_db_connection
 from ..services.billing.stripe_event_handler import (
     handle_stripe_webhook_event,
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
+_WEBHOOK_SECRET = settings.stripe_webhook_secret
 
 _HANDLED_EVENTS = frozenset(
     {

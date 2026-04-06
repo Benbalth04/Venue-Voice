@@ -1,0 +1,33 @@
+# Production overrides — applies live env file and excludes services hosted externally.
+#
+# Usage:
+#   docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.production.yml up -d
+#
+# Services excluded in production:
+#   - database  → hosted on Supabase
+#   - frontend  → hosted on Vercel
+
+services:
+  database:
+    profiles: [dev-only]
+
+  frontend:
+    profiles: [dev-only]
+
+  backend_blue:
+    env_file: .env.production
+    depends_on:
+      database:
+        condition: service_started
+        required: false
+      redis:
+        condition: service_started
+
+  backend_green:
+    env_file: .env.production
+    depends_on:
+      database:
+        condition: service_started
+        required: false
+      redis:
+        condition: service_started

@@ -1,4 +1,3 @@
-import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -16,6 +15,7 @@ from .routes.analytics import router as analytics_router
 from .routes.survey_dashboard import router as survey_dashboard_router
 from .routes.billing import router as billing_router
 from .routes.stripe_webhook import router as stripe_webhook_router
+from .core.config import settings
 from .core.errors.app_error import AppError
 from .core.errors.handlers import app_error_handler, generic_exception_handler
 from .tasks.email_reconciliation import start_scheduler, stop_scheduler
@@ -47,9 +47,11 @@ app.include_router(billing_router, prefix="/api/v1", tags=["billing"])
 app.include_router(stripe_webhook_router, prefix="/api/v1", tags=["stripe-webhook"])
 
 # Inner: transforms IDs; outer: CORS (runs first on the request).
+origins = settings.cors_origins.split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.getenv("FRONTEND_ORIGIN")],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

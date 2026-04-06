@@ -1,11 +1,11 @@
 """Redis-based rate limiting helpers for public endpoints."""
 
-import os
 import logging
 
 import redis as redis_lib
 from fastapi import Request
 
+from .config import settings
 from .errors.exceptions import RateLimitExceededError
 
 logger = logging.getLogger(__name__)
@@ -16,8 +16,7 @@ _redis_client: redis_lib.Redis | None = None
 def get_redis() -> redis_lib.Redis:
     global _redis_client
     if _redis_client is None:
-        url = os.getenv("REDIS_URL", "redis://redis:6379/0")
-        _redis_client = redis_lib.from_url(url, decode_responses=True)
+        _redis_client = redis_lib.from_url(settings.redis_url, decode_responses=True)
     return _redis_client
 
 

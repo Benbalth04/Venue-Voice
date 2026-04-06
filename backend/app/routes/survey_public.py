@@ -5,7 +5,6 @@ QR code URL: /r/{qrCodeId}
 import hashlib
 import json
 import logging
-import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -45,13 +44,14 @@ from ..integrations.supabase_storage import (
     get_supabase_service_client,
     upload_survey_photo,
 )
+from ..core.config import settings
 from ..services.location_survey_service import utc_now, validate_qr_scan_access
 
 router = APIRouter()
 
 logger = logging.getLogger(__name__)
 
-FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN")
+FRONTEND_ORIGIN = settings.app_origin
 
 
 # --------------------------------------------------

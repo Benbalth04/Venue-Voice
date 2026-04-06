@@ -5,12 +5,12 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from typing import Any
 import time
 
 from openai import OpenAI, APITimeoutError, APIError
 
+from .config import settings
 from .errors.exceptions import ExternalAPIError
 
 logger = logging.getLogger(__name__)
@@ -50,15 +50,7 @@ _client: OpenAI | None = None
 def get_openai_client() -> OpenAI:
     global _client
     if _client is None:
-        key = os.getenv("OPENAI_API_KEY")
-        if not key:
-            raise ExternalAPIError(
-                service_name="openai",
-                error_message="OPENAI_API_KEY is not configured",
-                code="OPENAI_NOT_CONFIGURED",
-                status_code=503,
-            )
-        _client = OpenAI(api_key=key, timeout=_TIMEOUT_SEC, max_retries=0)
+        _client = OpenAI(api_key=settings.openai_api_key, timeout=_TIMEOUT_SEC, max_retries=0)
     return _client
 
 
@@ -100,7 +92,7 @@ def analyze_sentiment(text: str) -> tuple[dict[str, Any], str]:
     if not user_content or len(user_content) < 5:
         raise ValueError("text is empty or too short for analysis")
 
-    model = os.getenv("OPENAI_SENTIMENT_MODEL", _DEFAULT_MODEL)
+    model = settings.openai_sentiment_model
     client = get_openai_client()
     last_err: Exception | None = None
 
