@@ -21,8 +21,37 @@ export default function PricingSection() {
   const [billing, setBilling] = useState<BillingInterval>('monthly')
 
   return (
-    <section id="pricing" className="py-28 bg-white">
-      <div className="max-w-6xl mx-auto px-6">
+    <section
+      id="pricing"
+      className="relative overflow-hidden py-28"
+      style={{ background: 'linear-gradient(to bottom, #F4F4F5 0%, #F7F4FF 28%, #FAFAF9 62%, #F4F4F5 100%)' }}
+    >
+      {/* Ambient blobs */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute top-0 left-0 w-[650px] h-[650px] rounded-full"
+        style={{
+          background: 'radial-gradient(circle at 30% 30%, rgba(139,92,246,0.12) 0%, transparent 70%)',
+          transform: 'translate(-20%, -20%)',
+        }}
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute bottom-0 right-0 w-[720px] h-[720px] rounded-full"
+        style={{
+          background: 'radial-gradient(circle at 70% 70%, rgba(139,92,246,0.09) 0%, transparent 70%)',
+          transform: 'translate(20%, 20%)',
+        }}
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[550px] h-[550px] rounded-full"
+        style={{
+          background: 'radial-gradient(circle at 50% 50%, rgba(139,92,246,0.06) 0%, transparent 68%)',
+        }}
+      />
+
+      <div className="relative z-10 max-w-6xl mx-auto px-6">
 
         {/* Header */}
         <motion.div
@@ -94,10 +123,10 @@ export default function PricingSection() {
               <motion.div
                 key={plan.id}
                 variants={cardVariant}
-                className={`relative flex flex-col rounded-2xl p-7 transition-shadow duration-200 ${
+                className={`relative flex flex-col rounded-2xl p-7 bg-white transition-shadow duration-200 ${
                   plan.popular
-                    ? 'bg-violet-600 shadow-2xl shadow-violet-200 ring-2 ring-violet-600 scale-[1.02]'
-                    : 'bg-white border border-zinc-200 hover:shadow-lg'
+                    ? 'border-2 border-violet-600 hover:shadow-lg'
+                    : 'border border-zinc-200 hover:shadow-lg'
                 }`}
               >
                 {/* Most popular badge */}
@@ -112,13 +141,13 @@ export default function PricingSection() {
                 {/* Plan name & best for */}
                 <div className="mb-6">
                   <div
-                    className={`text-lg font-extrabold mb-1 ${plan.popular ? 'text-white' : 'text-zinc-900'}`}
+                    className="text-lg font-extrabold mb-1 text-zinc-900"
                     style={{ fontFamily: 'var(--font-bricolage)' }}
                   >
                     {plan.name}
                   </div>
                   <div
-                    className={`text-xs leading-relaxed ${plan.popular ? 'text-white/70' : 'text-zinc-500'}`}
+                    className="text-xs leading-relaxed text-zinc-500"
                     style={{ fontFamily: 'var(--font-manrope)' }}
                   >
                     {plan.bestFor}
@@ -129,13 +158,13 @@ export default function PricingSection() {
                 <div className="mb-2">
                   <div className="flex items-end gap-1">
                     <span
-                      className={`text-5xl font-extrabold leading-none ${plan.popular ? 'text-white' : 'text-zinc-900'}`}
+                      className="text-5xl font-extrabold leading-none text-zinc-900"
                       style={{ fontFamily: 'var(--font-bricolage)' }}
                     >
                       ${displayPrice}
                     </span>
                     <span
-                      className={`text-sm mb-1.5 ${plan.popular ? 'text-white/60' : 'text-zinc-400'}`}
+                      className="text-sm mb-1.5 text-zinc-400"
                       style={{ fontFamily: 'var(--font-manrope)' }}
                     >
                       /mo
@@ -143,7 +172,7 @@ export default function PricingSection() {
                   </div>
                   {isYearly && (
                     <div
-                      className={`text-xs mt-1 ${plan.popular ? 'text-white/60' : 'text-zinc-400'}`}
+                      className="text-xs mt-1 text-zinc-400"
                       style={{ fontFamily: 'var(--font-manrope)' }}
                     >
                       ${plan.yearlyPrice}/year billed annually
@@ -152,19 +181,17 @@ export default function PricingSection() {
                 </div>
 
                 {/* Divider */}
-                <div className={`my-5 h-px ${plan.popular ? 'bg-white/20' : 'bg-zinc-100'}`} />
+                <div className="my-5 h-px bg-zinc-100" />
 
                 {/* Features */}
                 <ul className="flex flex-col gap-3 flex-1 mb-7">
                   {plan.features.map((feature) => (
                     <li
                       key={feature}
-                      className={`flex items-start gap-2.5 text-sm ${plan.popular ? 'text-white/90' : 'text-zinc-600'}`}
+                      className="flex items-start gap-2.5 text-sm text-zinc-600"
                       style={{ fontFamily: 'var(--font-manrope)' }}
                     >
-                      <CheckCircle2
-                        className={`w-4 h-4 shrink-0 mt-0.5 ${plan.popular ? 'text-white' : 'text-violet-500'}`}
-                      />
+                      <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-violet-500" />
                       {feature}
                     </li>
                   ))}
@@ -175,11 +202,7 @@ export default function PricingSection() {
                   href="/signup"
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
-                  className={`flex items-center justify-center gap-2 h-11 rounded-xl text-sm font-semibold transition-colors duration-200 ${
-                    plan.popular
-                      ? 'bg-white text-violet-700 hover:bg-violet-50'
-                      : 'bg-violet-600 text-white hover:bg-violet-700'
-                  }`}
+                  className="flex items-center justify-center gap-2 h-11 rounded-xl text-sm font-semibold transition-colors duration-200 bg-violet-600 text-white hover:bg-violet-700"
                   style={{ fontFamily: 'var(--font-manrope)' }}
                 >
                   Get started free

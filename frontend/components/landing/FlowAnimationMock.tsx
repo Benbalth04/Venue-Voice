@@ -252,6 +252,10 @@ function FlowConnector({ active, color = 'default', delay = 0, height = 32 }: Fl
 }
 
 // ─── BranchSplit ──────────────────────────────────────────────────────────────
+// Renders a proper T-shaped elbow:
+//   center vertical stub → horizontal bar → two vertical arms
+// The arm centerlines sit at 25% and 75% of the container width, matching the
+// flex-1 action nodes below.
 
 interface BranchSplitProps {
   truePath: PathState
@@ -260,50 +264,85 @@ interface BranchSplitProps {
   falsePulseActive: boolean
 }
 
+const STUB_H  = 18   // px — short vertical from branch node down to the crossbar
+const SPLIT_H = 52   // px — total height of the split component
+
 function BranchSplit({ truePath, falsePath, truePulseActive, falsePulseActive }: BranchSplitProps) {
-  const toColor = (p: PathState): 'green' | 'red' | 'dim' | 'default' => {
-    if (p === 'active') return 'green'
-    if (p === 'dim') return 'dim'
-    return 'default'
-  }
+  const DEFAULT = 'rgba(161,161,170,0.5)'
+  const DIM     = 'rgba(161,161,170,0.2)'
+  const GREEN   = 'rgba(52,211,153,0.8)'
 
-  const trueLineColor =
-    truePath === 'active' ? 'rgba(52,211,153,0.7)'
-    : truePath === 'dim' ? 'rgba(161,161,170,0.2)'
-    : 'rgba(161,161,170,0.4)'
-
-  const falseLineColor =
-    falsePath === 'active' ? 'rgba(52,211,153,0.7)'
-    : falsePath === 'dim' ? 'rgba(161,161,170,0.2)'
-    : 'rgba(161,161,170,0.4)'
+  const toColor = (p: PathState) => (p === 'active' ? GREEN : p === 'dim' ? DIM : DEFAULT)
+  const trueColor  = toColor(truePath)
+  const falseColor = toColor(falsePath)
+  // Crossbar uses neutral unless both arms are dimmed
+  const barColor = truePath === 'dim' && falsePath === 'dim' ? DIM : DEFAULT
 
   return (
-    <div className="flex w-full items-start justify-center gap-1">
-      {/* TRUE arm */}
-      <div className="flex flex-1 flex-col items-center">
-        <motion.div
-          className="h-px w-full"
-          animate={{ background: trueLineColor }}
-          transition={{ duration: 0.3 }}
-        />
-        <span className={`mt-0.5 text-[9px] font-bold tracking-wide ${truePath === 'dim' ? 'text-zinc-300' : 'text-emerald-600'}`}>
-          TRUE
-        </span>
-        <FlowConnector active={truePulseActive} color={toColor(truePath)} height={24} />
-      </div>
+    <div className="relative w-full" style={{ height: SPLIT_H }}>
 
-      {/* FALSE arm */}
-      <div className="flex flex-1 flex-col items-center">
-        <motion.div
-          className="h-px w-full"
-          animate={{ background: falseLineColor }}
-          transition={{ duration: 0.3 }}
-        />
-        <span className={`mt-0.5 text-[9px] font-bold tracking-wide ${falsePath === 'dim' ? 'text-zinc-300' : 'text-red-400'}`}>
-          FALSE
-        </span>
-        <FlowConnector active={falsePulseActive} color={toColor(falsePath)} delay={0.05} height={24} />
-      </div>
+      {/* ① Center stub: branch node → crossbar */}
+      <motion.div
+        className="absolute top-0 w-px"
+        style={{ height: STUB_H, left: 'calc(50% - 0.5px)' }}
+        animate={{ background: barColor }}
+        transition={{ duration: 0.3 }}
+      />
+
+      {/* ② Horizontal crossbar: 25% → 75% */}
+      <motion.div
+        className="absolute h-px"
+        style={{ top: STUB_H, left: '25%', right: '25%' }}
+        animate={{ background: barColor }}
+        transition={{ duration: 0.3 }}
+      />
+
+      {/* ③ TRUE arm: vertical from crossbar down, centred at 25% */}
+      <motion.div
+        className="absolute w-px"
+        style={{ top: STUB_H, bottom: 0, left: 'calc(25% - 0.5px)' }}
+        animate={{ background: trueColor }}
+        transition={{ duration: 0.3 }}
+      />
+
+      {/* ④ FALSE arm: vertical from crossbar down, centred at 75% */}
+      <motion.div
+        className="absolute w-px"
+        style={{ top: STUB_H, bottom: 0, left: 'calc(75% - 0.5px)' }}
+        animate={{ background: falseColor }}
+        transition={{ duration: 0.3 }}
+      />
+
+
+      {/* TRUE pulse — travels down the left arm */}
+      <AnimatePresence>
+        {truePulseActive && (
+          <motion.div
+            key="true-pulse"
+            className="absolute h-2.5 w-2.5 rounded-full bg-violet-500"
+            style={{ boxShadow: '0 0 8px rgba(139,92,246,0.8)', left: 'calc(25% - 5px)', top: 0 }}
+            initial={{ y: STUB_H, opacity: 1 }}
+            animate={{ y: SPLIT_H - 10, opacity: 0 }}
+            exit={{}}
+            transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* FALSE pulse — travels down the right arm */}
+      <AnimatePresence>
+        {falsePulseActive && (
+          <motion.div
+            key="false-pulse"
+            className="absolute h-2.5 w-2.5 rounded-full bg-violet-500"
+            style={{ boxShadow: '0 0 8px rgba(139,92,246,0.8)', left: 'calc(75% - 5px)', top: 0 }}
+            initial={{ y: STUB_H, opacity: 1 }}
+            animate={{ y: SPLIT_H - 10, opacity: 0 }}
+            exit={{}}
+            transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1], delay: 0.05 }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }
@@ -556,14 +595,12 @@ export default function FlowAnimationMock() {
       </div>
 
       {/* Branch split — spans full width to reach both action nodes */}
-      <div className="w-full">
-        <BranchSplit
-          truePath={truePath}
-          falsePath={falsePath}
-          truePulseActive={truePulseActive}
-          falsePulseActive={falsePulseActive}
-        />
-      </div>
+      <BranchSplit
+        truePath={truePath}
+        falsePath={falsePath}
+        truePulseActive={truePulseActive}
+        falsePulseActive={falsePulseActive}
+      />
 
       {/* Action nodes — flex-1 so they always fit without overflow */}
       <div className="flex w-full items-start gap-2">

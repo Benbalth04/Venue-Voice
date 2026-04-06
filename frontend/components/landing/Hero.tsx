@@ -172,7 +172,7 @@ export default function Hero() {
               <ArrowRight className="w-4 h-4" />
             </motion.a>
             <a
-              href="#how-it-works"
+              href="#features"
               className="text-sm font-medium text-zinc-500 hover:text-violet-600 transition-colors flex items-center gap-1.5 justify-center"
               style={{ fontFamily: 'var(--font-manrope)' }}
             >
