@@ -289,9 +289,13 @@ CREATE TABLE survey_response_photos (
     storage_path        TEXT NOT NULL,
     mime_type           TEXT NOT NULL,
     file_size_bytes     INTEGER NOT NULL,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at          TIMESTAMPTZ NULL
 );
 CREATE INDEX idx_survey_response_photos_response_id ON survey_response_photos(survey_response_id);
+CREATE INDEX idx_survey_response_photos_response_nodeletion
+    ON survey_response_photos(survey_response_id)
+    WHERE deleted_at IS NULL;
 
 --------------------------------------------------
 -- RESPONSE READS (track which responses each user has viewed)

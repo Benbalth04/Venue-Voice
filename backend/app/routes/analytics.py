@@ -20,9 +20,11 @@ from ..schemas.pydantic_model import (
     AnalyticsFiltersResponse,
     AnalyticsResponseDetail,
     AnalyticsResponseList,
+    DeleteResponseRequest,
     PhotoSignedUrlResponse,
 )
 from ..services.analytics_service import (
+    delete_response,
     get_analytics_filters,
     get_analytics_responses,
     get_response_detail,
@@ -178,6 +180,41 @@ def analytics_response_detail(
             category=ErrorCategory.UNKNOWN,
             code="INTERNAL_SERVER_ERROR",
             message="Failed to load response detail",
+            status_code=500,
+        )
+
+
+# ------------------------------------------------------------------
+# DELETE /analytics/response/{response_id}
+# ------------------------------------------------------------------
+@router.delete("/analytics/response/{response_id}", status_code=204)
+def analytics_delete_response(
+    response_id: str,
+    payload: DeleteResponseRequest,
+    current_user: UserORM = Depends(get_current_user),
+    _: None = Depends(require_active_subscription),
+    db: Session = Depends(get_db_connection),
+):
+    """Soft-delete a survey response (and all child records) by ID."""
+    try:
+        rid = uuid.UUID(response_id)
+    except ValueError:
+        raise ValidationError(code="INVALID_RESPONSE_ID", message="Invalid response_id UUID")
+
+    try:
+        delete_response(
+            db=db,
+            response_id=rid,
+            user_id=current_user.id,
+            confirmation=payload.confirmation,
+        )
+    except AppError:
+        raise
+    except Exception:
+        raise AppError(
+            category=ErrorCategory.UNKNOWN,
+            code="INTERNAL_SERVER_ERROR",
+            message="Failed to delete response",
             status_code=500,
         )
 

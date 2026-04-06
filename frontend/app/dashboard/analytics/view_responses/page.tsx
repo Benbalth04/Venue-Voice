@@ -12,6 +12,7 @@ import {
   Loader2,
   MapPin,
   QrCode,
+  Trash2,
   X,
   XCircle,
 } from "lucide-react"
@@ -38,6 +39,7 @@ import { FlowExecutionPreview } from "@/components/flow-editor/FlowExecutionPrev
 import { FlowRunActionPill } from "@/components/flows/FlowRunActionPill"
 import { AiAnalysisInfoTooltip } from "@/components/analytics/AiAnalysisInfoTooltip"
 import { DataTable } from "@/components/ui/DataTable"
+import { DeleteResponseDialog } from "@/components/ui/DeleteResponseDialog"
 import { DatePicker } from "@/components/ui/DatePicker"
 import { useUnreadResponses } from "@/components/layout/UnreadResponsesContext"
 import { useAuth } from "@/contexts/AuthContext"
@@ -120,10 +122,12 @@ function ReviewModal({
   responseId,
   onClose,
   onMarkRead,
+  onRequestDelete,
 }: {
   responseId: string
   onClose: () => void
   onMarkRead?: (id: string) => void
+  onRequestDelete?: () => void
 }) {
   const [answers, setAnswers] = useState<AnalyticsAnswerDetail[]>([])
   const [flowRuns, setFlowRuns] = useState<FlowRunResponse[]>([])
@@ -421,7 +425,15 @@ function ReviewModal({
           )}
         </div>
 
-        <div className="border-t border-zinc-100 px-6 py-3 text-right">
+        <div className="flex items-center justify-between border-t border-zinc-100 px-6 py-3">
+          <button
+            type="button"
+            onClick={onRequestDelete}
+            className="flex items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Delete response
+          </button>
           <button
             onClick={onClose}
             className="rounded-xl bg-zinc-100 px-4 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-200"

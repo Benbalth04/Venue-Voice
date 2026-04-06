@@ -1746,6 +1746,18 @@ export function fetchPhotoSignedUrl(
   )
 }
 
+export async function deleteAnalyticsResponse(
+  accessToken: string,
+  responseId: string,
+  confirmation: string,
+): Promise<void> {
+  await apiFetch<unknown>(`${BACKEND_BASE}/api/v1/analytics/response/${responseId}`, {
+    method: "DELETE",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify({ confirmation }),
+  })
+}
+
 // ------------------------------------------------------------------
 // Survey Dashboard
 // ------------------------------------------------------------------

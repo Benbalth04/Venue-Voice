@@ -682,7 +682,7 @@ class SurveyResponseAnswer(SoftDeleteMixin, Base):
 # --------------------------------------------------
 # SURVEY RESPONSE PHOTOS (metadata for uploaded photos)
 # --------------------------------------------------
-class SurveyResponsePhoto(Base):
+class SurveyResponsePhoto(SoftDeleteMixin, Base):
     __tablename__ = "survey_response_photos"
 
     id: Mapped[uuid.UUID] = mapped_column(

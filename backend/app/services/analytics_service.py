@@ -635,3 +635,53 @@ def _format_answer(val: Any) -> str:
     if isinstance(val, list):
         return ", ".join(str(v) for v in val)
     return str(val)
+
+
+def delete_response(
+    db: Session,
+    response_id: uuid.UUID,
+    user_id: uuid.UUID,
+    confirmation: str,
+) -> None:
+    """Soft-delete a survey response and all its child records.
+
+    Cascades deleted_at to: survey_response_answers, ai_analysis,
+    response_reads, survey_response_photos.
+    """
+    if confirmation != "delete now":
+        raise ValidationError(
+            code="INVALID_CONFIRMATION",
+            message="Confirmation text must be exactly 'delete now'.",
+        )
+
+    company = _get_company_or_403(user_id, db)
+
+    response = (
+        db.query(SurveyResponseORM)
+        .join(SurveySessionORM, SurveyResponseORM.session_id == SurveySessionORM.id)
+        .filter(
+            SurveyResponseORM.id == response_id,
+            SurveySessionORM.company_id == company.id,
+            SurveyResponseORM.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if not response:
+        raise NotFoundError("Response", response_id)
+
+    now = datetime.utcnow()
+    response.deleted_at = now
+
+    child_targets: list[tuple[Any, Any]] = [
+        (SurveyResponseAnswerORM, SurveyResponseAnswerORM.survey_response_id),
+        (AIAnalysisORM, AIAnalysisORM.survey_response_id),
+        (ResponseReadORM, ResponseReadORM.response_id),
+        (SurveyResponsePhotoORM, SurveyResponsePhotoORM.survey_response_id),
+    ]
+    for model, fk_col in child_targets:
+        db.query(model).filter(
+            fk_col == response.id,
+            model.deleted_at.is_(None),
+        ).update({"deleted_at": now}, synchronize_session=False)
+
+    db.commit()

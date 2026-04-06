@@ -93,6 +93,10 @@ class DeleteRequest(BaseModel):
     updated_at: datetime
 
 
+class DeleteResponseRequest(BaseModel):
+    confirmation: str
+
+
 class User(BaseModel):
     id: uuid.UUID
     email: str
