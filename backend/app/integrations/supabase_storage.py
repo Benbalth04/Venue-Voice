@@ -20,16 +20,11 @@ ALLOWED_PHOTO_MIME_TYPES = frozenset({"image/jpeg", "image/png", "image/webp", "
 MIME_BY_FORMAT: dict[str, str] = {
     "svg": "image/svg+xml",
     "png": "image/png",
-    "jpeg": "image/jpeg",
 }
 
 
 def get_supabase_service_client() -> Client:
     return create_client(settings.public_supabase_url, settings.supabase_service_role_key)
-
-
-def _public_url_for_path(client: Client, bucket: str, storage_path: str) -> str:
-    return client.storage.from_(bucket).get_public_url(storage_path)
 
 
 def upload_qr_asset(
@@ -40,6 +35,10 @@ def upload_qr_asset(
     mime_type: str,
     max_retries: int = 2,
 ) -> str:
+    """Upload a QR asset to the private qr_codes bucket.
+
+    Returns the storage_path (not a public URL — bucket is private).
+    """
     if len(data) > MAX_UPLOAD_BYTES:
         raise ExternalAPIError(
             service_name="supabase",
@@ -59,10 +58,7 @@ def upload_qr_asset(
                     "upsert": "false",
                 },
             )
-            url = _public_url_for_path(client, QR_CODES_BUCKET, storage_path)
-            if not url:
-                raise RuntimeError("empty public URL")
-            return url
+            return storage_path
         except Exception as e:
             last_err = str(e)
             msg = (last_err or "").lower()
@@ -98,6 +94,38 @@ def upload_qr_asset(
         code="QR_STORAGE_UPLOAD_FAILED",
         details={"storage_path": storage_path, "error_message": last_err},
     )
+
+
+def generate_qr_signed_url(
+    *,
+    client: Client,
+    storage_path: str,
+    expires_in: int = 3600,
+) -> str:
+    """Generate a short-lived signed URL for a private QR code asset.
+
+    Returns the signed URL string.
+    Raises ExternalAPIError on Supabase failures.
+    """
+    try:
+        result = client.storage.from_(QR_CODES_BUCKET).create_signed_url(
+            storage_path, expires_in
+        )
+        signed_url = result.get("signedURL") or result.get("signedUrl") or ""
+        if not signed_url:
+            raise RuntimeError(f"Empty signed URL returned for path: {storage_path}")
+        return signed_url
+    except Exception as e:
+        logger.exception(
+            "Failed to generate signed URL for QR asset",
+            extra={"storage_path": storage_path},
+        )
+        raise ExternalAPIError(
+            service_name="supabase",
+            error_message="Failed to generate signed URL for QR asset",
+            code="QR_SIGNED_URL_FAILED",
+            details={"storage_path": storage_path, "error_message": str(e)},
+        ) from e
 
 
 def delete_objects_best_effort(client: Client, paths: list[str]) -> None:

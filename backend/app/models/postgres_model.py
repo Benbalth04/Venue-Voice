@@ -469,6 +469,7 @@ class QRCode(SoftDeleteMixin, Base):
     )
     redirect_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     has_logo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    color: Mapped[str] = mapped_column(String(7), nullable=False, default="#000000", server_default="#000000")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -495,7 +496,7 @@ class QRCodeAsset(Base):
     __table_args__ = (
         UniqueConstraint("qr_code_id", "format", name="uq_qr_code_assets_qr_code_id_format"),
         CheckConstraint(
-            "format IN ('svg', 'png', 'jpeg')",
+            "format IN ('svg', 'png')",
             name="ck_qr_code_assets_format",
         ),
     )

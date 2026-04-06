@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -37,6 +38,7 @@ from ..services.location_survey_service import (
     get_company_submission_blocked_active_qr_count,
     utc_now,
 )
+from ..integrations.supabase_storage import generate_qr_signed_url, get_supabase_service_client
 from ..services.qr_code_service import (
     default_redirect_url_for_qr_id,
     delete_storage_paths,
@@ -108,14 +110,17 @@ def _get_location_survey_for_company(
     return location_survey
 
 
-def _asset_urls(qr: QRCodeORM) -> QRCodeAssetUrls | None:
+def _asset_urls(qr: QRCodeORM, client) -> QRCodeAssetUrls | None:
     assets = getattr(qr, "assets", None) or []
     if not assets:
         return None
-    m = {a.format: a.public_url for a in assets}
-    if not all(k in m for k in ("svg", "png", "jpeg")):
+    m = {a.format: a.storage_path for a in assets}
+    if not all(k in m for k in ("svg", "png")):
         return None
-    return QRCodeAssetUrls(svg=m["svg"], png=m["png"], jpeg=m["jpeg"])
+    return QRCodeAssetUrls(
+        svg=generate_qr_signed_url(client=client, storage_path=m["svg"]),
+        png=generate_qr_signed_url(client=client, storage_path=m["png"]),
+    )
 
 
 def _get_qr_or_404(qr_id: str, company_id: uuid.UUID, db: Session) -> QRCodeORM:
@@ -149,7 +154,7 @@ def _get_qr_or_404(qr_id: str, company_id: uuid.UUID, db: Session) -> QRCodeORM:
     return qr
 
 
-def _to_response(qr: QRCodeORM, user: UserORM) -> QRCodeResponse:
+def _to_response(qr: QRCodeORM, user: UserORM, client) -> QRCodeResponse:
     tz = effective_zoneinfo_for_stored_timezone(user.timezone)
     location_survey = qr.location_survey
     location = location_survey.location
@@ -171,8 +176,8 @@ def _to_response(qr: QRCodeORM, user: UserORM) -> QRCodeResponse:
         end_date=format_dt_for_user(location_survey.end_date, tz) if location_survey.end_date else None,
         is_active=qr.is_active,
         redirect_url=qr.redirect_url,
-        has_logo=qr.has_logo,
-        assets=_asset_urls(qr),
+        color=qr.color,
+        assets=_asset_urls(qr, client),
         created_at=format_dt_for_user(qr.created_at, tz) or "",
         updated_at=format_dt_for_user(qr.updated_at, tz) or "",
         location_status=ls_status,
@@ -206,7 +211,8 @@ def list_qr_codes(
         .order_by(QRCodeORM.created_at.desc())
         .all()
     )
-    return [_to_response(qr, user) for qr in qrs]
+    client = get_supabase_service_client()
+    return [_to_response(qr, user, client) for qr in qrs]
 
 
 @router.get("/qr-codes/submission-blocked-summary")
@@ -229,7 +235,8 @@ def get_qr_code(
     db: Session = Depends(get_db_connection),
 ):
     company = _get_company(user, db)
-    return _to_response(_get_qr_or_404(qr_id, company.id, db), user)
+    client = get_supabase_service_client()
+    return _to_response(_get_qr_or_404(qr_id, company.id, db), user, client)
 
 
 @router.post("/qr-codes", response_model=QRCodeResponse, status_code=201)
@@ -258,6 +265,10 @@ def create_qr_code(
     if existing:
         raise ConflictError(code="QR_TITLE_CONFLICT", message="Title is already in use")
 
+    color = (payload.color or "#000000").strip().upper()
+    if not re.fullmatch(r"#[0-9A-F]{6}", color):
+        raise ValidationError(code="INVALID_QR_COLOR", message="color must be a 6-digit hex value, e.g. #1A2B3C", status_code=422)
+
     qr_id = uuid.uuid4()
     raw_redirect = (payload.redirect_url or "").strip()
     if raw_redirect:
@@ -265,13 +276,10 @@ def create_qr_code(
     else:
         redirect = default_redirect_url_for_qr_id(qr_id)
 
-    logger.info(
-        "QR creation started",
-        extra={"qr_code_id": str(qr_id), "has_logo": payload.has_logo},
-    )
+    logger.info("QR creation started", extra={"qr_code_id": str(qr_id)})
 
     try:
-        assets_bytes = generate_qr_bytes(redirect_url=redirect, has_logo=payload.has_logo)
+        assets_bytes = generate_qr_bytes(redirect_url=redirect, color=color)
     except ValidationError:
         raise
     except ExternalAPIError:
@@ -294,21 +302,21 @@ def create_qr_code(
         location_survey_id=location_survey.id,
         location_id=location_survey.location_id,
         redirect_url=redirect,
-        has_logo=payload.has_logo,
+        color=color,
     )
     db.add(qr)
     db.flush()
 
     paths_uploaded: list[str] = []
     try:
-        urls, paths_uploaded = upload_qr_assets_to_supabase(qr_code_id=qr_id, assets=assets_bytes)
-        for fmt, url in urls.items():
+        storage_paths, paths_uploaded = upload_qr_assets_to_supabase(qr_code_id=qr_id, assets=assets_bytes)
+        for fmt, path in storage_paths.items():
             db.add(
                 QRCodeAssetORM(
                     qr_code_id=qr_id,
                     format=fmt,
-                    storage_path=storage_path_for(qr_id, fmt),
-                    public_url=url,
+                    storage_path=path,
+                    public_url=path,
                 )
             )
         db.commit()
@@ -326,7 +334,8 @@ def create_qr_code(
             details={"qr_code_id": str(qr_id)},
         ) from e
 
-    return _to_response(_get_qr_or_404(str(qr_id), company.id, db), user)
+    client = get_supabase_service_client()
+    return _to_response(_get_qr_or_404(str(qr_id), company.id, db), user, client)
 
 
 @router.patch("/qr-codes/{qr_id}", response_model=QRCodeResponse)
@@ -378,7 +387,8 @@ def update_qr_code(
         raise StaleObjectError("QRCode", str(qr.id))
 
     db.commit()
-    return _to_response(_get_qr_or_404(str(qr.id), company.id, db), user)
+    client = get_supabase_service_client()
+    return _to_response(_get_qr_or_404(str(qr.id), company.id, db), user, client)
 
 
 @router.delete("/qr-codes/{qr_id}", status_code=204)

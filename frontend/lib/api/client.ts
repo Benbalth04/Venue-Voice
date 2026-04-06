@@ -240,7 +240,6 @@ export interface LocationSurveyUpdate {
 export interface QRCodeAssetUrls {
   svg: string
   png: string
-  jpeg: string
 }
 
 export interface QRCodeResponse {
@@ -260,8 +259,9 @@ export interface QRCodeResponse {
   is_active: boolean
   /** URL encoded in the stored QR assets (null for legacy rows). */
   redirect_url: string | null
-  has_logo: boolean
-  /** Supabase public URLs when generated server-side. */
+  /** Hex color used for QR modules, e.g. #000000. */
+  color: string
+  /** Supabase signed URLs when generated server-side. */
   assets: QRCodeAssetUrls | null
   created_at: string
   updated_at: string
@@ -276,7 +276,8 @@ export interface QRCodeCreate {
   location_survey_id: string
   /** If omitted, backend uses NEXT_PUBLIC_APP_ORIGIN /r/{id} */
   redirect_url?: string | null
-  has_logo?: boolean
+  /** Hex color for QR modules. Defaults to #000000. */
+  color?: string
 }
 
 export interface QRCodeUpdate {

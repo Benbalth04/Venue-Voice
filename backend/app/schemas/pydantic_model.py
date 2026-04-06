@@ -268,9 +268,7 @@ class QRCodeCreate(BaseModel):
         default=None,
         description="URL encoded in the QR image. If omitted, defaults to {FRONTEND_ORIGIN}/r/{id}.",
     )
-    has_logo: bool = True
-
-
+    color: str = Field(default="#000000", description="Hex color for QR modules, e.g. #000000.")
 class QRCodeUpdate(BaseModel):
     title: str | None = None
     location_survey_id: uuid.UUID | None = None
@@ -281,7 +279,6 @@ class QRCodeUpdate(BaseModel):
 class QRCodeAssetUrls(BaseModel):
     svg: str
     png: str
-    jpeg: str
 
 
 class QRCodeResponse(BaseModel):
@@ -300,7 +297,7 @@ class QRCodeResponse(BaseModel):
     end_date: str | None = None
     is_active: bool
     redirect_url: str | None = None
-    has_logo: bool = True
+    color: str = "#000000"
     assets: QRCodeAssetUrls | None = None
     created_at: str
     updated_at: str

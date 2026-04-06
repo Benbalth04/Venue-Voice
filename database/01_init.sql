@@ -162,6 +162,7 @@ CREATE TABLE qr_codes (
     location_id UUID NOT NULL REFERENCES locations(id),
     redirect_url TEXT NULL,
     has_logo BOOLEAN DEFAULT TRUE NOT NULL,
+    color TEXT NOT NULL DEFAULT '#000000',
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
     deleted_at TIMESTAMP NULL
@@ -178,7 +179,7 @@ CREATE TABLE qr_code_assets (
     storage_path TEXT NOT NULL,
     public_url TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT NOW(),
-    CONSTRAINT ck_qr_code_assets_format CHECK (format IN ('svg', 'png', 'jpeg')),
+    CONSTRAINT ck_qr_code_assets_format CHECK (format IN ('svg', 'png')),
     CONSTRAINT uq_qr_code_assets_qr_code_id_format UNIQUE (qr_code_id, format)
 );
 

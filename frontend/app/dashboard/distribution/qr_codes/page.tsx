@@ -71,19 +71,6 @@ function QRPanel({
     link.click()
   }
 
-  function downloadJPEG() {
-    if (assets) {
-      downloadFromUrl(assets.jpeg, `qr-${qr.id}.jpeg`)
-      return
-    }
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const link = document.createElement("a")
-    link.download = `qr-${qr.id}.jpeg`
-    link.href = canvas.toDataURL("image/jpeg", 0.95)
-    link.click()
-  }
-
   function downloadSVG() {
     if (assets) {
       downloadFromUrl(assets.svg, `qr-${qr.id}.svg`)
@@ -159,13 +146,6 @@ function QRPanel({
             </button>
             <button
               type="button"
-              onClick={downloadJPEG}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-zinc-200 px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
-            >
-              <Download className="h-3.5 w-3.5" /> JPEG
-            </button>
-            <button
-              type="button"
               onClick={downloadSVG}
               className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-zinc-200 px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
             >
@@ -183,6 +163,7 @@ function QRPanel({
 interface QRFormData {
   title: string
   location_survey_id: string
+  color: string
 }
 
 function qrStatusBadge(status: QRCodeResponse["qr_status"]) {
@@ -234,10 +215,12 @@ function QRModal({
       ? {
           title: initial.title,
           location_survey_id: initial.location_survey_id,
+          color: initial.color ?? "#000000",
         }
       : {
           title: "",
           location_survey_id: locationSurveys[0]?.id ?? "",
+          color: "#000000",
         }
   )
 
@@ -304,6 +287,19 @@ function QRModal({
                 />
               </div>
             )}
+          </label>
+
+          <label className="block">
+            <span className="text-sm font-medium text-zinc-700">QR colour</span>
+            <div className="mt-1 flex items-center gap-3">
+              <input
+                type="color"
+                value={form.color}
+                onChange={(e) => set("color", e.target.value)}
+                className="h-9 w-12 cursor-pointer rounded-lg border border-zinc-200 bg-white p-0.5"
+              />
+              <span className="font-mono text-sm text-zinc-500">{form.color.toUpperCase()}</span>
+            </div>
           </label>
 
           {error && (
@@ -395,6 +391,7 @@ export default function DistributionPage() {
       const basePayload: QRCodeCreate = {
         title: form.title.trim(),
         location_survey_id: form.location_survey_id,
+        color: form.color,
       }
       if (editTarget) {
         const updatePayload: QRCodeUpdate = { ...basePayload, updated_at: editTarget.updated_at }
