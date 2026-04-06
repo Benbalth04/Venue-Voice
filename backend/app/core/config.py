@@ -85,5 +85,12 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     redis_url: str = "redis://redis:6379/0"
 
+    # ------------------------------------------------------------------
+    # Sentry
+    # ------------------------------------------------------------------
+    sentry_dsn: str | None = None
+    sentry_traces_sample_rate: float = 0.5
+    environment: str = "production"
+
 
 settings = Settings()

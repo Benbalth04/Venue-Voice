@@ -398,20 +398,19 @@ def sync_subscription_from_stripe_object(stripe_sub: stripe.Subscription, db: Se
     raw_customer = getattr(stripe_sub, "customer", None)
     customer_id: str = raw_customer if isinstance(raw_customer, str) else getattr(raw_customer, "id", None)
     if not customer_id:
-        print(f"[STRIPE SYNC] ERROR: Could not resolve customer_id from subscription {getattr(stripe_sub, 'id', '?')}")
         logger.error("Cannot sync subscription: missing customer on stripe object")
         return
 
     sub_id = getattr(stripe_sub, "id", "?")
     sub_status = getattr(stripe_sub, "status", "?")
-    print(f"[STRIPE SYNC] Syncing subscription id={sub_id} status={sub_status} customer={customer_id}")
+    logger.debug("Syncing subscription id=%s status=%s customer=%s", sub_id, sub_status, customer_id)
 
     sub = db.query(Subscription).filter(
         Subscription.stripe_customer_id == customer_id
     ).first()
 
     if sub is None:
-        print(f"[STRIPE SYNC] No local subscription row found for customer={customer_id} — attempting to create one")
+        logger.debug("No local subscription row for customer=%s — attempting to create one", customer_id)
         metadata = getattr(stripe_sub, "metadata", None) or {}
         user_id_str = metadata.get("user_id") if hasattr(metadata, "get") else None
         if not user_id_str:
@@ -419,12 +418,11 @@ def sync_subscription_from_stripe_object(stripe_sub: stripe.Subscription, db: Se
                 customer = stripe.Customer.retrieve(customer_id)
                 customer_meta = getattr(customer, "metadata", None) or {}
                 user_id_str = customer_meta.get("user_id") if hasattr(customer_meta, "get") else None
-                print(f"[STRIPE SYNC] Resolved user_id={user_id_str} from Stripe customer metadata")
+                logger.debug("Resolved user_id=%s from Stripe customer metadata", user_id_str)
             except stripe.StripeError as exc:
-                print(f"[STRIPE SYNC] ERROR: Failed to retrieve customer {customer_id}: {exc}")
+                logger.error("Failed to retrieve Stripe customer %s: %s", customer_id, exc)
 
         if not user_id_str:
-            print(f"[STRIPE SYNC] ERROR: Cannot sync — no user_id found for customer={customer_id}")
             logger.error(
                 "Cannot sync subscription: no user_id for Stripe customer %s",
                 customer_id,
@@ -437,9 +435,9 @@ def sync_subscription_from_stripe_object(stripe_sub: stripe.Subscription, db: Se
             stripe_customer_id=customer_id,
         )
         db.add(sub)
-        print(f"[STRIPE SYNC] Created new local subscription row for user_id={user_id_str}")
+        logger.info("Created local subscription row for user_id=%s", user_id_str)
     else:
-        print(f"[STRIPE SYNC] Found existing local subscription row id={sub.id} current_status={sub.status}")
+        logger.debug("Found existing subscription row id=%s status=%s", sub.id, sub.status)
 
     sub.stripe_subscription_id = getattr(stripe_sub, "id", None)
     sub.status = db_subscription_status_from_stripe(stripe_sub)
@@ -460,9 +458,8 @@ def sync_subscription_from_stripe_object(stripe_sub: stripe.Subscription, db: Se
 
     try:
         db.commit()
-        print(f"[STRIPE SYNC] DB commit successful — subscription={sub_id} status={sub_status} customer={customer_id}")
     except Exception as exc:
-        print(f"[STRIPE SYNC] ERROR: DB commit failed: {exc}")
+        logger.error("DB commit failed while syncing subscription %s: %s", sub_id, exc)
         db.rollback()
         raise
 

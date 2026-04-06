@@ -31,3 +31,33 @@ services:
         required: false
       redis:
         condition: service_started
+
+  uptime_kuma:
+    image: louislam/uptime-kuma:1
+    container_name: uptime_kuma
+    restart: always
+    volumes:
+      - uptime_kuma_data:/app/data
+    networks:
+      - backend
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - backend
+    depends_on:
+      - uptime_kuma
+
+volumes:
+  uptime_kuma_data:
+  caddy_data:
+  caddy_config:

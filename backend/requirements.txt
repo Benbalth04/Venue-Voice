@@ -18,3 +18,4 @@ redis
 resend
 apscheduler
 stripe
+sentry-sdk[fastapi]

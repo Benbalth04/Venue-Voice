@@ -18,6 +18,7 @@ from .routes.stripe_webhook import router as stripe_webhook_router
 from .core.config import settings
 from .core.errors.app_error import AppError
 from .core.errors.handlers import app_error_handler, generic_exception_handler
+from .core.sentry import init_sentry
 from .tasks.email_reconciliation import start_scheduler, stop_scheduler
 
 
@@ -27,6 +28,10 @@ async def lifespan(app: FastAPI):
     yield
     stop_scheduler()
 
+
+# Initialise Sentry before constructing the app so the integrations can
+# instrument the ASGI machinery and all middleware from the start.
+init_sentry()
 
 app = FastAPI(lifespan=lifespan)
 app.add_exception_handler(AppError, app_error_handler)
