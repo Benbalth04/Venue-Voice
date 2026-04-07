@@ -13,7 +13,7 @@ import { patchUserTimezone, extractErrorMessage } from "@/lib/api/client"
 import { supabase } from "@/lib/supabase/client"
 
 export function ProfileSettingsMenu() {
-  const { user, refreshUser } = useAuth()
+  const { user, memberships, activeCompanyId, setActiveCompanyId, refreshUser } = useAuth()
   const [open, setOpen] = useState(false)
   const [tzSaving, setTzSaving] = useState(false)
   const [tzError, setTzError] = useState<string | null>(null)
@@ -96,6 +96,34 @@ export function ProfileSettingsMenu() {
               Manage subscription
             </Link>
           </div>
+
+          {memberships.length > 1 && (
+            <div className="border-b border-zinc-100 px-3 py-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+                Switch Company
+              </p>
+              <div className="mt-1.5 space-y-1">
+                {memberships.map((m) => (
+                  <button
+                    key={m.company_id}
+                    type="button"
+                    onClick={() => { setActiveCompanyId(m.company_id); close() }}
+                    className={[
+                      "w-full rounded-lg px-2 py-1.5 text-left text-sm transition-colors",
+                      m.company_id === activeCompanyId
+                        ? "bg-violet-50 font-medium text-violet-700"
+                        : "text-zinc-700 hover:bg-zinc-50",
+                    ].join(" ")}
+                  >
+                    {m.company_name}
+                    <span className="ml-1.5 text-[10px] font-normal text-zinc-400">
+                      ({m.role === "company_admin" ? "Admin" : "Viewer"})
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="px-3 py-2">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">

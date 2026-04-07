@@ -17,6 +17,7 @@ import {
   BookAudio
 } from "lucide-react"
 import { supabase } from "@/lib/supabase/client"
+import { useAuth } from "@/contexts/AuthContext"
 import { useUnreadResponses } from "@/components/layout/UnreadResponsesContext"
 import { useBrokenRules } from "@/components/layout/BrokenRulesContext"
 import { useBrokenFlows } from "@/components/layout/BrokenFlowsContext"
@@ -43,67 +44,77 @@ type NavItem = {
   tourId?: string
 }
 
-const items: NavItem[] = [
-  { href: "/dashboard", label: "Overview", icon: LayoutDashboard, exact: true },
-  {
-    href: "/dashboard/analytics/view_responses",
-    label: "Analytics",
-    icon: BarChart3,
-    children: [
-      {
-        href: "/dashboard/analytics/view_responses",
-        label: "View Responses",
-        exact: true,
-        showUnreadCount: true,
-        tourId: "tour-view-responses",
-      },
-      {
-        href: "/dashboard/analytics/survey_dashboard",
-        label: "Survey Dashboards",
-        exact: true,
-        tourId: "tour-survey-dashboards",
-      },
-    ],
-  },
-  { href: "/dashboard/surveys", label: "Surveys", icon: MessageSquare, tourId: "tour-surveys" },
-  { href: "/dashboard/locations", label: "Locations", icon: MapPin, tourId: "tour-locations" },
-  {
-    href: "/dashboard/distribution/assign_surveys",
-    label: "Distribution",
-    icon: Link2,
-    children: [
-      {
-        href: "/dashboard/distribution/assign_surveys",
-        label: "Assign Surveys",
-        exact: true,
-        tourId: "tour-assign-surveys",
-      },
-      {
-        href: "/dashboard/distribution/qr_codes",
-        label: "QR Codes",
-        exact: true,
-        showSubmissionBlockedQrCount: true,
-        tourId: "tour-qr-codes",
-      },
-    ],
-  },
-  {
-    href: "/dashboard/automations/flows",
-    label: "Automations",
-    icon: Zap,
-    children: [
-      { href: "/dashboard/automations/flows", label: "Flows", exact: true, showBrokenFlowCount: true, tourId: "tour-flows" },
-      { href: "/dashboard/automations/rules", label: "Rules", exact: true, showBrokenRuleCount: true, tourId: "tour-rules" },
-      {
-        href: "/dashboard/automations/notification_groups",
-        label: "Notification Groups",
-        exact: true,
-      },
-    ],
-  },
-  { label: "Reports", icon: BookAudio, disabled: true },
-  { label: "User Management", icon: Users, disabled: true },
-]
+function buildNavItems(isViewer: boolean): NavItem[] {
+  const distributionChildren: NavChild[] = []
+  if (!isViewer) {
+    distributionChildren.push({
+      href: "/dashboard/distribution/assign_surveys",
+      label: "Assign Surveys",
+      exact: true,
+      tourId: "tour-assign-surveys",
+    })
+  }
+  distributionChildren.push({
+    href: "/dashboard/distribution/qr_codes",
+    label: "QR Codes",
+    exact: true,
+    showSubmissionBlockedQrCount: !isViewer,
+    tourId: "tour-qr-codes",
+  })
+
+  const items: NavItem[] = [
+    { href: "/dashboard", label: "Overview", icon: LayoutDashboard, exact: true },
+    {
+      href: "/dashboard/analytics/view_responses",
+      label: "Analytics",
+      icon: BarChart3,
+      children: [
+        {
+          href: "/dashboard/analytics/view_responses",
+          label: "View Responses",
+          exact: true,
+          showUnreadCount: true,
+          tourId: "tour-view-responses",
+        },
+        {
+          href: "/dashboard/analytics/survey_dashboard",
+          label: "Survey Dashboards",
+          exact: true,
+          tourId: "tour-survey-dashboards",
+        },
+      ],
+    },
+    { href: "/dashboard/surveys", label: "Surveys", icon: MessageSquare, tourId: "tour-surveys" },
+    { href: "/dashboard/locations", label: "Locations", icon: MapPin, tourId: "tour-locations" },
+    {
+      href: distributionChildren[0].href,
+      label: "Distribution",
+      icon: Link2,
+      children: distributionChildren,
+    },
+  ]
+
+  if (!isViewer) {
+    items.push({
+      href: "/dashboard/automations/flows",
+      label: "Automations",
+      icon: Zap,
+      children: [
+        { href: "/dashboard/automations/flows", label: "Flows", exact: true, showBrokenFlowCount: true, tourId: "tour-flows" },
+        { href: "/dashboard/automations/rules", label: "Rules", exact: true, showBrokenRuleCount: true, tourId: "tour-rules" },
+        { href: "/dashboard/automations/notification_groups", label: "Notification Groups", exact: true },
+      ],
+    })
+  }
+
+  items.push({ label: "Reports", icon: BookAudio, disabled: true })
+
+  if (!isViewer) {
+    items.push({ href: "/dashboard/users", label: "User Management", icon: Users })
+  }
+
+  return items
+}
 
 function isRouteActive(pathname: string, href: string, exact = false) {
   if (exact) return pathname === href
@@ -113,10 +124,13 @@ function isRouteActive(pathname: string, href: string, exact = false) {
 export function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
+  const { activeMembership } = useAuth()
   const { unreadCount } = useUnreadResponses()
   const { brokenRuleCount } = useBrokenRules()
   const { brokenFlowCount } = useBrokenFlows()
   const { submissionBlockedActiveQrCount } = useQRSubmissionBlocked()
+  const isViewer = activeMembership?.role === "viewer"
+  const items = buildNavItems(isViewer)
 
   async function onLogout() {
     supabase.auth.signOut().catch((err) => {

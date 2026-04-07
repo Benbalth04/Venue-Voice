@@ -176,7 +176,7 @@ export default function Hero() {
               className="text-sm font-medium text-zinc-500 hover:text-violet-600 transition-colors flex items-center gap-1.5 justify-center"
               style={{ fontFamily: 'var(--font-manrope)' }}
             >
-              See how it works ↓
+              Learn more ↓
             </a>
           </motion.div>
 

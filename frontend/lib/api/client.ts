@@ -87,6 +87,15 @@ export class SurveySubmissionValidationError extends Error {
 }
 
 // Auth
+export interface MembershipSummary {
+  membership_id: string
+  company_id: string
+  company_name: string
+  role: "company_admin" | "viewer"
+  all_surveys: boolean
+  all_locations: boolean
+}
+
 export interface UserResponse {
   id: string
   email: string
@@ -98,6 +107,7 @@ export interface UserResponse {
   subscription_plan_name?: string | null
   company_name?: string | null
   user_display_name?: string | null
+  memberships: MembershipSummary[]
 }
 
 export interface SetupAccountPayload {
@@ -893,15 +903,29 @@ export interface AnalyticsFilters {
 // ------------------------------------------------------------------
 // Auth helpers
 // ------------------------------------------------------------------
+// ------------------------------------------------------------------
+// Active company ID — injected into every authenticated request
+// ------------------------------------------------------------------
+let _activeCompanyId: string | null = null
+
+export function setApiCompanyId(id: string | null): void {
+  _activeCompanyId = id
+}
+
+function companyHeader(): Record<string, string> {
+  return _activeCompanyId ? { "X-Company-ID": _activeCompanyId } : {}
+}
+
 function authHeaders(accessToken: string): Record<string, string> {
   return {
     Authorization: `Bearer ${accessToken}`,
     "Content-Type": "application/json",
+    ...companyHeader(),
   }
 }
 
 function authGetHeaders(accessToken: string): Record<string, string> {
-  return { Authorization: `Bearer ${accessToken}` }
+  return { Authorization: `Bearer ${accessToken}`, ...companyHeader() }
 }
 
 // ------------------------------------------------------------------
@@ -1943,6 +1967,102 @@ export async function verifyCheckoutSession(
   return apiFetch<{ ok: boolean }>(
     `${BACKEND_BASE}/api/v1/billing/verify-checkout-session?${q.toString()}`,
     { headers: authGetHeaders(accessToken) }
+  )
+}
+
+// ------------------------------------------------------------------
+// Company User Management
+// ------------------------------------------------------------------
+
+export interface CompanyMemberResponse {
+  membership_id: string
+  user_id: string
+  email: string
+  first_name: string
+  last_name: string
+  role: "company_admin" | "viewer"
+  all_surveys: boolean
+  all_locations: boolean
+  invited_by_name: string | null
+  created_at: string
+}
+
+export interface InviteViewerRequest {
+  email: string
+  first_name: string
+  last_name: string
+}
+
+export interface ViewerPermissionsResponse {
+  membership_id: string
+  all_surveys: boolean
+  all_locations: boolean
+  survey_ids: string[]
+  location_ids: string[]
+}
+
+export interface SetViewerPermissionsRequest {
+  all_surveys: boolean
+  all_locations: boolean
+  survey_ids: string[]
+  location_ids: string[]
+}
+
+export async function fetchCompanyUsers(
+  accessToken: string
+): Promise<CompanyMemberResponse[]> {
+  return apiFetch<CompanyMemberResponse[]>(
+    `${BACKEND_BASE}/api/v1/company/users`,
+    { headers: authGetHeaders(accessToken) }
+  )
+}
+
+export async function inviteCompanyUser(
+  accessToken: string,
+  payload: InviteViewerRequest
+): Promise<CompanyMemberResponse> {
+  return apiFetch<CompanyMemberResponse>(
+    `${BACKEND_BASE}/api/v1/company/users/invite`,
+    {
+      method: "POST",
+      headers: authHeaders(accessToken),
+      body: JSON.stringify(payload),
+    }
+  )
+}
+
+export async function getViewerPermissions(
+  accessToken: string,
+  membershipId: string
+): Promise<ViewerPermissionsResponse> {
+  return apiFetch<ViewerPermissionsResponse>(
+    `${BACKEND_BASE}/api/v1/company/users/${membershipId}/permissions`,
+    { headers: authGetHeaders(accessToken) }
+  )
+}
+
+export async function setViewerPermissions(
+  accessToken: string,
+  membershipId: string,
+  payload: SetViewerPermissionsRequest
+): Promise<ViewerPermissionsResponse> {
+  return apiFetch<ViewerPermissionsResponse>(
+    `${BACKEND_BASE}/api/v1/company/users/${membershipId}/permissions`,
+    {
+      method: "POST",
+      headers: authHeaders(accessToken),
+      body: JSON.stringify(payload),
+    }
+  )
+}
+
+export async function removeCompanyUser(
+  accessToken: string,
+  membershipId: string
+): Promise<void> {
+  await apiFetch<void>(
+    `${BACKEND_BASE}/api/v1/company/users/${membershipId}`,
+    { method: "DELETE", headers: authGetHeaders(accessToken) }
   )
 }
 
