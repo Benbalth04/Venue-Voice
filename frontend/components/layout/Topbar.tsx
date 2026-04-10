@@ -50,8 +50,8 @@ export function Topbar() {
   const companyName = user?.company_name ?? ""
   const qrBannerMessage =
     submissionBlockedActiveQrCount === 1
-      ? "There is 1 active QR code that cannot accept submissions. Ensure the survey assignment is active."
-      : `There are ${submissionBlockedActiveQrCount} active QR codes that cannot accept submissions. Ensure the survey assignment is active.`
+      ? "There is 1 active QR code that cannot accept submissions. Ensure the QR code's location and survey are both active."
+      : `There are ${submissionBlockedActiveQrCount} active QR codes that cannot accept submissions. Ensure each QR code's location and survey are both active.`
 
   return (
     <>

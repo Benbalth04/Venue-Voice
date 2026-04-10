@@ -111,6 +111,15 @@ export default function AuthCallbackPage() {
         return
       }
 
+      const linkType = new URLSearchParams(window.location.search).get("type")
+
+      if (linkType === "recovery") {
+        // Password recovery flow — session is established; let the user set a new password.
+        setState("success")
+        router.replace("/reset-password")
+        return
+      }
+
       try {
         await confirmEmail(finalSession.access_token)
         // Refresh AuthContext so EmailVerifiedGuard sees email_verified=true
@@ -119,7 +128,11 @@ export default function AuthCallbackPage() {
         await refreshUser()
         const me = await fetchUser(finalSession.access_token)
         setState("success")
-        router.replace(me.onboarding_complete ? "/dashboard" : "/onboarding")
+        if (me.invite_pending || linkType === "invite") {
+          router.replace("/onboarding/invite-setup")
+        } else {
+          router.replace(me.onboarding_complete ? "/dashboard" : "/onboarding")
+        }
       } catch {
         setErrorMessage("Account verified, but we could not load your profile. Please log in.")
         setState("error")

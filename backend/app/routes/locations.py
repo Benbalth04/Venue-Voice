@@ -15,10 +15,11 @@ from sqlalchemy.exc import IntegrityError
 
 from ..core.errors.exceptions import ConflictError, NotFoundError, StaleObjectError, ValidationError
 
-from ..auth.jwt import get_current_user
+from ..auth.membership import get_company_from_membership, get_current_membership, require_company_admin
 from ..auth.plan_enforcement import assert_can_activate_location
 from ..auth.subscription import require_active_subscription
 from ..auth.user_timezone import format_dt_for_user, get_user_zoneinfo
+from ..auth.viewer_scoping import apply_location_filter, assert_location_access, location_ids_subquery
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import (
     Company as CompanyORM,
@@ -27,7 +28,7 @@ from ..models.postgres_model import (
     FlowNode as FlowNodeORM,
     Location as LocationORM,
     LocationSurvey as LocationSurveyORM,
-    User as UserORM,
+    Membership as MembershipORM,
 )
 from ..schemas.pydantic_model import DeleteRequest, FlowSummary, LocationCreate, LocationFlowDependencies, LocationResponse, LocationUpdate
 
@@ -39,20 +40,6 @@ def _strip_tz(dt: datetime) -> datetime:
     return dt
 
 router = APIRouter(dependencies=[Depends(require_active_subscription)])
-
-
-def _get_company(user: UserORM, db: Session) -> CompanyORM:
-    company = (
-        db.query(CompanyORM)
-        .filter(
-            CompanyORM.owner_user_id == user.id,
-            CompanyORM.deleted_at.is_(None),
-        )
-        .first()
-    )
-    if not company:
-        raise NotFoundError(code="COMPANY_NOT_FOUND", message="Company not found")
-    return company
 
 
 def _get_location_or_404(location_id: str, company_id: uuid.UUID, db: Session) -> LocationORM:
@@ -119,31 +106,32 @@ def _to_response(loc: LocationORM, user_tz: ZoneInfo) -> LocationResponse:
 
 @router.get("/locations", response_model=list[LocationResponse])
 def list_locations(
-    user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(get_current_membership),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
-    company = _get_company(user, db)
-    locations = (
+    company = get_company_from_membership(membership, db)
+    location_sq = location_ids_subquery(membership, db)
+    query = (
         db.query(LocationORM)
         .filter(
             LocationORM.company_id == company.id,
             LocationORM.deleted_at.is_(None),
         )
-        .order_by(LocationORM.created_at.desc())
-        .all()
     )
+    query = apply_location_filter(query, location_sq, LocationORM.id)
+    locations = query.order_by(LocationORM.created_at.desc()).all()
     return [_to_response(loc, user_tz) for loc in locations]
 
 
 @router.post("/locations", response_model=LocationResponse, status_code=201)
 def create_location(
     payload: LocationCreate,
-    user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
-    company = _get_company(user, db)
+    company = get_company_from_membership(membership, db)
 
     name = payload.name.strip()
     if not name:
@@ -185,21 +173,23 @@ def create_location(
 @router.get("/locations/{location_id}", response_model=LocationResponse)
 def get_location(
     location_id: str,
-    user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(get_current_membership),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
-    company = _get_company(user, db)
-    return _to_response(_get_location_or_404(location_id, company.id, db), user_tz)
+    company = get_company_from_membership(membership, db)
+    loc = _get_location_or_404(location_id, company.id, db)
+    assert_location_access(membership, loc.id, db)
+    return _to_response(loc, user_tz)
 
 
 @router.get("/locations/{location_id}/flow-dependencies", response_model=LocationFlowDependencies)
 def get_location_flow_dependencies(
     location_id: str,
-    user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     db: Session = Depends(get_db_connection),
 ):
-    company = _get_company(user, db)
+    company = get_company_from_membership(membership, db)
     loc = _get_location_or_404(location_id, company.id, db)
 
     ls_ids = [
@@ -264,19 +254,20 @@ def get_location_flow_dependencies(
 def update_location(
     location_id: str,
     payload: LocationUpdate,
-    user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
-    company = _get_company(user, db)
+    company = get_company_from_membership(membership, db)
     loc = _get_location_or_404(location_id, company.id, db)
+    was_inactive = not loc.is_active
 
     if (
         "is_active" in payload.model_fields_set
         and payload.is_active is True
         and not loc.is_active
     ):
-        assert_can_activate_location(db, company.id, user)
+        assert_can_activate_location(db, company.id, company)
 
     update_values: dict = {"updated_at": func.now()}
 
@@ -326,6 +317,21 @@ def update_location(
             .update({"is_active": False}, synchronize_session=False)
         )
 
+    reactivating_location = (
+        "is_active" in payload.model_fields_set
+        and payload.is_active is True
+        and was_inactive
+    )
+    if reactivating_location:
+        (
+            db.query(LocationSurveyORM)
+            .filter(
+                LocationSurveyORM.location_id == loc.id,
+                LocationSurveyORM.deleted_at.is_(None),
+            )
+            .update({"is_active": True}, synchronize_session=False)
+        )
+
     try:
         db.commit()
         db.refresh(loc)
@@ -349,10 +355,10 @@ def update_location(
 def deactivate_location(
     location_id: str,
     payload: DeleteRequest,
-    user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     db: Session = Depends(get_db_connection),
 ):
-    company = _get_company(user, db)
+    company = get_company_from_membership(membership, db)
     loc = _get_location_or_404(location_id, company.id, db)
 
     rowcount = (

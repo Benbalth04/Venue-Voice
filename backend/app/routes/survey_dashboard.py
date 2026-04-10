@@ -12,9 +12,10 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from ..auth.jwt import get_current_user
+from ..auth.membership import get_company_from_membership, get_current_membership
 from ..auth.subscription import require_active_subscription
 from ..auth.user_timezone import get_user_zoneinfo
+from ..auth.viewer_scoping import assert_survey_access
 from ..core.datetime_user_tz import (
     inclusive_local_date_range_to_utc_bounds,
     local_date_start_utc,
@@ -22,7 +23,7 @@ from ..core.datetime_user_tz import (
 )
 from ..core.errors.exceptions import ValidationError
 from ..db.postgres import get_db_connection
-from ..models.postgres_model import Company as CompanyORM, User as UserORM
+from ..models.postgres_model import Membership as MembershipORM
 from ..schemas.pydantic_model import (
     DashboardFilterParams,
     EngagementBreakdownResponse,
@@ -38,26 +39,6 @@ from ..services.survey_dashboard_service import (
 )
 
 router = APIRouter(prefix="/surveys", tags=["survey-dashboard"], dependencies=[Depends(require_active_subscription)])
-
-
-def _get_company(user: UserORM, db: Session) -> CompanyORM:
-    company = (
-        db.query(CompanyORM)
-        .filter(
-            CompanyORM.owner_user_id == user.id,
-            CompanyORM.deleted_at.is_(None),
-        )
-        .first()
-    )
-    if not company:
-        from ..core.errors.exceptions import NotFoundError
-
-        raise NotFoundError(
-            code="COMPANY_NOT_FOUND",
-            message="Company not found",
-            details={},
-        )
-    return company
 
 
 def _parse_yyyy_mm_dd(s: str | None) -> date | None:
@@ -127,11 +108,12 @@ def get_survey_dashboard(
     qr_code_ids: list[uuid.UUID] | None = Query(default=None),
     date_start: str | None = Query(default=None, description="YYYY-MM-DD in user's saved timezone"),
     date_end: str | None = Query(default=None, description="YYYY-MM-DD in user's saved timezone"),
-    user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(get_current_membership),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ) -> SurveyDashboardResponse:
-    company = _get_company(user, db)
+    company = get_company_from_membership(membership, db)
+    assert_survey_access(membership, survey_id, db)
     filters = _survey_dashboard_filters(
         location_ids=location_ids,
         qr_code_ids=qr_code_ids,
@@ -153,11 +135,12 @@ def get_old_questions_dashboard(
     qr_code_ids: list[uuid.UUID] | None = Query(default=None),
     date_start: str | None = Query(default=None, description="YYYY-MM-DD in user's saved timezone"),
     date_end: str | None = Query(default=None, description="YYYY-MM-DD in user's saved timezone"),
-    user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(get_current_membership),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ) -> OldQuestionsDashboardResponse:
-    company = _get_company(user, db)
+    company = get_company_from_membership(membership, db)
+    assert_survey_access(membership, survey_id, db)
     filters = _survey_dashboard_filters(
         location_ids=location_ids,
         qr_code_ids=qr_code_ids,
@@ -181,11 +164,12 @@ def get_question_breakdown_endpoint(
     qr_code_ids: list[uuid.UUID] | None = Query(default=None),
     date_start: str | None = Query(default=None, description="YYYY-MM-DD in user's saved timezone"),
     date_end: str | None = Query(default=None, description="YYYY-MM-DD in user's saved timezone"),
-    user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(get_current_membership),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ) -> QuestionBreakdownResponse:
-    company = _get_company(user, db)
+    company = get_company_from_membership(membership, db)
+    assert_survey_access(membership, survey_id, db)
     filters = _survey_dashboard_filters(
         location_ids=location_ids,
         qr_code_ids=qr_code_ids,
@@ -210,11 +194,12 @@ def get_engagement_breakdown_endpoint(
     qr_code_ids: list[uuid.UUID] | None = Query(default=None),
     date_start: str | None = Query(default=None, description="YYYY-MM-DD in user's saved timezone"),
     date_end: str | None = Query(default=None, description="YYYY-MM-DD in user's saved timezone"),
-    user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(get_current_membership),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ) -> EngagementBreakdownResponse:
-    company = _get_company(user, db)
+    company = get_company_from_membership(membership, db)
+    assert_survey_access(membership, survey_id, db)
     filters = _survey_dashboard_filters(
         location_ids=location_ids,
         qr_code_ids=qr_code_ids,

@@ -39,20 +39,13 @@ export function SurveyPreview({ survey }: { survey: Survey }) {
         <div className="mt-6">
           <button
             type="button"
-            className="w-full rounded-xl bg-violet-600 px-4 py-3 text-sm font-semibold text-white shadow-sm outline-none hover:bg-violet-700 focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+            className="w-full rounded-xl px-4 py-3 text-base font-semibold text-white outline-none disabled:cursor-not-allowed disabled:opacity-50"
+            style={{ backgroundColor: survey.theme.primaryColor }}
             aria-label="Submit survey"
             onClick={handleSubmit}
           >
             Submit
           </button>
-          <div className="mt-4 flex justify-center">
-            <img
-              src="/venue_voice_logo_3.png"
-              alt="Venue Voice"
-              className="h-12 w-auto object-contain"
-              aria-hidden
-            />
-          </div>
         </div>
       </div>
     </div>

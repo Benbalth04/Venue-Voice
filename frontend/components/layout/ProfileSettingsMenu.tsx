@@ -13,7 +13,8 @@ import { patchUserTimezone, extractErrorMessage } from "@/lib/api/client"
 import { supabase } from "@/lib/supabase/client"
 
 export function ProfileSettingsMenu() {
-  const { user, memberships, activeCompanyId, setActiveCompanyId, refreshUser } = useAuth()
+  const { user, memberships, activeCompanyId, setActiveCompanyId, refreshUser, activeMembership } = useAuth()
+  const isViewer = activeMembership?.role === "viewer"
   const [open, setOpen] = useState(false)
   const [tzSaving, setTzSaving] = useState(false)
   const [tzError, setTzError] = useState<string | null>(null)
@@ -88,13 +89,15 @@ export function ProfileSettingsMenu() {
               Subscription
             </p>
             <p className="mt-0.5 text-sm text-zinc-800">{plan ?? "None"}</p>
-            <Link
-              href="/dashboard/settings/manage-subscription"
-              onClick={close}
-              className="mt-1 inline-block text-xs font-medium text-violet-600 hover:text-violet-700"
-            >
-              Manage subscription
-            </Link>
+            {!isViewer && (
+              <Link
+                href="/dashboard/settings/manage-subscription"
+                onClick={close}
+                className="mt-1 inline-block text-xs font-medium text-violet-600 hover:text-violet-700"
+              >
+                Manage subscription
+              </Link>
+            )}
           </div>
 
           {memberships.length > 1 && (

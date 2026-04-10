@@ -25,6 +25,7 @@ from ..models.postgres_model import (
     Company as CompanyORM,
     Location as LocationORM,
     LocationSnapshot as LocationSnapshotORM,
+    Membership as MembershipORM,
     QRCode as QRCodeORM,
     Question as QuestionORM,
     ResponseRead as ResponseReadORM,
@@ -35,6 +36,7 @@ from ..models.postgres_model import (
     SurveySession as SurveySessionORM,
     SurveyVersion as SurveyVersionORM,
 )
+from ..auth.viewer_scoping import survey_ids_subquery, location_ids_subquery, assert_survey_access
 from ..schemas.pydantic_model import (
     AnalyticsAnswerDetail,
     AnalyticsFilterOption,
@@ -69,51 +71,113 @@ def _parse_analytics_filter_date(s: str | None) -> date | None:
         ) from e
 
 
-def _get_company_or_403(user_id: uuid.UUID, db: Session) -> CompanyORM:
-    company = (
-        db.query(CompanyORM)
-        .filter(
-            CompanyORM.owner_user_id == user_id,
-            CompanyORM.deleted_at.is_(None),
-        )
-        .first()
-    )
-    if not company:
-        raise PermissionError(code="NO_COMPANY_FOR_USER", message="No company associated with this user")
-    return company
-
-
-def get_unread_response_count(*, user_id: uuid.UUID, db: Session) -> int:
+def get_unread_response_count(*, membership: MembershipORM, db: Session) -> int:
     """Return unread completed survey responses for the current user."""
-    company = _get_company_or_403(user_id, db)
+    user_id = membership.user_id
+    survey_sq = survey_ids_subquery(membership, db)
+    is_viewer = membership.role == "viewer"
+
     read_ids_subq = (
         db.query(ResponseReadORM.response_id).filter(
             ResponseReadORM.user_id == user_id,
             ResponseReadORM.deleted_at.is_(None),
         )
     )
-    unread_count = (
+    q = (
         db.query(func.count(SurveyResponseORM.id))
         .join(SurveySessionORM, SurveySessionORM.id == SurveyResponseORM.session_id)
         .filter(
-            SurveySessionORM.company_id == company.id,
+            SurveySessionORM.company_id == membership.company_id,
             SurveySessionORM.deleted_at.is_(None),
             SurveyResponseORM.deleted_at.is_(None),
         )
         .filter(SurveyResponseORM.id.notin_(read_ids_subq))
-        .scalar()
     )
+    if survey_sq is not None or is_viewer:
+        q = q.join(SurveyVersionORM, SurveyVersionORM.id == SurveyResponseORM.survey_version_id)
+        if survey_sq is not None:
+            q = q.filter(SurveyVersionORM.survey_id.in_(survey_sq))
+        if is_viewer:
+            q = q.join(SurveyORM, SurveyORM.id == SurveyVersionORM.survey_id)
+            q = q.filter(SurveyORM.status == "active", SurveyORM.deleted_at.is_(None))
+    unread_count = q.scalar()
     return int(unread_count or 0)
 
 
-def has_unread_responses(*, user_id: uuid.UUID, db: Session) -> bool:
+def has_unread_responses(*, membership: MembershipORM, db: Session) -> bool:
     """Return True if the user has any unread survey responses they haven't read."""
-    return get_unread_response_count(user_id=user_id, db=db) > 0
+    return get_unread_response_count(membership=membership, db=db) > 0
+
+
+_MAX_NOTIFICATION_LOOKBACK_MINUTES = 10
+_MAX_NOTIFICATION_RESULTS = 20
+
+
+def get_new_responses_since(
+    *, membership: MembershipORM, db: Session, since: datetime, limit: int = _MAX_NOTIFICATION_RESULTS
+) -> list[dict]:
+    """Return responses submitted after `since` for the company, for toast notifications.
+
+    Clamps `since` to at most 10 minutes ago to prevent full-history scans.
+    Respects viewer survey/location scoping.
+    """
+    from ..models.postgres_model import LocationSnapshot as LocationSnapshotORM
+
+    min_since = datetime.utcnow() - timedelta(minutes=_MAX_NOTIFICATION_LOOKBACK_MINUTES)
+    if since < min_since:
+        since = min_since
+
+    q = (
+        db.query(
+            SurveyResponseORM.id.label("response_id"),
+            SurveyORM.name.label("survey_name"),
+            LocationSnapshotORM.name.label("location_name"),
+            SurveyResponseORM.completion_datetime.label("submitted_at"),
+        )
+        .join(SurveySessionORM, SurveySessionORM.id == SurveyResponseORM.session_id)
+        .join(SurveyVersionORM, SurveyVersionORM.id == SurveySessionORM.survey_version_id)
+        .join(SurveyORM, SurveyORM.id == SurveyVersionORM.survey_id)
+        .outerjoin(
+            LocationSnapshotORM,
+            LocationSnapshotORM.id == SurveySessionORM.location_snapshot_id,
+        )
+        .filter(
+            SurveySessionORM.company_id == membership.company_id,
+            SurveyResponseORM.completion_datetime > since,
+            SurveyResponseORM.deleted_at.is_(None),
+            SurveySessionORM.deleted_at.is_(None),
+            SurveyVersionORM.deleted_at.is_(None),
+            SurveyORM.deleted_at.is_(None),
+        )
+    )
+
+    survey_sq = survey_ids_subquery(membership, db)
+    if survey_sq is not None:
+        q = q.filter(SurveyORM.id.in_(survey_sq))
+
+    if membership.role == "viewer":
+        q = q.filter(SurveyORM.status == "active")
+
+    rows = (
+        q.order_by(SurveyResponseORM.completion_datetime.asc())
+        .limit(limit)
+        .all()
+    )
+
+    return [
+        {
+            "response_id": str(row.response_id),
+            "survey_name": row.survey_name,
+            "location_name": row.location_name or "Unknown location",
+            "submitted_at": row.submitted_at,
+        }
+        for row in rows
+    ]
 
 
 def get_analytics_responses(
     *,
-    user_id: uuid.UUID,
+    membership: MembershipORM,
     db: Session,
     user_tz: ZoneInfo,
     page: int = 1,
@@ -128,7 +192,7 @@ def get_analytics_responses(
     sort_direction: str = "desc",
     no_location: bool = False,
 ) -> AnalyticsResponseList:
-    company = _get_company_or_403(user_id, db)
+    user_id = membership.user_id
 
     if page < 1:
         raise ValidationError(code="INVALID_PAGE", message="page must be >= 1")
@@ -189,7 +253,7 @@ def get_analytics_responses(
             SurveyResponseORM.survey_version_id.label("survey_version_id"),
             func.coalesce(answer_count_sq.c.answer_count, 0).label("questions_answered"),
         )
-        .filter(SurveySessionORM.company_id == company.id)
+        .filter(SurveySessionORM.company_id == membership.company_id)
         .filter(
             SurveySessionORM.deleted_at.is_(None),
             QRCodeORM.deleted_at.is_(None),
@@ -214,6 +278,22 @@ def get_analytics_responses(
             answer_count_sq.c.session_id == SurveySessionORM.id,
         )
     )
+
+    # ------------------------------------------------------------------
+    # Viewer scoping — restrict to permitted surveys / locations
+    # ------------------------------------------------------------------
+    _survey_sq = survey_ids_subquery(membership, db)
+    if _survey_sq is not None:
+        q = q.filter(SurveyORM.id.in_(_survey_sq))
+
+    _location_sq = location_ids_subquery(membership, db)
+    if _location_sq is not None:
+        q = q.filter(LocationSnapshotORM.location_id.in_(_location_sq))
+
+    if membership.role == "viewer":
+        q = q.filter(SurveyORM.status == "active")
+        q = q.outerjoin(LocationORM, LocationORM.id == LocationSnapshotORM.location_id)
+        q = q.filter(or_(LocationSnapshotORM.location_id.is_(None), LocationORM.is_active == True))
 
     # ------------------------------------------------------------------
     # Optional filters (all AND logic, all company-scoped already)
@@ -346,38 +426,46 @@ def mark_response_read(*, user_id: uuid.UUID, response_id: uuid.UUID, db: Sessio
         db.commit()
 
 
-def get_analytics_filters(*, user_id: uuid.UUID, db: Session) -> AnalyticsFiltersResponse:
-    company = _get_company_or_403(user_id, db)
+def get_analytics_filters(*, membership: MembershipORM, db: Session) -> AnalyticsFiltersResponse:
+    survey_sq = survey_ids_subquery(membership, db)
+    location_sq = location_ids_subquery(membership, db)
+    is_viewer = membership.role == "viewer"
 
-    surveys = (
+    survey_q = (
         db.query(SurveyORM.id, SurveyORM.name)
         .filter(
-            SurveyORM.company_id == company.id,
+            SurveyORM.company_id == membership.company_id,
             SurveyORM.deleted_at.is_(None),
         )
-        .order_by(SurveyORM.name)
-        .all()
     )
+    if survey_sq is not None:
+        survey_q = survey_q.filter(SurveyORM.id.in_(survey_sq))
+    if is_viewer:
+        survey_q = survey_q.filter(SurveyORM.status == "active")
+    surveys = survey_q.order_by(SurveyORM.name).all()
 
     qr_codes = (
         db.query(QRCodeORM.id, QRCodeORM.title)
         .filter(
-            QRCodeORM.company_id == company.id,
+            QRCodeORM.company_id == membership.company_id,
             QRCodeORM.deleted_at.is_(None),
         )
         .order_by(QRCodeORM.title)
         .all()
     )
 
-    locations = (
+    location_q = (
         db.query(LocationORM.id, LocationORM.name)
         .filter(
-            LocationORM.company_id == company.id,
+            LocationORM.company_id == membership.company_id,
             LocationORM.deleted_at.is_(None),
         )
-        .order_by(LocationORM.name)
-        .all()
     )
+    if location_sq is not None:
+        location_q = location_q.filter(LocationORM.id.in_(location_sq))
+    if is_viewer:
+        location_q = location_q.filter(LocationORM.is_active == True)
+    locations = location_q.order_by(LocationORM.name).all()
 
     return AnalyticsFiltersResponse(
         surveys=[AnalyticsFilterOption(id=r.id, name=r.name) for r in surveys],
@@ -403,11 +491,11 @@ def _answer_value_from_norm_answer(a: SurveyResponseAnswerORM, *, has_photo: boo
 def get_response_detail(
     *,
     response_id: uuid.UUID,
-    user_id: uuid.UUID,
+    membership: MembershipORM,
     db: Session,
     user_tz: ZoneInfo,
 ) -> AnalyticsResponseDetail:
-    company = _get_company_or_403(user_id, db)
+    user_id = membership.user_id
 
     # Verify company ownership via session
     resp = (
@@ -415,7 +503,7 @@ def get_response_detail(
         .join(SurveySessionORM, SurveySessionORM.id == SurveyResponseORM.session_id)
         .filter(
             SurveyResponseORM.id == response_id,
-            SurveySessionORM.company_id == company.id,
+            SurveySessionORM.company_id == membership.company_id,
             SurveyResponseORM.deleted_at.is_(None),
             SurveySessionORM.deleted_at.is_(None),
         )
@@ -446,6 +534,10 @@ def get_response_detail(
             .first()
         )
         survey_name = s.name if s else ""
+        if membership.role == "viewer":
+            assert_survey_access(membership, sv.survey_id, db)
+            if not s or s.status != "active":
+                raise NotFoundError(code="RESPONSE_NOT_FOUND", message="Response not found")
 
     # Build question lookup from normalized questions table
     questions = (
@@ -619,7 +711,11 @@ def get_response_detail(
                 )
             )
 
-    flow_run_payloads = list_flow_runs_for_response(db, company.id, response_id, user_tz)
+    # Viewers may review answers but must not receive flow automation audit data.
+    if membership.role in ("company_owner", "company_admin"):
+        flow_run_payloads = list_flow_runs_for_response(db, membership.company_id, response_id, user_tz)
+    else:
+        flow_run_payloads = []
 
     return AnalyticsResponseDetail(
         response_id=resp.id,
@@ -640,7 +736,7 @@ def _format_answer(val: Any) -> str:
 def delete_response(
     db: Session,
     response_id: uuid.UUID,
-    user_id: uuid.UUID,
+    membership: MembershipORM,
     confirmation: str,
 ) -> None:
     """Soft-delete a survey response and all its child records.
@@ -648,20 +744,24 @@ def delete_response(
     Cascades deleted_at to: survey_response_answers, ai_analysis,
     response_reads, survey_response_photos.
     """
+    if membership.role == "viewer":
+        raise PermissionError(
+            code="ACCESS_DENIED",
+            message="Viewers cannot delete survey responses.",
+        )
+
     if confirmation != "delete now":
         raise ValidationError(
             code="INVALID_CONFIRMATION",
             message="Confirmation text must be exactly 'delete now'.",
         )
 
-    company = _get_company_or_403(user_id, db)
-
     response = (
         db.query(SurveyResponseORM)
         .join(SurveySessionORM, SurveyResponseORM.session_id == SurveySessionORM.id)
         .filter(
             SurveyResponseORM.id == response_id,
-            SurveySessionORM.company_id == company.id,
+            SurveySessionORM.company_id == membership.company_id,
             SurveyResponseORM.deleted_at.is_(None),
         )
         .first()

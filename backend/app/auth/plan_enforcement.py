@@ -44,37 +44,19 @@ from fastapi import Depends
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from ..auth.jwt import get_current_user
-from ..core.errors.exceptions import NotFoundError, SubscriptionFeatureError, SubscriptionLimitError, suggest_upgrade_plan
+from ..auth.membership import get_company_from_membership, get_current_membership
+from ..core.errors.exceptions import SubscriptionFeatureError, SubscriptionLimitError, suggest_upgrade_plan
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import (
     Company as CompanyORM,
     Flow as FlowORM,
     Location as LocationORM,
+    Membership as MembershipORM,
     Survey as SurveyORM,
     SurveyStatus,
-    User as UserORM,
 )
 from ..services.plan_policy import PlanPolicy, get_policy_for_subscription
-from ..services.stripe_service import get_subscription
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-def _get_company_id(current_user: UserORM, db: Session) -> uuid.UUID:
-    company = (
-        db.query(CompanyORM)
-        .filter(
-            CompanyORM.owner_user_id == current_user.id,
-            CompanyORM.deleted_at.is_(None),
-        )
-        .first()
-    )
-    if not company:
-        raise NotFoundError(code="COMPANY_NOT_FOUND", message="Company not found.")
-    return company.id
+from ..services.stripe_service import get_company_subscription
 
 
 # ---------------------------------------------------------------------------
@@ -95,13 +77,13 @@ def count_locations(db: Session, company_id: uuid.UUID) -> int:
     )
 
 
-def assert_can_activate_location(db: Session, company_id: uuid.UUID, user: UserORM) -> None:
+def assert_can_activate_location(db: Session, company_id: uuid.UUID, company: CompanyORM) -> None:
     """Raise SubscriptionLimitError if the company is already at its active-location cap.
 
     Call when transitioning a location from inactive → active. Creation of new
     locations does not use this check; new rows should be inserted inactive.
     """
-    sub = get_subscription(user, db)
+    sub = get_company_subscription(company, db)
     policy = get_policy_for_subscription(sub)
     limit = policy.max_locations
     if limit == -1:
@@ -137,6 +119,51 @@ def count_active_surveys(db: Session, company_id: uuid.UUID) -> int:
         .scalar()
         or 0
     )
+
+
+def count_company_members(db: Session, company_id: uuid.UUID) -> int:
+    """Count active non-owner memberships for plan limits."""
+    return (
+        db.query(func.count(MembershipORM.id))
+        .filter(
+            MembershipORM.company_id == company_id,
+            MembershipORM.role != "company_owner",
+            MembershipORM.deleted_at.is_(None),
+        )
+        .scalar()
+        or 0
+    )
+
+
+def assert_can_invite_user(db: Session, company_id: uuid.UUID, company: CompanyORM) -> None:
+    """Raise SubscriptionLimitError if the company is already at its member cap.
+
+    Call before creating a new membership. Counts only non-owner members since
+    the owner slot is always reserved and does not count against the limit.
+    """
+    sub = get_company_subscription(company, db)
+    policy = get_policy_for_subscription(sub)
+    limit = policy.max_company_members
+    if limit == -1:
+        return
+
+    acquire_company_resource_lock(db, company_id, "company_members")
+    current = count_company_members(db, company_id)
+    if current >= limit:
+        plan_key = (sub.plan_display_name or "starter").strip().lower() if sub else "starter"
+        member_word = "member" if limit == 1 else "members"
+        raise SubscriptionLimitError(
+            resource="company_members",
+            limit=limit,
+            current=current,
+            is_over_limit=(current > limit),
+            plan=plan_key,
+            upgrade_to=suggest_upgrade_plan(plan_key),
+            message=(
+                f"Your plan allows up to {limit} additional {member_word}. "
+                "Remove an existing member or upgrade your plan to invite more."
+            ),
+        )
 
 
 def count_active_flows(db: Session, company_id: uuid.UUID) -> int:
@@ -208,6 +235,7 @@ _RESOURCE_SALT: dict[str, int] = {
     "locations": 1,
     "active_surveys": 2,
     "active_flows": 3,
+    "company_members": 4,
 }
 
 
@@ -247,11 +275,12 @@ def require_limit(resource: str) -> Callable:
     4. Raises SubscriptionLimitError (403) if the limit is reached.
     """
     def _dependency(
-        current_user: UserORM = Depends(get_current_user),
+        membership: MembershipORM = Depends(get_current_membership),
         db: Session = Depends(get_db_connection),
     ) -> None:
-        company_id = _get_company_id(current_user, db)
-        sub = get_subscription(current_user, db)
+        company = get_company_from_membership(membership, db)
+        company_id = company.id
+        sub = get_company_subscription(company, db)
         policy = get_policy_for_subscription(sub)
         plan_key = (sub.plan_display_name or "starter").strip().lower() if sub else "starter"
 
@@ -282,23 +311,38 @@ def require_limit(resource: str) -> Callable:
     return _dependency
 
 
+_FEATURE_CHECKS: dict[str, tuple[Callable[[PlanPolicy], bool], str]] = {
+    "photo_feedback": (
+        lambda p: p.can_use_photo_feedback,
+        "Photo feedback questions require a Growth or Pro plan.",
+    ),
+}
+
+
 def require_feature(feature: str) -> Callable:
     """Return a FastAPI dependency that blocks a route if a plan feature is unavailable.
 
-    feature must be one of: 'photo_feedback'
+    feature must be one of the keys in _FEATURE_CHECKS. Raises ValueError at
+    startup time (not at request time) for any unrecognised feature name so that
+    misconfigured routes fail immediately rather than silently granting access.
     """
+    if feature not in _FEATURE_CHECKS:
+        raise ValueError(
+            f"Unknown feature {feature!r} passed to require_feature(). "
+            f"Valid features: {sorted(_FEATURE_CHECKS)}"
+        )
+
+    check, message = _FEATURE_CHECKS[feature]
+
     def _dependency(
-        current_user: UserORM = Depends(get_current_user),
+        membership: MembershipORM = Depends(get_current_membership),
         db: Session = Depends(get_db_connection),
     ) -> None:
-        sub = get_subscription(current_user, db)
+        company = get_company_from_membership(membership, db)
+        sub = get_company_subscription(company, db)
         policy = get_policy_for_subscription(sub)
 
-        if feature == "photo_feedback" and not policy.can_use_photo_feedback:
-            raise SubscriptionFeatureError(
-                feature="photo_feedback",
-                message="Photo feedback questions require a Growth or Pro plan.",
-            )
-        # Unknown features fail-open
+        if not check(policy):
+            raise SubscriptionFeatureError(feature=feature, message=message)
 
     return _dependency

@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from typing import Any
 
 import stripe
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..core.errors.exceptions import ExternalAPIError, NotFoundError, PermissionError, ValidationError
-from ..models.postgres_model import Subscription, User
+from ..models.postgres_model import Company, Subscription, User
 from ..services.billing.stripe_billing_display import plan_display_name_from_price
 
 logger = logging.getLogger(__name__)
@@ -141,22 +142,22 @@ def is_subscription_active(sub: Subscription | None) -> bool:
 # Customer helpers
 # ---------------------------------------------------------------------------
 
-def get_or_create_stripe_customer(user: User, db: Session) -> str:
-    """Return the Stripe customer ID for this user, creating one if needed.
+def get_or_create_stripe_customer(company: Company, owner: User, db: Session) -> str:
+    """Return the Stripe customer ID for this company, creating one if needed.
 
     The customer ID is persisted in the subscriptions table.  If no
     subscription row exists yet we create a minimal one just to store the
     customer ID.
     """
-    sub = db.query(Subscription).filter(Subscription.user_id == user.id).first()
+    sub = db.query(Subscription).filter(Subscription.company_id == company.id).first()
     if sub and sub.stripe_customer_id:
         return sub.stripe_customer_id
 
     try:
         customer = stripe.Customer.create(
-            email=user.email,
-            name=f"{user.first_name} {user.last_name}",
-            metadata={"user_id": str(user.id)},
+            email=owner.email,
+            name=company.name,
+            metadata={"company_id": str(company.id)},
         )
     except stripe.StripeError as exc:
         raise ExternalAPIError(
@@ -169,7 +170,7 @@ def get_or_create_stripe_customer(user: User, db: Session) -> str:
         sub.updated_at = datetime.utcnow()
     else:
         sub = Subscription(
-            user_id=user.id,
+            company_id=company.id,
             stripe_customer_id=customer.id,
             status="incomplete",
         )
@@ -198,18 +199,18 @@ def _price_id_for_plan(plan: str, billing_interval: str) -> str:
     return price_id
 
 
-def create_checkout_session(user: User, db: Session, plan: str, billing_interval: str) -> str:
+def create_checkout_session(company: Company, owner: User, db: Session, plan: str, billing_interval: str) -> str:
     """Create a Stripe Checkout session and return the hosted URL.
 
     - Uses the price ID for the requested plan and billing interval from env.
-    - Applies a free trial when the user has never had one.
+    - Applies a free trial when the company has never had one.
     - Sets trial_from_plan=False so Stripe does not grant a second trial on
       re-subscription.
     """
     price_id = _price_id_for_plan(plan, billing_interval)
-    customer_id = get_or_create_stripe_customer(user, db)
+    customer_id = get_or_create_stripe_customer(company, owner, db)
 
-    sub = db.query(Subscription).filter(Subscription.user_id == user.id).first()
+    sub = db.query(Subscription).filter(Subscription.company_id == company.id).first()
     already_trialled = sub and sub.status not in ("incomplete",)
 
     subscription_data: dict = {}
@@ -222,7 +223,7 @@ def create_checkout_session(user: User, db: Session, plan: str, billing_interval
             mode="subscription",
             line_items=[{"price": price_id, "quantity": 1}],
             subscription_data=subscription_data,
-            metadata={"user_id": str(user.id)},
+            metadata={"company_id": str(company.id)},
             success_url=f"{_APP_ORIGIN}/billing/success?session_id={{CHECKOUT_SESSION_ID}}",
             cancel_url=f"{_APP_ORIGIN}/billing/failed?session_id={{CHECKOUT_SESSION_ID}}",
         )
@@ -235,8 +236,11 @@ def create_checkout_session(user: User, db: Session, plan: str, billing_interval
     return session.url
 
 
-def verify_checkout_session_for_user(session_id: str, user: User) -> None:
-    """Ensure a Stripe Checkout Session is complete and owned by ``user``.
+def verify_checkout_session_for_company(session_id: str, company: Company, db: Session) -> None:
+    """Ensure a Stripe Checkout Session is complete and owned by ``company``.
+
+    Supports both the new ``company_id`` metadata key and the legacy ``user_id``
+    key (for sessions created before the company-based migration).
 
     Raises ``ValidationError`` or ``PermissionError`` on failure.
     """
@@ -273,24 +277,30 @@ def verify_checkout_session_for_user(session_id: str, user: User) -> None:
         )
 
     raw_meta = getattr(co, "metadata", None)
-    uid = None
+    meta: dict = {}
     if raw_meta:
-        uid = raw_meta.get("user_id") if hasattr(raw_meta, "get") else raw_meta["user_id"]
-    if not uid:
+        meta = dict(raw_meta) if hasattr(raw_meta, "items") else {}
+
+    # Primary: check company_id in session metadata
+    meta_company_id = meta.get("company_id")
+
+    # Last resort: check Stripe customer metadata
+    if not meta_company_id:
         raw_customer = getattr(co, "customer", None)
         customer_id = raw_customer if isinstance(raw_customer, str) else getattr(raw_customer, "id", None)
         if customer_id:
             try:
                 cust = stripe.Customer.retrieve(customer_id)
-                cm = dict(getattr(cust, "metadata", None) or {})
-                uid = cm.get("user_id")
+                raw_customer_meta = getattr(cust, "metadata", None)
+                cm = dict(raw_customer_meta) if hasattr(raw_customer_meta, "items") else {}
+                meta_company_id = cm.get("company_id")
             except stripe.StripeError:
-                uid = None
+                pass
 
-    if not uid or str(user.id) != str(uid):
+    if not meta_company_id or str(company.id) != meta_company_id:
         raise PermissionError(
-            code="CHECKOUT_SESSION_USER_MISMATCH",
-            message="This checkout does not belong to your account.",
+            code="CHECKOUT_SESSION_COMPANY_MISMATCH",
+            message="This checkout does not belong to your company.",
         )
 
 
@@ -298,13 +308,13 @@ def verify_checkout_session_for_user(session_id: str, user: User) -> None:
 # Customer portal session
 # ---------------------------------------------------------------------------
 
-def create_portal_session(user: User, db: Session) -> str:
+def create_portal_session(company: Company, db: Session) -> str:
     """Create a Stripe Customer Portal session and return the URL."""
-    sub = db.query(Subscription).filter(Subscription.user_id == user.id).first()
+    sub = db.query(Subscription).filter(Subscription.company_id == company.id).first()
     if not sub or not sub.stripe_customer_id:
         raise NotFoundError(
             code="NO_SUBSCRIPTION",
-            message="No billing account found for this user.",
+            message="No billing account found for this company.",
         )
 
     portal_config = (_STRIPE_CUSTOMER_PORTAL_ID or "").strip() or None
@@ -333,14 +343,35 @@ def create_portal_session(user: User, db: Session) -> str:
 # ---------------------------------------------------------------------------
 
 def _price_from_stripe_subscription(stripe_sub: stripe.Subscription):
-    """Extract the first price object from a Stripe subscription, or None."""
-    items = getattr(stripe_sub, "items", None)
-    if not items:
-        return None
-    data = getattr(items, "data", None) or []
+    """Extract the first price object from a Stripe subscription, or None.
+
+    Handles both Stripe SDK objects (attribute access) and plain dicts
+    (dict access) since callers may pass either depending on the code path.
+    """
+    if isinstance(stripe_sub, dict):
+        items_raw = stripe_sub.get("items") or {}
+        data = items_raw.get("data") if isinstance(items_raw, dict) else []
+    else:
+        items = getattr(stripe_sub, "items", None)
+        if items is None:
+            return None
+        # ListObject exposes .data; fall back to dict-style for safety
+        data = getattr(items, "data", None)
+        if data is None and hasattr(items, "get"):
+            data = items.get("data")
+
     if not data:
         return None
-    return getattr(data[0], "price", None)
+
+    item = data[0]
+    if isinstance(item, dict):
+        return item.get("price")
+
+    price = getattr(item, "price", None)
+    # Final fallback: dict-style in case SDK version stores it differently
+    if price is None and hasattr(item, "get"):
+        price = item.get("price")
+    return price
 
 
 def plan_display_name_from_price_id(price_id: str | None) -> str | None:
@@ -351,20 +382,37 @@ def plan_display_name_from_price_id(price_id: str | None) -> str | None:
     return entry[1] if entry else None
 
 
+def _price_id_from_price(price: Any) -> str | None:
+    """Extract the price ID regardless of whether price is a string, dict, or SDK object."""
+    if isinstance(price, str):
+        return price or None
+    if isinstance(price, dict):
+        return price.get("id") or None
+    if price is None:
+        return None
+    pid = getattr(price, "id", None)
+    if pid is None and hasattr(price, "get"):
+        pid = price.get("id")
+    return pid or None
+
+
 def _plan_display_name_from_stripe_subscription(stripe_sub: stripe.Subscription) -> str | None:
     price = _price_from_stripe_subscription(stripe_sub)
     if price is None:
         return None
     # Primary: look up our known price IDs via centralized map
-    price_id = getattr(price, "id", None)
+    price_id = _price_id_from_price(price)
     name = plan_display_name_from_price_id(price_id)
     if name:
         return name
     # Fallback: use Stripe price metadata (nickname / product name / price ID)
-    try:
-        price_dict = price.to_dict()
-    except Exception:
-        return None
+    if isinstance(price, dict):
+        price_dict = price
+    else:
+        try:
+            price_dict = price.to_dict()
+        except Exception:
+            price_dict = {}
     name = plan_display_name_from_price(price_dict)
     return name if name else None
 
@@ -374,15 +422,23 @@ def _billing_interval_from_stripe_subscription(stripe_sub: stripe.Subscription) 
     if price is None:
         return None
     # Primary: look up our known price IDs
-    price_id = getattr(price, "id", None)
+    price_id = _price_id_from_price(price)
     if price_id:
         for (plan, interval), pid in _PLAN_PRICE_IDS.items():
             if pid and pid == price_id:
                 return interval  # "monthly" or "yearly"
     # Fallback: derive from Stripe recurring.interval
-    recurring = getattr(price, "recurring", None)
+    if isinstance(price, dict):
+        recurring = price.get("recurring")
+    else:
+        recurring = getattr(price, "recurring", None)
+        if recurring is None and hasattr(price, "get"):
+            recurring = price.get("recurring")
     if recurring:
-        stripe_interval = getattr(recurring, "interval", None)
+        stripe_interval = (
+            recurring.get("interval") if isinstance(recurring, dict)
+            else getattr(recurring, "interval", None)
+        )
         if stripe_interval == "month":
             return "monthly"
         if stripe_interval == "year":
@@ -411,31 +467,38 @@ def sync_subscription_from_stripe_object(stripe_sub: stripe.Subscription, db: Se
 
     if sub is None:
         logger.debug("No local subscription row for customer=%s — attempting to create one", customer_id)
+        import uuid as _uuid
+
+        # Resolve company_id from metadata: prefer company_id, fall back to legacy user_id
         metadata = getattr(stripe_sub, "metadata", None) or {}
-        user_id_str = metadata.get("user_id") if hasattr(metadata, "get") else None
-        if not user_id_str:
+        meta_dict = dict(metadata) if hasattr(metadata, "items") else {}
+        company_id_str = meta_dict.get("company_id")
+
+        if not company_id_str:
+            # Try customer-level metadata
             try:
                 customer = stripe.Customer.retrieve(customer_id)
-                customer_meta = getattr(customer, "metadata", None) or {}
-                user_id_str = customer_meta.get("user_id") if hasattr(customer_meta, "get") else None
-                logger.debug("Resolved user_id=%s from Stripe customer metadata", user_id_str)
+                raw_customer_meta = getattr(customer, "metadata", None)
+                customer_meta = (
+                    dict(raw_customer_meta) if hasattr(raw_customer_meta, "items") else {}
+                )
+                company_id_str = customer_meta.get("company_id")
             except stripe.StripeError as exc:
                 logger.error("Failed to retrieve Stripe customer %s: %s", customer_id, exc)
 
-        if not user_id_str:
+        if not company_id_str:
             logger.error(
-                "Cannot sync subscription: no user_id for Stripe customer %s",
+                "Cannot sync subscription: no company_id for Stripe customer %s",
                 customer_id,
             )
             return
 
-        import uuid as _uuid
         sub = Subscription(
-            user_id=_uuid.UUID(user_id_str),
+            company_id=_uuid.UUID(company_id_str),
             stripe_customer_id=customer_id,
         )
         db.add(sub)
-        logger.info("Created local subscription row for user_id=%s", user_id_str)
+        logger.info("Created local subscription row for company_id=%s", company_id_str)
     else:
         logger.debug("Found existing subscription row id=%s status=%s", sub.id, sub.status)
 
@@ -450,9 +513,13 @@ def sync_subscription_from_stripe_object(stripe_sub: stripe.Subscription, db: Se
         sub.current_period_end = datetime.utcfromtimestamp(current_period_end_ts)
 
     price = _price_from_stripe_subscription(stripe_sub)
-    sub.price_id = getattr(price, "id", None) if price else None
+    sub.price_id = _price_id_from_price(price) if price is not None else None
     sub.plan_display_name = _plan_display_name_from_stripe_subscription(stripe_sub)
     sub.billing_interval = _billing_interval_from_stripe_subscription(stripe_sub)
+    logger.debug(
+        "Subscription price sync sub=%s price_id=%s plan=%s interval=%s",
+        sub_id, sub.price_id, sub.plan_display_name, sub.billing_interval,
+    )
     sub.cancel_at_period_end = bool(getattr(stripe_sub, "cancel_at_period_end", False))
     sub.updated_at = datetime.utcnow()
 
@@ -471,7 +538,7 @@ def sync_subscription_from_stripe_object(stripe_sub: stripe.Subscription, db: Se
     )
 
 
-def get_subscription(user: User, db: Session) -> Subscription | None:
-    return db.query(Subscription).filter(Subscription.user_id == user.id).first()
+def get_company_subscription(company: Company, db: Session) -> Subscription | None:
+    return db.query(Subscription).filter(Subscription.company_id == company.id).first()
 
 

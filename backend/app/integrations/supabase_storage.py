@@ -113,8 +113,15 @@ def generate_qr_signed_url(
         )
         signed_url = result.get("signedURL") or result.get("signedUrl") or ""
         if not signed_url:
-            raise RuntimeError(f"Empty signed URL returned for path: {storage_path}")
+            raise ExternalAPIError(
+                service_name="supabase",
+                error_message=f"Empty signed URL returned for path: {storage_path}",
+                code="QR_SIGNED_URL_FAILED",
+                details={"storage_path": storage_path},
+            )
         return signed_url
+    except ExternalAPIError:
+        raise
     except Exception as e:
         logger.exception(
             "Failed to generate signed URL for QR asset",
@@ -232,8 +239,15 @@ def generate_photo_signed_url(
         )
         signed_url = result.get("signedURL") or result.get("signedUrl") or ""
         if not signed_url:
-            raise RuntimeError(f"Empty signed URL returned for path: {storage_path}")
+            raise ExternalAPIError(
+                service_name="supabase",
+                error_message=f"Empty signed URL returned for path: {storage_path}",
+                code="PHOTO_SIGNED_URL_FAILED",
+                details={"storage_path": storage_path},
+            )
         return signed_url
+    except ExternalAPIError:
+        raise
     except Exception as e:
         logger.exception(
             "Failed to generate signed URL for survey photo",

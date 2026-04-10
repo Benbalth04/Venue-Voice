@@ -223,6 +223,7 @@ function QuestionRenderer({
         <TextQuestion
           placeholder={(question.settings as TextQuestionSettings).placeholder}
           multiline={question.type === "long_text"}
+          primaryColor={survey.theme.primaryColor}
           value={response?.type === "text" ? response.value : ""}
           onChange={(next) => onResponseChange(question.id, { type: "text", value: next })}
         />

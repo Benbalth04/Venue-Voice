@@ -52,3 +52,20 @@ def check_qr_rate_limit(request: Request, qr_id: str) -> None:
         r.expire(key, 60)
     if count > 10:
         raise RateLimitExceededError()
+
+
+def check_user_rate_limit(user_id: str, endpoint: str, limit: int, window: int) -> None:
+    """
+    Enforce `limit` requests per `window` seconds for `user_id` on `endpoint`.
+    Raises RateLimitExceededError (HTTP 429) when the limit is exceeded.
+
+    Use for authenticated admin actions where per-user rather than per-IP
+    limiting is appropriate (shared offices, proxies, load balancers).
+    """
+    key = f"rate_limit_user:{endpoint}:{user_id}"
+    r = get_redis()
+    count = r.incr(key)
+    if count == 1:
+        r.expire(key, window)
+    if count > limit:
+        raise RateLimitExceededError()

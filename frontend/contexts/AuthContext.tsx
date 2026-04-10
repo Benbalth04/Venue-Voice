@@ -23,7 +23,9 @@ function resolveActiveCompanyId(
   if (memberships.length === 1) return memberships[0].company_id
   // Prefer stored value if still valid
   if (stored && memberships.some((m) => m.company_id === stored)) return stored
-  // Fall back to admin membership, then first
+  // Prefer owner > admin > first
+  const owner = memberships.find((m) => m.role === "company_owner")
+  if (owner) return owner.company_id
   const admin = memberships.find((m) => m.role === "company_admin")
   return admin ? admin.company_id : memberships[0].company_id
 }

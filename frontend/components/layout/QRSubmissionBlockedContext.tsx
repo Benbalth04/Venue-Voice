@@ -55,6 +55,16 @@ export function QRSubmissionBlockedProvider({ children }: { children: ReactNode 
     }
   }, [refreshSubmissionBlockedQrCount])
 
+  useEffect(() => {
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        void refreshSubmissionBlockedQrCount()
+      }
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange)
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange)
+  }, [refreshSubmissionBlockedQrCount])
+
   const value = useMemo(
     () => ({ submissionBlockedActiveQrCount, refreshSubmissionBlockedQrCount }),
     [submissionBlockedActiveQrCount, refreshSubmissionBlockedQrCount],

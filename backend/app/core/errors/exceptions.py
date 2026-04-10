@@ -58,7 +58,12 @@ class ConflictError(AppError):
 
 
 class ExternalAPIError(AppError):
-    """Third-party API failure (e.g. OpenAI timeout or invalid payload)."""
+    """Third-party API failure (e.g. OpenAI timeout or invalid payload).
+
+    The raw ``error_message`` is stored on the instance for Sentry/logging via
+    the exception chain (``raise ExternalAPIError(...) from exc``). It is NOT
+    included in the HTTP response sent to clients.
+    """
 
     def __init__(
         self,
@@ -68,13 +73,15 @@ class ExternalAPIError(AppError):
         status_code: int = 502,
         details: dict | None = None,
     ):
-        merged = {"service_name": service_name, "error_message": error_message}
+        self.raw_error_message = error_message
+        client_message = f"{service_name} service unavailable. Please try again later."
+        merged = {"service_name": service_name}
         if details:
             merged.update(details)
         super().__init__(
             category=ErrorCategory.EXTERNAL_API,
             code=code,
-            message=error_message,
+            message=client_message,
             status_code=status_code,
             details=merged,
         )

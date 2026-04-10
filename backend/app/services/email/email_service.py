@@ -30,6 +30,7 @@ from ...models.postgres_model import (
     SurveyResponseAnswer as SurveyResponseAnswerORM,
     SurveyResponsePhoto as SurveyResponsePhotoORM,
     SurveyVersion as SurveyVersionORM,
+    Membership as MembershipORM,
     User as UserORM,
 )
 from .constants import (
@@ -155,9 +156,15 @@ def _build_email_for_flow_run(flow_run_id: uuid.UUID, db: Session) -> str:
     if flow_run:
         company = db.query(CompanyORM).filter_by(id=flow_run.company_id).first()
         if company:
-            owner = db.query(UserORM).filter_by(id=company.owner_user_id).first()
-            if owner:
-                user_tz = effective_zoneinfo_for_stored_timezone(owner.timezone)
+            owner_membership = (
+                db.query(MembershipORM)
+                .filter_by(company_id=company.id, role="company_owner")
+                .first()
+            )
+            if owner_membership:
+                owner = db.query(UserORM).filter_by(id=owner_membership.user_id).first()
+                if owner:
+                    user_tz = effective_zoneinfo_for_stored_timezone(owner.timezone)
 
     if flow_run:
         flow = db.query(FlowORM).filter_by(id=flow_run.flow_id).first()

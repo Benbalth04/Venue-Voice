@@ -8,6 +8,7 @@ class PlanPolicy(BaseModel):
     max_active_surveys: int       # -1 = unlimited
     max_active_flows: int         # -1 = unlimited
     max_branch_nodes_per_flow: int  # -1 = unlimited
+    max_company_members: int      # -1 = unlimited; 0 = owner only (no invites)
     can_use_photo_feedback: bool
     can_expand_charts: bool
 
@@ -18,6 +19,7 @@ PLAN_POLICIES: dict[str, PlanPolicy] = {
         max_active_surveys=2,
         max_active_flows=1,
         max_branch_nodes_per_flow=2,
+        max_company_members=0,
         can_use_photo_feedback=False,
         can_expand_charts=False,
     ),
@@ -26,6 +28,7 @@ PLAN_POLICIES: dict[str, PlanPolicy] = {
         max_active_surveys=5,
         max_active_flows=5,
         max_branch_nodes_per_flow=-1,
+        max_company_members=5,
         can_use_photo_feedback=True,
         can_expand_charts=True,
     ),
@@ -34,6 +37,7 @@ PLAN_POLICIES: dict[str, PlanPolicy] = {
         max_active_surveys=-1,
         max_active_flows=10,
         max_branch_nodes_per_flow=-1,
+        max_company_members=20,
         can_use_photo_feedback=True,
         can_expand_charts=True,
     ),

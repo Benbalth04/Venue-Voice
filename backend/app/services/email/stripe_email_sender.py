@@ -21,6 +21,7 @@ from .db_helpers import MAX_RETRIES, increment_email_retry, mark_email_events
 from .retry import call_with_exponential_backoff
 from .stripe_email_templates import ALL_STRIPE_TEMPLATES, render_stripe_template
 from ...core.config import settings
+from ...core.errors.exceptions import ExternalAPIError, ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -36,14 +37,19 @@ def send_stripe_email(
     """Send one transactional billing email (always from info@venuevoice.com.au, BCC ops)."""
     if not _RESEND_API_KEY:
         logger.error("RESEND_API_KEY not configured — cannot send Stripe email template=%s", template)
-        raise RuntimeError("RESEND_API_KEY not configured")
+        raise ExternalAPIError(
+            service_name="resend",
+            error_message="RESEND_API_KEY not configured",
+            code="RESEND_NOT_CONFIGURED",
+            status_code=503,
+        )
 
     if template not in ALL_STRIPE_TEMPLATES:
-        raise ValueError(f"Invalid template: {template!r}")
+        raise ValidationError(code="INVALID_EMAIL_TEMPLATE", message=f"Invalid email template: {template!r}")
 
     to_email = (to_email or "").strip().lower()
     if not to_email or "@" not in to_email:
-        raise ValueError("Invalid recipient email")
+        raise ValidationError(code="INVALID_RECIPIENT_EMAIL", message="Invalid recipient email address")
 
     subject, html = render_stripe_template(template, context)
 

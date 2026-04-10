@@ -15,6 +15,12 @@ export {
 
 const BACKEND_BASE = process.env.NEXT_PUBLIC_BACKEND_BASE_URL
 
+if (!BACKEND_BASE) {
+  throw new Error(
+    "Missing NEXT_PUBLIC_BACKEND_BASE_URL environment variable",
+  )
+}
+
 // ------------------------------------------------------------------
 // Core fetch wrapper
 //
@@ -74,6 +80,8 @@ export interface SurveySubmitResponse {
 export interface ThankYouDataResponse {
   thank_you_message: string
   company_name: string | null
+  /** Hex colour from the submitted survey version theme (e.g. #7C3AED). */
+  primary_color: string
 }
 
 export class SurveySubmissionValidationError extends Error {
@@ -91,7 +99,7 @@ export interface MembershipSummary {
   membership_id: string
   company_id: string
   company_name: string
-  role: "company_admin" | "viewer"
+  role: "company_owner" | "company_admin" | "viewer"
   all_surveys: boolean
   all_locations: boolean
 }
@@ -103,6 +111,7 @@ export interface UserResponse {
   last_name: string
   email_verified: boolean
   onboarding_complete: boolean
+  invite_pending: boolean
   timezone: string
   subscription_plan_name?: string | null
   company_name?: string | null
@@ -232,20 +241,6 @@ export interface LocationSurveyResponse {
   updated_at: string
 }
 
-export interface LocationSurveyBulkAssignCreate {
-  survey_id: string
-  location_ids: string[]
-  start_date: string
-  end_date?: string | null
-}
-
-export interface LocationSurveyUpdate {
-  is_active?: boolean | null
-  start_date?: string | null
-  end_date?: string | null
-  updated_at: string
-}
-
 // QR Codes
 export interface QRCodeAssetUrls {
   svg: string
@@ -262,6 +257,8 @@ export interface QRCodeResponse {
   qr_status: "active" | "inactive" | "deleted"
   /** Linked assignment: active | scheduled | inactive | deleted */
   location_survey_status: "active" | "scheduled" | "inactive" | "deleted"
+  /** Survey published (active) and location active; independent of dates / QR toggle. */
+  accepting_submissions_by_survey_and_location: boolean
   location_id: string
   location_name: string | null
   start_date: string | null
@@ -283,7 +280,8 @@ export interface QRCodeResponse {
 
 export interface QRCodeCreate {
   title: string
-  location_survey_id: string
+  location_id: string
+  survey_id: string
   /** If omitted, backend uses NEXT_PUBLIC_APP_ORIGIN /r/{id} */
   redirect_url?: string | null
   /** Hex color for QR modules. Defaults to #000000. */
@@ -292,8 +290,11 @@ export interface QRCodeCreate {
 
 export interface QRCodeUpdate {
   title?: string | null
-  location_survey_id?: string | null
+  location_id?: string | null
+  survey_id?: string | null
   is_active?: boolean | null
+  /** Hex color for QR modules; when changed, server regenerates stored assets. */
+  color?: string | null
   updated_at: string
 }
 
@@ -1042,6 +1043,14 @@ export async function fetchUser(accessToken: string): Promise<UserResponse> {
   })
 }
 
+export async function requestPasswordReset(email: string): Promise<{ message: string }> {
+  return apiFetch<{ message: string }>(`${BACKEND_BASE}/api/v1/auth/forgot-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  })
+}
+
 export async function confirmEmail(accessToken: string): Promise<{ ok: boolean }> {
   return apiFetch<{ ok: boolean }>(`${BACKEND_BASE}/api/v1/user/confirm-email`, {
     method: "POST",
@@ -1068,6 +1077,30 @@ export async function setupAccount(
       location_count: payload.location_count ?? undefined,
       how_heard: payload.how_heard ?? undefined,
     }),
+  })
+}
+
+export async function completeJoin(accessToken: string): Promise<UserResponse> {
+  return apiFetch<UserResponse>(`${BACKEND_BASE}/api/v1/me/complete-join`, {
+    method: "POST",
+    headers: authHeaders(accessToken),
+  })
+}
+
+export interface CompleteInviteRequest {
+  first_name: string
+  last_name: string
+  timezone: string
+}
+
+export async function completeInviteSetup(
+  accessToken: string,
+  payload: CompleteInviteRequest,
+): Promise<UserResponse> {
+  return apiFetch<UserResponse>(`${BACKEND_BASE}/api/v1/me/complete-invite`, {
+    method: "PATCH",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
   })
 }
 
@@ -1211,44 +1244,6 @@ export async function fetchLocationSurveys(
   const suffix = params.toString() ? `?${params.toString()}` : ""
   return apiFetch<LocationSurveyResponse[]>(`${BACKEND_BASE}/api/v1/location-surveys${suffix}`, {
     headers: authGetHeaders(accessToken),
-  })
-}
-
-export async function bulkAssignLocationSurveys(
-  accessToken: string,
-  payload: LocationSurveyBulkAssignCreate,
-): Promise<LocationSurveyResponse[]> {
-  return apiFetch<LocationSurveyResponse[]>(
-    `${BACKEND_BASE}/api/v1/location-surveys/bulk-assign`,
-    {
-      method: "POST",
-      headers: authHeaders(accessToken),
-      body: JSON.stringify(payload),
-    },
-  )
-}
-
-export async function updateLocationSurvey(
-  accessToken: string,
-  id: string,
-  payload: LocationSurveyUpdate,
-): Promise<LocationSurveyResponse> {
-  return apiFetch<LocationSurveyResponse>(`${BACKEND_BASE}/api/v1/location-surveys/${id}`, {
-    method: "PATCH",
-    headers: authHeaders(accessToken),
-    body: JSON.stringify(payload),
-  })
-}
-
-export async function deleteLocationSurvey(
-  accessToken: string,
-  id: string,
-  updatedAt: string,
-): Promise<void> {
-  await apiFetch<unknown>(`${BACKEND_BASE}/api/v1/location-surveys/${id}`, {
-    method: "DELETE",
-    headers: authHeaders(accessToken),
-    body: JSON.stringify({ updated_at: updatedAt }),
   })
 }
 
@@ -1734,6 +1729,23 @@ export function fetchUnreadResponseCount(token: string): Promise<{ count: number
   return _analyticsRequest<{ count: number }>(token, "/analytics/unread-count")
 }
 
+export interface NewResponseNotification {
+  response_id: string
+  survey_name: string
+  location_name: string
+  submitted_at: string
+}
+
+export function fetchNewResponses(
+  token: string,
+  since: string,
+): Promise<{ responses: NewResponseNotification[] }> {
+  return _analyticsRequest<{ responses: NewResponseNotification[] }>(
+    token,
+    `/analytics/new-responses?since=${encodeURIComponent(since)}`,
+  )
+}
+
 export function fetchAnalyticsFilters(token: string): Promise<AnalyticsFiltersResponse> {
   return _analyticsRequest<AnalyticsFiltersResponse>(token, "/analytics/filters")
 }
@@ -1904,6 +1916,8 @@ export interface SubscriptionStatusResponse {
   plan: string | null
   over_limit: Record<string, boolean>
   warnings: SubscriptionWarning[]
+  can_invite_users: boolean
+  max_company_members: number
 }
 
 export async function fetchSubscriptionStatus(
@@ -1959,6 +1973,22 @@ export async function recordCheckoutFailed(
   )
 }
 
+export interface SyncSubscriptionResponse extends SubscriptionResponse {
+  /** True when Stripe was reachable and the sync completed. False when Stripe
+   *  was unavailable — the returned subscription data reflects the last known
+   *  DB state and has not been updated. */
+  sync_successful: boolean
+}
+
+export async function syncSubscription(
+  accessToken: string
+): Promise<SyncSubscriptionResponse> {
+  return apiFetch<SyncSubscriptionResponse>(
+    `${BACKEND_BASE}/api/v1/billing/sync-subscription`,
+    { method: "POST", headers: authHeaders(accessToken) }
+  )
+}
+
 export async function verifyCheckoutSession(
   accessToken: string,
   sessionId: string
@@ -1980,17 +2010,20 @@ export interface CompanyMemberResponse {
   email: string
   first_name: string
   last_name: string
-  role: "company_admin" | "viewer"
+  role: "company_owner" | "company_admin" | "viewer"
   all_surveys: boolean
   all_locations: boolean
   invited_by_name: string | null
+  timezone: string
+  last_login_at: string | null
   created_at: string
 }
 
-export interface InviteViewerRequest {
+export interface InviteUserRequest {
   email: string
   first_name: string
   last_name: string
+  role?: "viewer" | "company_admin"
 }
 
 export interface ViewerPermissionsResponse {
@@ -2019,7 +2052,7 @@ export async function fetchCompanyUsers(
 
 export async function inviteCompanyUser(
   accessToken: string,
-  payload: InviteViewerRequest
+  payload: InviteUserRequest
 ): Promise<CompanyMemberResponse> {
   return apiFetch<CompanyMemberResponse>(
     `${BACKEND_BASE}/api/v1/company/users/invite`,
@@ -2063,6 +2096,26 @@ export async function removeCompanyUser(
   await apiFetch<void>(
     `${BACKEND_BASE}/api/v1/company/users/${membershipId}`,
     { method: "DELETE", headers: authGetHeaders(accessToken) }
+  )
+}
+
+export async function transferOwnership(
+  accessToken: string,
+  membershipId: string
+): Promise<void> {
+  await apiFetch<{ ok: boolean }>(
+    `${BACKEND_BASE}/api/v1/company/users/${membershipId}/transfer-ownership`,
+    { method: "POST", headers: authGetHeaders(accessToken) }
+  )
+}
+
+export async function promoteToAdmin(
+  accessToken: string,
+  membershipId: string
+): Promise<CompanyMemberResponse> {
+  return apiFetch<CompanyMemberResponse>(
+    `${BACKEND_BASE}/api/v1/company/users/${membershipId}/promote-to-admin`,
+    { method: "POST", headers: authGetHeaders(accessToken) }
   )
 }
 

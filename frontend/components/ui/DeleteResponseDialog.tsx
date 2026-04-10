@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { createClient } from "@/lib/supabase/client"
+import { supabase } from "@/lib/supabase/client"
 import { deleteAnalyticsResponse, extractErrorMessage } from "@/lib/api/client"
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner"
 
@@ -24,7 +24,6 @@ export function DeleteResponseDialog({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-  const supabase = createClient()
 
   // Reset state whenever dialog opens/closes
   useEffect(() => {
@@ -103,10 +102,7 @@ export function DeleteResponseDialog({
               htmlFor="delete-confirmation-input"
               className="block text-sm font-medium text-zinc-700"
             >
-              Type{" "}
-              <span className="font-mono font-semibold text-zinc-900">
-                {CONFIRMATION_PHRASE}
-              </span>{" "}
+              Type<span className="font-mono font-semibold text-zinc-900"> "{CONFIRMATION_PHRASE}" </span>to confirm
               to confirm
             </label>
             <input

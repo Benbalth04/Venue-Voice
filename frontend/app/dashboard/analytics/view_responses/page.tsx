@@ -129,6 +129,9 @@ function ReviewModal({
   onMarkRead?: (id: string) => void
   onRequestDelete?: () => void
 }) {
+  const { activeMembership } = useAuth()
+  const isViewer = activeMembership?.role === "viewer"
+
   const [answers, setAnswers] = useState<AnalyticsAnswerDetail[]>([])
   const [flowRuns, setFlowRuns] = useState<FlowRunResponse[]>([])
   const [notificationGroups, setNotificationGroups] = useState<NotificationGroupResponse[]>([])
@@ -152,15 +155,24 @@ function ReviewModal({
       const token = await getToken()
       if (!token) { setError("Not authenticated"); setLoading(false); return }
       try {
-        const [detail, groups] = await Promise.all([
-          fetchAnalyticsResponseDetail(token, responseId),
-          fetchNotificationGroups(token),
-        ])
-        if (cancelled) return
-        setSurveyName(detail.survey_name)
-        setAnswers(detail.answers)
-        setFlowRuns(detail.flow_runs ?? [])
-        setNotificationGroups(groups)
+        if (isViewer) {
+          const detail = await fetchAnalyticsResponseDetail(token, responseId)
+          if (cancelled) return
+          setSurveyName(detail.survey_name)
+          setAnswers(detail.answers)
+          setFlowRuns([])
+          setNotificationGroups([])
+        } else {
+          const [detail, groups] = await Promise.all([
+            fetchAnalyticsResponseDetail(token, responseId),
+            fetchNotificationGroups(token),
+          ])
+          if (cancelled) return
+          setSurveyName(detail.survey_name)
+          setAnswers(detail.answers)
+          setFlowRuns(detail.flow_runs ?? [])
+          setNotificationGroups(groups)
+        }
         onMarkRead?.(responseId)
       } catch (e) {
         if (!cancelled) setError(extractErrorMessage(e, "Failed to load response"))
@@ -170,7 +182,7 @@ function ReviewModal({
     }
     load()
     return () => { cancelled = true }
-  }, [onMarkRead, responseId])
+  }, [isViewer, onMarkRead, responseId])
 
   async function openExecutionPreview(run: FlowRunResponse) {
     const token = await getToken()
@@ -200,9 +212,9 @@ function ReviewModal({
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
-      <div className="relative w-full max-w-3xl rounded-2xl bg-white shadow-2xl">
+      <div className="relative w-full max-w-5xl rounded-2xl bg-white shadow-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4">
+        <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4 sm:px-8">
           <div>
             <p className="text-xs text-zinc-500 uppercase tracking-wide">Response Review</p>
             <h2 className="text-base font-semibold text-zinc-900">
@@ -220,7 +232,7 @@ function ReviewModal({
         </div>
 
         {/* Body */}
-        <div className="max-h-[60vh] overflow-y-auto px-6 py-4">
+        <div className="max-h-[72vh] overflow-y-auto px-6 py-4 sm:px-8">
           {loading && (
             <div className="flex items-center justify-center py-10">
               <Loader2 className="h-5 w-5 animate-spin text-violet-500" />
@@ -339,7 +351,7 @@ function ReviewModal({
                 <p className="py-6 text-center text-sm text-zinc-400">No answers recorded.</p>
               )}
 
-              <div className="mt-6 border-t border-zinc-200 pt-4">
+              {!isViewer && <div className="mt-6 border-t border-zinc-200 pt-4">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
                   Automation runs
                 </h3>
@@ -420,20 +432,22 @@ function ReviewModal({
                     ))}
                   </div>
                 )}
-              </div>
+              </div>}
             </>
           )}
         </div>
 
-        <div className="flex items-center justify-between border-t border-zinc-100 px-6 py-3">
-          <button
-            type="button"
-            onClick={onRequestDelete}
-            className="flex items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            Delete response
-          </button>
+        <div className="flex items-center justify-end border-t border-zinc-100 px-6 py-3 sm:px-8">
+          {!isViewer && (
+            <button
+              type="button"
+              onClick={onRequestDelete}
+              className="mr-auto flex items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete response
+            </button>
+          )}
           <button
             onClick={onClose}
             className="rounded-xl bg-zinc-100 px-4 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-200"
@@ -506,8 +520,8 @@ function FiltersPanel({
     filters.date_end
 
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm">
-      <div className="mb-3 flex items-center justify-between">
+    <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm sm:p-6">
+      <div className="mb-4 flex items-center justify-between">
         <div className="flex items-center gap-2 text-sm font-semibold text-zinc-700">
           <Filter className="h-4 w-4" />
           Filters
@@ -528,7 +542,7 @@ function FiltersPanel({
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6">
         {/* Survey */}
         <div>
           <label className="mb-1 block text-xs font-medium text-zinc-600">Survey</label>
@@ -636,6 +650,7 @@ export default function AnalyticsPage() {
   const [filtersError, setFiltersError] = useState<string | null>(null)
 
   const [reviewId, setReviewId] = useState<string | null>(null)
+  const [deleteId, setDeleteId] = useState<string | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
 
@@ -731,7 +746,7 @@ export default function AnalyticsPage() {
   )
 
   return (
-    <div className="flex flex-col gap-4 p-6">
+    <div className="flex w-full max-w-full flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8">
       {/* Page header */}
       <div>
         <h1 className="text-xl font-semibold text-zinc-900">Analytics</h1>
@@ -797,7 +812,7 @@ export default function AnalyticsPage() {
             label: "Survey",
             sortable: true,
             align: "left",
-            cellClassName: "font-medium text-zinc-800 max-w-[160px]",
+            cellClassName: "font-medium text-zinc-800 min-w-[10rem] max-w-md",
             render: (row) => <span className="break-words">{row.survey_name}</span>,
           },
           {
@@ -805,7 +820,7 @@ export default function AnalyticsPage() {
             label: "QR Code",
             sortable: true,
             align: "left",
-            cellClassName: "text-zinc-600 max-w-[140px]",
+            cellClassName: "text-zinc-600 min-w-[9rem] max-w-md",
             render: (row) => <span className="break-words">{row.qr_code_name}</span>,
           },
           {
@@ -884,7 +899,7 @@ export default function AnalyticsPage() {
         onSort={(key) => handleSort(key)}
         emptyMessage="No responses found matching the selected filters."
         loading={loading}
-        minWidth="900px"
+        minWidth="max(100%, 1280px)"
         footer={
           totalPages > 1 ? (
             <div className="flex items-center justify-between border-t border-zinc-200 bg-zinc-50 px-4 py-3">
@@ -926,8 +941,18 @@ export default function AnalyticsPage() {
           responseId={reviewId}
           onClose={() => setReviewId(null)}
           onMarkRead={handleMarkResponseRead}
+          onRequestDelete={() => { setDeleteId(reviewId); setReviewId(null) }}
         />
       )}
+      <DeleteResponseDialog
+        open={deleteId !== null}
+        responseId={deleteId}
+        onClose={() => setDeleteId(null)}
+        onDeleted={(id) => {
+          setDeleteId(null)
+          setRows((prev) => prev.filter((r) => r.response_id !== id))
+        }}
+      />
     </div>
   )
 }

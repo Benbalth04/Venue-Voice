@@ -6,8 +6,9 @@ from sqlalchemy.orm import Session
 
 from fastapi import APIRouter, Depends, Query
 
-from ..auth.jwt import get_current_user
+from ..auth.membership import get_company_from_membership, get_current_membership
 from ..auth.subscription import require_active_subscription
+from ..auth.viewer_scoping import apply_location_filter, apply_survey_filter, location_ids_subquery, survey_ids_subquery
 from ..auth.user_timezone import format_dt_for_user, get_user_zoneinfo
 from ..core.datetime_user_tz import (
     inclusive_local_date_range_to_utc_bounds,
@@ -19,6 +20,7 @@ from ..models.postgres_model import (
     Company as CompanyORM,
     Location as LocationORM,
     LocationSurvey as LocationSurveyORM,
+    Membership as MembershipORM,
     QRCode as QRCodeORM,
     SurveyResponse as SurveyResponseORM,
     ScanEvent as ScanEventORM,
@@ -39,25 +41,15 @@ from ..schemas.pydantic_model import (
 router = APIRouter(dependencies=[Depends(require_active_subscription)])
 
 
-def _get_user_company(user: UserORM, db: Session) -> CompanyORM | None:
-    return (
-        db.query(CompanyORM)
-        .filter(
-            CompanyORM.owner_user_id == user.id,
-            CompanyORM.deleted_at.is_(None),
-        )
-        .first()
-    )
-
-
 @router.get("/dashboard", response_model=DashboardData)
 def get_dashboard(
-    user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(get_current_membership),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
     """Return dashboard data for the current user's company."""
-    company = _get_user_company(user, db)
+    company = get_company_from_membership(membership, db)
+    user = db.query(UserORM).filter(UserORM.id == membership.user_id).first()
     if not company:
         return DashboardData(
             company_name="",
@@ -74,16 +66,19 @@ def get_dashboard(
             active_locations=[],
         )
 
-    # Survey IDs for this company
-    survey_ids = [
-        s.id
-        for s in db.query(SurveyORM.id)
+    # Survey IDs for this company (scoped to viewer permissions)
+    survey_sq = survey_ids_subquery(membership, db)
+    location_sq = location_ids_subquery(membership, db)
+
+    survey_query = (
+        db.query(SurveyORM.id)
         .filter(
             SurveyORM.company_id == company.id,
             SurveyORM.deleted_at.is_(None),
         )
-        .all()
-    ]
+    )
+    survey_query = apply_survey_filter(survey_query, survey_sq, SurveyORM.id)
+    survey_ids = [s.id for s in survey_query.all()]
 
     # Survey version IDs for these surveys
     sv_ids = (
@@ -209,15 +204,16 @@ def get_dashboard(
         for q in active_qr_orm
     ]
 
-    locations_orm = (
+    location_query = (
         db.query(LocationORM)
         .filter(
             LocationORM.company_id == company.id,
             LocationORM.is_active.is_(True),
             LocationORM.deleted_at.is_(None),
         )
-        .all()
     )
+    location_query = apply_location_filter(location_query, location_sq, LocationORM.id)
+    locations_orm = location_query.all()
     active_locations_count = len(locations_orm)
     active_locations = [
         DashboardLocationSummary(id=l.id, name=l.name) for l in locations_orm
@@ -280,24 +276,23 @@ def get_dashboard(
 @router.get("/dashboard/submissions", response_model=list[DashboardResponseSummary])
 def get_dashboard_submissions_by_date(
     date: str = Query(..., description="Date in YYYY-MM-DD format (user's saved timezone)"),
-    user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(get_current_membership),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
     """Return submissions for a specific date."""
-    company = _get_user_company(user, db)
-    if not company:
-        return []
+    company = get_company_from_membership(membership, db)
+    survey_sq = survey_ids_subquery(membership, db)
 
-    survey_ids = [
-        s.id
-        for s in db.query(SurveyORM.id)
+    survey_query = (
+        db.query(SurveyORM.id)
         .filter(
             SurveyORM.company_id == company.id,
             SurveyORM.deleted_at.is_(None),
         )
-        .all()
-    ]
+    )
+    survey_query = apply_survey_filter(survey_query, survey_sq, SurveyORM.id)
+    survey_ids = [s.id for s in survey_query.all()]
     sv_ids = [
         r[0]
         for r in db.query(SurveyVersionORM.id)

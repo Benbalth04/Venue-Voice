@@ -19,7 +19,8 @@ import {
  * on hard reload so the user is reminded to act).
  */
 export function SubscriptionWarningBanner() {
-  const { session } = useAuth()
+  const { session, activeMembership } = useAuth()
+  const isViewer = activeMembership?.role === "viewer"
   const [status, setStatus] = useState<SubscriptionStatusResponse | null>(null)
   const [dismissed, setDismissed] = useState(false)
 
@@ -48,12 +49,14 @@ export function SubscriptionWarningBanner() {
         </div>
 
         <div className="flex shrink-0 items-center gap-3">
-          <Link
-            href="/dashboard/settings/manage-subscription"
-            className="whitespace-nowrap rounded-md bg-amber-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-800"
-          >
-            Upgrade plan
-          </Link>
+          {!isViewer && (
+            <Link
+              href="/dashboard/settings/manage-subscription"
+              className="whitespace-nowrap rounded-md bg-amber-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-800"
+            >
+              Upgrade plan
+            </Link>
+          )}
           <button
             onClick={() => setDismissed(true)}
             className="text-sm text-amber-700 underline hover:text-amber-900"

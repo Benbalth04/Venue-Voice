@@ -6,6 +6,12 @@ import Link from "next/link"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { supabase } from "@/lib/supabase/client"
+import { AuthShell } from "@/components/auth/AuthShell"
+
+const FRONTEND_ORIGIN = process.env.NEXT_PUBLIC_FRONTEND_ORIGIN 
+if (!FRONTEND_ORIGIN) {
+  throw new Error("Missing NEXT_PUBLIC_FRONTEND_ORIGIN environment variable")
+}
 
 export default function SignupPage() {
   const router = useRouter()
@@ -51,7 +57,7 @@ export default function SignupPage() {
         email,
         password,
         options: {
-          emailRedirectTo: `${process.env.NEXT_PUBLIC_APP_ORIGIN}/auth/callback`,
+          emailRedirectTo: `${FRONTEND_ORIGIN}/auth/callback`,
           data: {
             first_name: firstName,
             last_name: lastName,
@@ -83,15 +89,9 @@ export default function SignupPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 px-4 py-12">
+    <AuthShell>
       <div className="w-full max-w-md">
-        {/* Brand header */}
-        <div className="mb-8 text-center">
-          <h1 className="text-2xl font-bold text-zinc-900">Venue Voice</h1>
-          <p className="mt-1 text-sm text-zinc-500">Customer feedback that actually does something</p>
-        </div>
-
-      <Card className="p-6">
+      <Card className="p-8">
         <h2 className="text-xl font-semibold text-zinc-900">Create your account</h2>
         <p className="mt-1 text-sm text-zinc-600">
           Already have an account?{" "}
@@ -227,6 +227,6 @@ export default function SignupPage() {
         </form>
       </Card>
       </div>
-    </div>
+    </AuthShell>
   )
 }

@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { supabase } from "@/lib/supabase/client"
 import { fetchUser } from "@/lib/api/client"
+import { AuthShell } from "@/components/auth/AuthShell"
 
 export default function LoginPageClient() {
   const router = useRouter()
@@ -58,8 +59,8 @@ export default function LoginPageClient() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 px-4">
-      <Card className="w-full max-w-md p-6">
+    <AuthShell>
+      <Card className="w-full max-w-md p-8">
         <h1 className="text-xl font-semibold text-zinc-900">Log in</h1>
 
         <p className="mt-1 text-sm text-zinc-600">
@@ -112,6 +113,12 @@ export default function LoginPageClient() {
             )}
           </label>
 
+          <div className="text-right">
+            <Link className="text-sm font-medium text-violet-700 hover:underline" href="/forgot-password">
+              Forgot your password?
+            </Link>
+          </div>
+
           {error && (
             <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
               {error}
@@ -123,6 +130,6 @@ export default function LoginPageClient() {
           </Button>
         </form>
       </Card>
-    </div>
+    </AuthShell>
   )
 }

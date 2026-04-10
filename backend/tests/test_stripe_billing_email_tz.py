@@ -26,7 +26,7 @@ def test_apply_billing_context_strips_unix_and_sets_displays():
         "current_period_end_unix": 1_701_000_000,
     }
     db = MagicMock()
-    apply_user_timezone_to_billing_context(db, user, merged, template="trial_started")
+    apply_user_timezone_to_billing_context(db, user, merged, template="trial_started", company=None)
     assert "trial_end_unix" not in merged
     assert "current_period_end_unix" not in merged
     tz = ZoneInfo("Australia/Sydney")
@@ -41,7 +41,7 @@ def test_apply_billing_context_next_retry_datetime():
     user.id = uuid4()
     merged = {"next_retry_unix": 1_700_000_100}
     db = MagicMock()
-    apply_user_timezone_to_billing_context(db, user, merged, template="payment_retrying")
+    apply_user_timezone_to_billing_context(db, user, merged, template="payment_retrying", company=None)
     assert "next_retry_unix" not in merged
     expected = format_unix_epoch_for_email_datetime(1_700_000_100, ZoneInfo("Australia/Perth"))
     assert merged["next_retry_display"] == expected
@@ -61,7 +61,9 @@ def test_apply_subscription_canceled_db_fallback_when_no_unix():
     db = MagicMock()
     db.query.return_value = sub_q
 
-    apply_user_timezone_to_billing_context(db, user, merged, template="subscription_canceled")
+    company = MagicMock()
+    company.id = uuid4()
+    apply_user_timezone_to_billing_context(db, user, merged, template="subscription_canceled", company=company)
     db.query.assert_called_once_with(Subscription)
     assert "access_until_unix" not in merged
     assert merged.get("access_until_display")

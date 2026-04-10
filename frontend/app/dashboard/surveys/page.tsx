@@ -44,6 +44,7 @@ import { useConfirm } from "@/components/ui/ConfirmDialog"
 import { DataTable, type DataTableColumn } from "@/components/ui/DataTable"
 import { useBrokenFlows } from "@/components/layout/BrokenFlowsContext"
 import { useBrokenRules } from "@/components/layout/BrokenRulesContext"
+import { useQRSubmissionBlocked } from "@/components/layout/QRSubmissionBlockedContext"
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; cls: string; icon: React.ReactNode }> = {
@@ -79,6 +80,7 @@ function ActionsMenu({
   onPreview,
   onPublish,
   onDuplicate,
+  onRename,
   onConfirmUnpublish,
   onConfirmArchive,
   onConfirmUnarchive,
@@ -87,6 +89,7 @@ function ActionsMenu({
   onPreview: (survey: SurveyListItem) => void
   onPublish: (id: string) => Promise<void>
   onDuplicate: (id: string) => Promise<void>
+  onRename: (survey: SurveyListItem) => void
   onConfirmUnpublish: (id: string) => Promise<void>
   onConfirmArchive: (id: string) => Promise<void>
   onConfirmUnarchive: (id: string) => Promise<void>
@@ -148,6 +151,27 @@ function ActionsMenu({
               title={survey.status === "active" ? "Unpublish first to edit" : "Edit survey"}
             >
               <Edit className="h-4 w-4" /> Edit
+            </button>
+            <button
+              className={`flex w-full items-center gap-2 px-3 py-2 text-sm ${
+                survey.status === "draft"
+                  ? "text-zinc-700 hover:bg-zinc-50"
+                  : "cursor-not-allowed text-zinc-400"
+              }`}
+              onClick={() => {
+                setOpen(false)
+                if (survey.status === "draft") {
+                  onRename(survey)
+                }
+              }}
+              disabled={survey.status !== "draft"}
+              title={
+                survey.status === "draft"
+                  ? "Rename survey"
+                  : "Only draft surveys can be renamed"
+              }
+            >
+              <Pencil className="h-4 w-4" /> Rename survey
             </button>
             <button
               className="flex w-full items-center gap-2 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50"
@@ -213,6 +237,7 @@ function ActionsMenu({
 export default function SurveysListPage() {
   const { refreshBrokenFlowCount } = useBrokenFlows()
   const { refreshBrokenRuleCount } = useBrokenRules()
+  const { refreshSubmissionBlockedQrCount } = useQRSubmissionBlocked()
   const router = useRouter()
   const pathname = usePathname()
   const [surveys, setSurveys] = useState<SurveyListItem[]>([])
@@ -239,6 +264,7 @@ export default function SurveysListPage() {
   function refreshFlowAndRuleWarnings() {
     void refreshBrokenFlowCount()
     void refreshBrokenRuleCount()
+    void refreshSubmissionBlockedQrCount()
   }
 
   async function getToken() {
@@ -389,7 +415,7 @@ export default function SurveysListPage() {
   async function handleConfirmUnpublish(id: string) {
     const ok = await confirm({
       title: "Unpublish Survey",
-      message: "Are you sure you want to unpublish this survey? This will:\n- Make the survey inaccessible to respondents\n- Deactivate all assignments of this survey to locations\n- Disable any flows for this survey\nAre you sure you want to continue?",
+      message: "Are you sure you want to unpublish this survey? This will:\n- Make the survey inaccessible to respondents\n- Deactivate all QR codes associated with this survey\n- Disable any flows for this survey\nAre you sure you want to continue?",
       confirmLabel: "Unpublish",
       cancelLabel: "Cancel",
       variant: "danger",
@@ -533,12 +559,12 @@ export default function SurveysListPage() {
               {s.title}
             </Link>
           )}
-          {s.status !== "active" && (
+          {s.status === "draft" && (
             <button
               type="button"
               onClick={() => openTitleModal(s)}
               className="flex-shrink-0 rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-              aria-label={`Edit title for ${s.title}`}
+              aria-label={`Rename survey ${s.title}`}
             >
               <Pencil className="h-3.5 w-3.5" />
             </button>
@@ -582,6 +608,7 @@ export default function SurveysListPage() {
           onPreview={openSurveyPreview}
           onPublish={handlePublish}
           onDuplicate={handleDuplicate}
+          onRename={openTitleModal}
           onConfirmUnpublish={handleConfirmUnpublish}
           onConfirmArchive={handleConfirmArchive}
           onConfirmUnarchive={handleConfirmUnarchive}
@@ -756,7 +783,7 @@ export default function SurveysListPage() {
       {editingSurvey && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-            <h2 className="mb-1 text-lg font-semibold text-zinc-900">Edit Survey Title</h2>
+            <h2 className="mb-1 text-lg font-semibold text-zinc-900">Rename survey</h2>
             <p className="mb-4 text-sm text-zinc-500">
               Titles must be unique for your company.
             </p>

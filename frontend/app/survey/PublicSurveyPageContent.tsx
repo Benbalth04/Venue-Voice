@@ -278,14 +278,6 @@ export default function PublicSurveyPageContent() {
                 "Submit"
               )}
             </button>
-            <div className="mt-6 flex justify-center">
-              <img
-                src="/PrimaryLogo_PoweredBy.svg"
-                alt="Venue Voice"
-                className="h-20 w-auto object-contain margin-bottom-0 margin-top-4"
-                aria-hidden
-              />
-            </div>
           </div>
         </div>
       </div>

@@ -920,6 +920,20 @@ def abandon_survey(
     return {"ok": True}
 
 
+def _primary_color_from_survey_schema(schema: dict | None) -> str:
+    """Default matches frontend defaultSurvey theme.primaryColor."""
+    default = "#7C3AED"
+    if not schema or not isinstance(schema, dict):
+        return default
+    theme = schema.get("theme")
+    if not isinstance(theme, dict):
+        return default
+    color = theme.get("primaryColor")
+    if isinstance(color, str) and color.strip():
+        return color.strip()
+    return default
+
+
 # --------------------------------------------------
 # GET /survey/thank-you - Return thank-you page data (company message, name)
 # --------------------------------------------------
@@ -929,7 +943,7 @@ def get_thank_you_data(
     qr: str,
     db: Session = Depends(get_db_connection),
 ):
-    """Return company name and thank-you message for a completed session."""
+    """Return company name, thank-you message, and survey primary colour for a completed session."""
     try:
         session_uid = uuid.UUID(session)
         qr_uid = uuid.UUID(qr)
@@ -974,9 +988,20 @@ def get_thank_you_data(
     )
     company_name = company.name if company else None
 
+    sv = (
+        db.query(SurveyVersionORM)
+        .filter(
+            SurveyVersionORM.id == resp.survey_version_id,
+            SurveyVersionORM.deleted_at.is_(None),
+        )
+        .first()
+    )
+    primary_color = _primary_color_from_survey_schema(sv.schema_json if sv else None)
+
     return {
         "thank_you_message": thank_you_message,
         "company_name": company_name,
+        "primary_color": primary_color,
     }
 
 

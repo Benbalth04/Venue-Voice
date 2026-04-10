@@ -12,7 +12,7 @@ Venue Voice is a QR-based customer feedback platform for physical venues. Custom
 ```bash
 docker compose up
 ```
-This starts PostgreSQL (port 5432), Redis (port 6379), FastAPI backend (port 5000), and Next.js frontend (port 3000).
+This starts PostgreSQL (port 5432), Redis (port 6379), Caddy as the API gateway (host port 5000 to the backends), and Next.js frontend (port 3000).
 
 ### Frontend only (outside Docker)
 ```bash

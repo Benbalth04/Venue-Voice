@@ -8,7 +8,7 @@ import {
   AlertTriangle,
   BarChart3,
   LayoutDashboard,
-  Link2,
+  QrCode,
   LogOut,
   MapPin,
   MessageSquare,
@@ -44,25 +44,41 @@ type NavItem = {
   tourId?: string
 }
 
-function buildNavItems(isViewer: boolean): NavItem[] {
-  const distributionChildren: NavChild[] = []
-  if (!isViewer) {
-    distributionChildren.push({
-      href: "/dashboard/distribution/assign_surveys",
-      label: "Assign Surveys",
+function buildViewerNavItems(): NavItem[] {
+  return [
+    {
+      href: "/dashboard/analytics/view_responses",
+      label: "View Responses",
+      icon: BarChart3,
       exact: true,
-      tourId: "tour-assign-surveys",
-    })
-  }
-  distributionChildren.push({
-    href: "/dashboard/distribution/qr_codes",
-    label: "QR Codes",
-    exact: true,
-    showSubmissionBlockedQrCount: !isViewer,
-    tourId: "tour-qr-codes",
-  })
+    },
+    {
+      href: "/dashboard/analytics/survey_dashboard",
+      label: "Survey Dashboards",
+      icon: LayoutDashboard,
+      exact: true,
+    },
+    {
+      href: "/dashboard/distribution/qr_codes",
+      label: "QR Codes",
+      icon: QrCode,
+      exact: true,
+    },
+  ]
+}
 
-  const items: NavItem[] = [
+function buildNavItems(): NavItem[] {
+  const distributionChildren: NavChild[] = [
+    {
+      href: "/dashboard/distribution/qr_codes",
+      label: "QR Codes",
+      exact: true,
+      showSubmissionBlockedQrCount: true,
+      tourId: "tour-qr-codes",
+    },
+  ]
+
+  return [
     { href: "/dashboard", label: "Overview", icon: LayoutDashboard, exact: true },
     {
       href: "/dashboard/analytics/view_responses",
@@ -87,15 +103,12 @@ function buildNavItems(isViewer: boolean): NavItem[] {
     { href: "/dashboard/surveys", label: "Surveys", icon: MessageSquare, tourId: "tour-surveys" },
     { href: "/dashboard/locations", label: "Locations", icon: MapPin, tourId: "tour-locations" },
     {
-      href: distributionChildren[0].href,
+      href: "/dashboard/distribution/qr_codes",
       label: "Distribution",
-      icon: Link2,
+      icon: QrCode,
       children: distributionChildren,
     },
-  ]
-
-  if (!isViewer) {
-    items.push({
+    {
       href: "/dashboard/automations/flows",
       label: "Automations",
       icon: Zap,
@@ -104,16 +117,10 @@ function buildNavItems(isViewer: boolean): NavItem[] {
         { href: "/dashboard/automations/rules", label: "Rules", exact: true, showBrokenRuleCount: true, tourId: "tour-rules" },
         { href: "/dashboard/automations/notification_groups", label: "Notification Groups", exact: true },
       ],
-    })
-  }
-
-  items.push({ label: "Reports", icon: BookAudio, disabled: true })
-
-  if (!isViewer) {
-    items.push({ href: "/dashboard/users", label: "User Management", icon: Users })
-  }
-
-  return items
+    },
+    { href: "/dashboard/users", label: "User Management", icon: Users },
+    { label: "Reports", icon: BookAudio, disabled: true },
+  ]
 }
 
 function isRouteActive(pathname: string, href: string, exact = false) {
@@ -130,7 +137,7 @@ export function Sidebar() {
   const { brokenFlowCount } = useBrokenFlows()
   const { submissionBlockedActiveQrCount } = useQRSubmissionBlocked()
   const isViewer = activeMembership?.role === "viewer"
-  const items = buildNavItems(isViewer)
+  const items = isViewer ? buildViewerNavItems() : buildNavItems()
 
   async function onLogout() {
     supabase.auth.signOut().catch((err) => {
@@ -241,10 +248,16 @@ export function Sidebar() {
                         {child.showSubmissionBlockedQrCount && submissionBlockedActiveQrCount > 0 ? (
                           <AlertTriangle
                             className="h-3 w-3 shrink-0 text-amber-500"
-                            aria-label={`${submissionBlockedActiveQrCount} active QR code${submissionBlockedActiveQrCount === 1 ? "" : "s"} not accepting submissions`}
+                            aria-label={
+                              submissionBlockedActiveQrCount === 1
+                                ? "There is 1 active QR code that cannot accept submissions. Ensure the QR code's location and survey are both active."
+                                : `There are ${submissionBlockedActiveQrCount} active QR codes that cannot accept submissions. Ensure each QR code's location and survey are both active.`
+                            }
                           >
                             <title>
-                              {`${submissionBlockedActiveQrCount} active QR code${submissionBlockedActiveQrCount === 1 ? "" : "s"} not accepting submissions`}
+                              {submissionBlockedActiveQrCount === 1
+                                ? "There is 1 active QR code that cannot accept submissions. Ensure the QR code's location and survey are both active."
+                                : `There are ${submissionBlockedActiveQrCount} active QR codes that cannot accept submissions. Ensure each QR code's location and survey are both active.`}
                             </title>
                           </AlertTriangle>
                         ) : null}

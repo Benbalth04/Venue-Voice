@@ -7,14 +7,15 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
-from ..auth.jwt import get_current_user
+from ..auth.membership import get_company_from_membership, require_company_admin
 from ..auth.subscription import require_active_subscription
 from ..auth.user_timezone import get_user_zoneinfo
 from ..core.errors.exceptions import NotFoundError, PermissionError, ValidationError
 from ..services.plan_policy import get_policy_for_subscription
-from ..services.stripe_service import get_subscription
+from ..services.stripe_service import get_company_subscription
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import Company as CompanyORM
+from ..models.postgres_model import Membership as MembershipORM
 from ..models.postgres_model import Survey as SurveyORM
 from ..models.postgres_model import User as UserORM
 from ..schemas.pydantic_model import (
@@ -79,22 +80,8 @@ def _parse_uuid(value: str, *, code: str, label: str) -> uuid.UUID:
         raise ValidationError(code=code, message=f"Invalid {label}")
 
 
-def _get_company_for_user(db: Session, current_user: UserORM) -> CompanyORM:
-    company = (
-        db.query(CompanyORM)
-        .filter(
-            CompanyORM.owner_user_id == current_user.id,
-            CompanyORM.deleted_at.is_(None),
-        )
-        .first()
-    )
-    if not company:
-        raise NotFoundError(code="COMPANY_NOT_FOUND", message="Company not found for user")
-    return company
-
-
-def _ensure_survey_access(db: Session, current_user: UserORM, survey_id: uuid.UUID) -> CompanyORM:
-    company = _get_company_for_user(db, current_user)
+def _ensure_survey_access(db: Session, membership: MembershipORM, survey_id: uuid.UUID) -> CompanyORM:
+    company = get_company_from_membership(membership, db)
     survey = (
         db.query(SurveyORM)
         .filter(
@@ -113,41 +100,41 @@ def _ensure_survey_access(db: Session, current_user: UserORM, survey_id: uuid.UU
 @router.get("/surveys/{survey_id}/rules", response_model=RuleListResponse)
 def list_rules(
     survey_id: str,
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
     survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
-    _ensure_survey_access(db, current_user, survey_uuid)
+    _ensure_survey_access(db, membership, survey_uuid)
     return get_rule_bundle(db, survey_uuid, user_tz)
 
 
 @router.get("/rules/broken-summary")
 def get_company_broken_rules_summary(
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     db: Session = Depends(get_db_connection),
 ):
-    company = _get_company_for_user(db, current_user)
+    company = get_company_from_membership(membership, db)
     return {"broken_rule_count": get_company_broken_rule_count(db, company.id)}
 
 
 @router.get("/flows/broken-summary")
 def get_company_broken_flows_summary(
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     db: Session = Depends(get_db_connection),
 ):
-    company = _get_company_for_user(db, current_user)
+    company = get_company_from_membership(membership, db)
     return {"broken_flow_count": get_company_broken_flow_count(db, company.id)}
 
 
 @router.get("/surveys/{survey_id}/rules/broken/summary")
 def get_broken_rules_summary(
     survey_id: str,
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     db: Session = Depends(get_db_connection),
 ):
     survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
-    _ensure_survey_access(db, current_user, survey_uuid)
+    _ensure_survey_access(db, membership, survey_uuid)
     return {"broken_rule_count": get_broken_rule_count(db, survey_uuid)}
 
 
@@ -155,12 +142,12 @@ def get_broken_rules_summary(
 def create_rule(
     survey_id: str,
     payload: CreateRule,
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
     survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
-    _ensure_survey_access(db, current_user, survey_uuid)
+    _ensure_survey_access(db, membership, survey_uuid)
     return create_rule_service(db, survey_uuid, payload, user_tz)
 
 
@@ -169,13 +156,13 @@ def update_rule(
     survey_id: str,
     rule_id: str,
     payload: UpdateRule,
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
     survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
     rule_uuid = _parse_uuid(rule_id, code="INVALID_RULE_ID", label="rule ID")
-    _ensure_survey_access(db, current_user, survey_uuid)
+    _ensure_survey_access(db, membership, survey_uuid)
     result = update_rule_service(db, survey_uuid, rule_uuid, payload, user_tz)
     # Rule status may have changed (active ↔ broken); revalidate all flows for this
     # survey so broken flows referencing this rule are cleared. Fail-safe — a
@@ -195,12 +182,12 @@ def delete_rule(
     survey_id: str,
     rule_id: str,
     payload: DeleteRequest,
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     db: Session = Depends(get_db_connection),
 ):
     survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
     rule_uuid = _parse_uuid(rule_id, code="INVALID_RULE_ID", label="rule ID")
-    _ensure_survey_access(db, current_user, survey_uuid)
+    _ensure_survey_access(db, membership, survey_uuid)
     delete_rule_service(db, survey_uuid, rule_uuid, payload.updated_at)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -208,34 +195,34 @@ def delete_rule(
 @router.get("/surveys/{survey_id}/flows", response_model=list[FlowResponse])
 def list_flows_route(
     survey_id: str,
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
     survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
-    company = _ensure_survey_access(db, current_user, survey_uuid)
+    company = _ensure_survey_access(db, membership, survey_uuid)
     return list_flows(db, company.id, survey_uuid, user_tz)
 
 
 @router.get("/flows", response_model=list[FlowResponse])
 def list_company_flows_route(
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
-    company = _get_company_for_user(db, current_user)
+    company = get_company_from_membership(membership, db)
     return list_company_flows(db, company.id, user_tz)
 
 
 @router.get("/flows/{flow_id}", response_model=FlowResponse)
 def get_flow_route(
     flow_id: str,
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
     flow_uuid = _parse_uuid(flow_id, code="INVALID_FLOW_ID", label="flow ID")
-    company = _get_company_for_user(db, current_user)
+    company = get_company_from_membership(membership, db)
     return get_flow_response(db, company.id, flow_uuid, user_tz)
 
 
@@ -243,13 +230,13 @@ def get_flow_route(
 def create_flow_route(
     survey_id: str,
     payload: CreateFlow,
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
     survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
-    company = _ensure_survey_access(db, current_user, survey_uuid)
-    sub = get_subscription(current_user, db)
+    company = _ensure_survey_access(db, membership, survey_uuid)
+    sub = get_company_subscription(company, db)
     policy = get_policy_for_subscription(sub)
     plan_key = (sub.plan_display_name or "starter").strip().lower() if sub else "starter"
     return create_flow(db, company.id, survey_uuid, payload, user_tz, policy=policy, plan_key=plan_key)
@@ -260,14 +247,14 @@ def update_flow_route(
     survey_id: str,
     flow_id: str,
     payload: UpdateFlow,
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
     survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
     flow_uuid = _parse_uuid(flow_id, code="INVALID_FLOW_ID", label="flow ID")
-    company = _ensure_survey_access(db, current_user, survey_uuid)
-    sub = get_subscription(current_user, db)
+    company = _ensure_survey_access(db, membership, survey_uuid)
+    sub = get_company_subscription(company, db)
     policy = get_policy_for_subscription(sub)
     plan_key = (sub.plan_display_name or "starter").strip().lower() if sub else "starter"
     return update_flow(db, company.id, survey_uuid, flow_uuid, payload, user_tz, policy=policy, plan_key=plan_key)
@@ -278,14 +265,14 @@ def set_flow_active_route(
     survey_id: str,
     flow_id: str,
     payload: SetFlowActive,
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
     survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
     flow_uuid = _parse_uuid(flow_id, code="INVALID_FLOW_ID", label="flow ID")
-    company = _ensure_survey_access(db, current_user, survey_uuid)
-    sub = get_subscription(current_user, db)
+    company = _ensure_survey_access(db, membership, survey_uuid)
+    sub = get_company_subscription(company, db)
     policy = get_policy_for_subscription(sub)
     plan_key = (sub.plan_display_name or "starter").strip().lower() if sub else "starter"
     return set_flow_active(
@@ -306,12 +293,12 @@ def delete_flow_route(
     survey_id: str,
     flow_id: str,
     payload: DeleteRequest,
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     db: Session = Depends(get_db_connection),
 ):
     survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
     flow_uuid = _parse_uuid(flow_id, code="INVALID_FLOW_ID", label="flow ID")
-    company = _ensure_survey_access(db, current_user, survey_uuid)
+    company = _ensure_survey_access(db, membership, survey_uuid)
     delete_flow(db, company.id, survey_uuid, flow_uuid, payload.updated_at)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -320,11 +307,11 @@ def delete_flow_route(
 def test_flow_route(
     flow_id: str,
     payload: FlowTestRequest,
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     db: Session = Depends(get_db_connection),
 ):
     flow_uuid = _parse_uuid(flow_id, code="INVALID_FLOW_ID", label="flow ID")
-    company = _get_company_for_user(db, current_user)
+    company = get_company_from_membership(membership, db)
     flow = get_flow_for_company(db, company.id, flow_uuid)
     return test_flow(
         db,
@@ -338,22 +325,22 @@ def test_flow_route(
 
 @router.get("/notification-groups", response_model=list[NotificationGroupResponse])
 def list_notification_groups_route(
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
-    company = _get_company_for_user(db, current_user)
+    company = get_company_from_membership(membership, db)
     return list_notification_groups(db, company.id, user_tz)
 
 
 @router.post("/notification-groups", response_model=NotificationGroupResponse, status_code=201)
 def create_notification_group_route(
     payload: NotificationGroupCreate,
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
-    company = _get_company_for_user(db, current_user)
+    company = get_company_from_membership(membership, db)
     return create_notification_group(db, company.id, payload.name, user_tz)
 
 
@@ -361,11 +348,11 @@ def create_notification_group_route(
 def add_notification_group_member_route(
     group_id: str,
     payload: NotificationGroupMemberCreate,
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
-    company = _get_company_for_user(db, current_user)
+    company = get_company_from_membership(membership, db)
     group_uuid = _parse_uuid(group_id, code="INVALID_NOTIFICATION_GROUP_ID", label="notification group ID")
     return add_notification_group_member(
         db,
@@ -381,11 +368,11 @@ def add_notification_group_member_route(
 def update_notification_group_route(
     group_id: str,
     payload: NotificationGroupUpdate,
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
-    company = _get_company_for_user(db, current_user)
+    company = get_company_from_membership(membership, db)
     group_uuid = _parse_uuid(group_id, code="INVALID_NOTIFICATION_GROUP_ID", label="notification group ID")
     return update_notification_group(
         db,
@@ -402,11 +389,11 @@ def update_notification_group_route(
 def assign_notification_group_to_location_route(
     location_id: str,
     payload: AssignNotificationGroupToLocation,
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
-    company = _get_company_for_user(db, current_user)
+    company = get_company_from_membership(membership, db)
     location_uuid = _parse_uuid(location_id, code="INVALID_LOCATION_ID", label="location ID")
     result = assign_notification_group_to_location(
         db,
@@ -431,11 +418,11 @@ def assign_notification_group_to_location_route(
 def sync_location_notification_groups_route(
     location_id: str,
     payload: LocationNotificationGroupUpdate,
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
-    company = _get_company_for_user(db, current_user)
+    company = get_company_from_membership(membership, db)
     location_uuid = _parse_uuid(location_id, code="INVALID_LOCATION_ID", label="location ID")
     result = sync_location_notification_groups(
         db,
@@ -460,10 +447,10 @@ def sync_location_notification_groups_route(
 def delete_notification_group_route(
     group_id: str,
     payload: DeleteRequest,
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     db: Session = Depends(get_db_connection),
 ):
-    company = _get_company_for_user(db, current_user)
+    company = get_company_from_membership(membership, db)
     group_uuid = _parse_uuid(group_id, code="INVALID_NOTIFICATION_GROUP_ID", label="notification group ID")
     delete_notification_group(db, company.id, group_uuid, payload.updated_at)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -473,9 +460,9 @@ def delete_notification_group_route(
 def list_flow_runs_route(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=20),
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
-    company = _get_company_for_user(db, current_user)
+    company = get_company_from_membership(membership, db)
     return list_flow_runs(db, company.id, user_tz, page=page, page_size=page_size)

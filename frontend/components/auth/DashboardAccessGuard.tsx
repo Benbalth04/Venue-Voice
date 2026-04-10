@@ -4,9 +4,10 @@ import { useEffect, useState, type ReactNode } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/contexts/AuthContext"
 import { fetchSubscription } from "@/lib/api/client"
+import { supabase } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 
-type BlockReason = "email" | "onboarding" | "subscription" | "sub_error"
+type BlockReason = "email" | "invite" | "onboarding" | "subscription" | "sub_error"
 
 interface OverlayConfig {
   icon: "warning" | "lock" | "card"
@@ -24,6 +25,14 @@ const OVERLAY_CONFIG: Record<BlockReason, OverlayConfig> = {
       "Please verify your email address to access the dashboard. Check your inbox for a confirmation link.",
     button: "Go to Inbox",
     href: "/verify-email",
+  },
+  invite: {
+    icon: "lock",
+    title: "Complete your account setup",
+    message:
+      "Please finish setting up your account — set a password and select your timezone to get started.",
+    button: "Complete Setup",
+    href: "/onboarding/invite-setup",
   },
   onboarding: {
     icon: "lock",
@@ -95,6 +104,14 @@ export function DashboardAccessGuard({ children }: { children: ReactNode }) {
   const [checking, setChecking] = useState(true)
   const [blockReason, setBlockReason] = useState<BlockReason | null>(null)
 
+  function handleLogout() {
+    supabase.auth.signOut().catch((err) => {
+      console.error("Supabase signOut failed:", err)
+    })
+    router.push("/login")
+    router.refresh()
+  }
+
   /* eslint-disable react-hooks/set-state-in-effect -- sync guard branches before async fetchSubscription */
   useEffect(() => {
     if (authLoading) return
@@ -110,6 +127,12 @@ export function DashboardAccessGuard({ children }: { children: ReactNode }) {
 
     if (!user.email_verified) {
       setBlockReason("email")
+      setChecking(false)
+      return
+    }
+
+    if (user.invite_pending) {
+      setBlockReason("invite")
       setChecking(false)
       return
     }
@@ -170,6 +193,14 @@ export function DashboardAccessGuard({ children }: { children: ReactNode }) {
             }
           >
             {config.button}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="mt-3 w-full"
+            onClick={handleLogout}
+          >
+            Log out
           </Button>
         </div>
       </div>

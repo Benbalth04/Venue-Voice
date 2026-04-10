@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation"
 import { useEffect, type ReactNode } from "react"
 import { useAuth } from "@/contexts/AuthContext"
+import { AuthShell } from "@/components/auth/AuthShell"
+import { LoadingSpinner } from "@/components/ui/LoadingSpinner"
 
 /** Only for users who are signed in but have not verified email yet. */
 export function UnverifiedEmailGuard({ children }: { children: ReactNode }) {
@@ -17,9 +19,9 @@ export function UnverifiedEmailGuard({ children }: { children: ReactNode }) {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-zinc-50">
-        Loading...
-      </div>
+      <AuthShell>
+        <LoadingSpinner size="lg" aria-label="Loading" />
+      </AuthShell>
     )
   }
 

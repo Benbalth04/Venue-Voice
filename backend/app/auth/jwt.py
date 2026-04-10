@@ -1,5 +1,6 @@
 import json
 import time
+import urllib.error
 import uuid
 from typing import TYPE_CHECKING, Any
 from urllib.request import urlopen, Request
@@ -12,7 +13,7 @@ from sqlalchemy.orm import Session
 from ..core.config import settings
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import User as UserORM
-from ..core.errors.exceptions import AuthError
+from ..core.errors.exceptions import AuthError, ExternalAPIError
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -31,9 +32,26 @@ def _fetch_jwks() -> dict[str, Any]:
         return _JWKS_CACHE["jwks"]
 
     req = Request(_JKW_URL, headers={"Accept": "application/json"})
-    with urlopen(req, timeout=10) as resp:
-        raw = resp.read().decode("utf-8")
+    try:
+        with urlopen(req, timeout=10) as resp:
+            raw = resp.read().decode("utf-8")
+    except (urllib.error.URLError, OSError, TimeoutError) as e:
+        raise ExternalAPIError(
+            service_name="supabase_jwks",
+            error_message=f"Could not reach Supabase JWKS endpoint: {e}",
+            code="JWKS_FETCH_FAILED",
+            status_code=503,
+        ) from e
+
+    try:
         jwks = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ExternalAPIError(
+            service_name="supabase_jwks",
+            error_message="JWKS response was not valid JSON",
+            code="JWKS_PARSE_FAILED",
+            status_code=503,
+        ) from e
 
     _JWKS_CACHE["jwks"] = jwks
     _JWKS_CACHE["fetched_at"] = now
@@ -75,6 +93,8 @@ def verify_supabase_jwt(token: str) -> dict[str, Any]:
         )
         return payload
     except AuthError:
+        raise
+    except ExternalAPIError:
         raise
     except Exception as e:
         raise AuthError(code="INVALID_TOKEN", message=f"Invalid token: {e}")

@@ -3,6 +3,10 @@
 # Usage:
 #   docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.production.yml up -d
 #
+# Set in .env.production:
+#   CADDY_PUBLISH_80=80
+#   API_HOST=api.yourdomain.com
+#
 # Services excluded in production:
 #   - database  → hosted on Supabase
 #   - frontend  → hosted on Vercel
@@ -14,8 +18,17 @@ services:
   frontend:
     profiles: [dev-only]
 
+  redis:
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    networks:
+      - app
+
   backend_blue:
     env_file: .env.production
+    environment:
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+    networks:
+      - app
     depends_on:
       database:
         condition: service_started
@@ -25,6 +38,10 @@ services:
 
   backend_green:
     env_file: .env.production
+    environment:
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+    networks:
+      - app
     depends_on:
       database:
         condition: service_started
@@ -39,25 +56,34 @@ services:
     volumes:
       - uptime_kuma_data:/app/data
     networks:
-      - backend
+      - monitoring
 
   caddy:
-    image: caddy:2-alpine
-    container_name: caddy
-    restart: always
     ports:
-      - "80:80"
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
     networks:
-      - backend
+      - edge
+      - app
+      - monitoring
+    environment:
+      API_HOST: ${API_HOST:-api.example.com}
     depends_on:
       - uptime_kuma
 
+networks:
+  edge:
+    driver: bridge
+
+  app:
+    driver: bridge
+    # Must allow outbound internet access (Supabase JWKS, Stripe, Resend, OpenAI).
+    internal: false
+
+  monitoring:
+    driver: bridge
+    internal: true   # isolated from internet
+
 volumes:
   uptime_kuma_data:
-  caddy_data:
-  caddy_config:

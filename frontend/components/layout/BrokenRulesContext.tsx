@@ -11,6 +11,7 @@ import {
 } from "react"
 import { supabase } from "@/lib/supabase/client"
 import { fetchCompanyBrokenRuleSummary } from "@/lib/api/client"
+import { useAuth } from "@/contexts/AuthContext"
 
 type BrokenRulesContextValue = {
   brokenRuleCount: number
@@ -21,8 +22,14 @@ const BrokenRulesContext = createContext<BrokenRulesContextValue | null>(null)
 
 export function BrokenRulesProvider({ children }: { children: ReactNode }) {
   const [brokenRuleCount, setBrokenRuleCount] = useState(0)
+  const { activeMembership } = useAuth()
 
   const refreshBrokenRuleCount = useCallback(async () => {
+    if (activeMembership?.role === "viewer") {
+      setBrokenRuleCount(0)
+      return
+    }
+
     const {
       data: { session },
     } = await supabase.auth.getSession()
@@ -38,7 +45,7 @@ export function BrokenRulesProvider({ children }: { children: ReactNode }) {
     } catch {
       setBrokenRuleCount(0)
     }
-  }, [])
+  }, [activeMembership])
 
   useEffect(() => {
     const initialLoad = setTimeout(() => {

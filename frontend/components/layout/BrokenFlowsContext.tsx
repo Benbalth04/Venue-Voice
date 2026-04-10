@@ -11,6 +11,7 @@ import {
 } from "react"
 import { supabase } from "@/lib/supabase/client"
 import { fetchCompanyBrokenFlowSummary } from "@/lib/api/client"
+import { useAuth } from "@/contexts/AuthContext"
 
 type BrokenFlowsContextValue = {
   brokenFlowCount: number
@@ -21,8 +22,14 @@ const BrokenFlowsContext = createContext<BrokenFlowsContextValue | null>(null)
 
 export function BrokenFlowsProvider({ children }: { children: ReactNode }) {
   const [brokenFlowCount, setBrokenFlowCount] = useState(0)
+  const { activeMembership } = useAuth()
 
   const refreshBrokenFlowCount = useCallback(async () => {
+    if (activeMembership?.role === "viewer") {
+      setBrokenFlowCount(0)
+      return
+    }
+
     const {
       data: { session },
     } = await supabase.auth.getSession()
@@ -38,7 +45,7 @@ export function BrokenFlowsProvider({ children }: { children: ReactNode }) {
     } catch {
       setBrokenFlowCount(0)
     }
-  }, [])
+  }, [activeMembership])
 
   useEffect(() => {
     const initialLoad = setTimeout(() => {

@@ -10,7 +10,7 @@ _DEFAULTS = {
     "PUBLIC_SUPABASE_JWT_URL": "https://test.supabase.co/auth/v1/jwks",
     "STRIPE_SECRET_KEY": "sk_test_placeholder",
     "DEFAULT_FREE_TRIAL_DAYS": "7",
-    "FRONTEND_ORIGIN": "http://localhost:3000",
+    "APP_ORIGIN": "http://localhost:3000",
     "RESEND_API_KEY": "re_placeholder",
     "OPENAI_API_KEY": "sk-placeholder",
     "STARTER_PLAN_MONTHLY_PRICE_ID": "price_starter_monthly",

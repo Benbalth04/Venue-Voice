@@ -53,6 +53,7 @@ class User(SoftDeleteMixin, Base):
     first_name: Mapped[str] = mapped_column(String, nullable=False)
     last_name: Mapped[str] = mapped_column(String, nullable=False)
     onboarding_complete: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    invite_pending: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     timezone: Mapped[str] = mapped_column(
         String(128),
@@ -65,8 +66,7 @@ class User(SoftDeleteMixin, Base):
         server_default=func.now()
     )
 
-    companies = relationship("Company", back_populates="owner")
-    subscription = relationship("Subscription", back_populates="user", uselist=False)
+    memberships = relationship("Membership", back_populates="user", foreign_keys="Membership.user_id")
 
 
 # --------------------------------------------------
@@ -81,9 +81,9 @@ class Subscription(Base):
         primary_key=True,
         server_default=func.uuid_generate_v4()
     )
-    user_id: Mapped[uuid.UUID] = mapped_column(
+    company_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey("companies.id", ondelete="CASCADE"),
         unique=True,
         nullable=False,
         index=True,
@@ -104,7 +104,7 @@ class Subscription(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
-    user = relationship("User", back_populates="subscription")
+    company = relationship("Company", back_populates="subscription")
 
 
 # --------------------------------------------------
@@ -120,13 +120,6 @@ class Company(SoftDeleteMixin, Base):
         server_default=func.uuid_generate_v4()
     )
 
-    owner_user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-        unique=True,
-    )
-
     name: Mapped[str] = mapped_column(String, nullable=False)
     primary_industry: Mapped[str | None] = mapped_column(String, nullable=True)
     company_size: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -139,9 +132,10 @@ class Company(SoftDeleteMixin, Base):
         server_default=func.now()
     )
 
-    owner = relationship("User", back_populates="companies")
+    subscription = relationship("Subscription", back_populates="company", uselist=False)
     locations = relationship("Location", back_populates="company")
     surveys = relationship("Survey", back_populates="company")
+    memberships = relationship("Membership", back_populates="company", foreign_keys="Membership.company_id")
 
 
 # --------------------------------------------------
@@ -1203,6 +1197,84 @@ class JobRun(Base):
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False)
     data: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+# --------------------------------------------------
+# MEMBERSHIPS
+# --------------------------------------------------
+
+class Membership(Base):
+    __tablename__ = "memberships"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.uuid_generate_v4(),
+    )
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    role: Mapped[str] = mapped_column(String, nullable=False)
+    all_surveys: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    all_locations: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    invited_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    company = relationship("Company", back_populates="memberships", foreign_keys=[company_id])
+    user = relationship("User", back_populates="memberships", foreign_keys=[user_id])
+    viewer_permissions = relationship(
+        "ViewerPermission", back_populates="membership", cascade="all, delete-orphan"
+    )
+
+
+# --------------------------------------------------
+# VIEWER PERMISSIONS
+# --------------------------------------------------
+
+class ViewerPermission(Base):
+    __tablename__ = "viewer_permissions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.uuid_generate_v4(),
+    )
+    membership_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("memberships.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    survey_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("surveys.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    location_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("locations.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+
+    membership = relationship("Membership", back_populates="viewer_permissions")
 
 
 # Register models that reference tables defined above (relationship resolution).

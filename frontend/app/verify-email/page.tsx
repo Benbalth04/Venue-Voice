@@ -1,16 +1,19 @@
 "use client"
 
 import { Suspense, useState } from "react"
-import { useSearchParams } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { supabase } from "@/lib/supabase/client"
 import { useAuth } from "@/contexts/AuthContext"
 import { UnverifiedEmailGuard } from "@/components/auth/UnverifiedEmailGuard"
+import { CrispChat } from "@/components/crisp/CrispChat"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { AuthShell } from "@/components/auth/AuthShell"
 
 function VerifyEmailContent() {
   const params = useSearchParams()
+  const router = useRouter()
   const { user, session } = useAuth()
 
   const emailParam = params.get("email") ?? ""
@@ -39,8 +42,17 @@ function VerifyEmailContent() {
     }
   }
 
+  function handleLogout() {
+    supabase.auth.signOut().catch((err) => {
+      console.error("Supabase signOut failed:", err)
+    })
+    router.push("/login")
+    router.refresh()
+  }
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 px-4">
+    <AuthShell>
+      <CrispChat />
       <Card className="w-full max-w-md p-8 text-center">
         <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full bg-violet-100">
           <svg className="h-7 w-7 text-violet-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -88,6 +100,17 @@ function VerifyEmailContent() {
           {resendState === "error" && (
             <p className="text-xs text-red-600">{resendError}</p>
           )}
+
+          {(session ?? user) && (
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              onClick={handleLogout}
+            >
+              Log out of this account
+            </Button>
+          )}
         </div>
 
         <p className="mt-6 text-xs text-zinc-400">
@@ -97,7 +120,7 @@ function VerifyEmailContent() {
           </Link>
         </p>
       </Card>
-    </div>
+    </AuthShell>
   )
 }
 

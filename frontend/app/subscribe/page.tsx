@@ -9,6 +9,8 @@ import { OnboardingGuard } from "@/components/auth/OnboardingGuard"
 import { PlanCard } from "@/components/onboarding/PlanCard"
 import { BillingToggle } from "@/components/subscription/BillingToggle"
 import { Button } from "@/components/ui/button"
+import { Card } from "@/components/ui/card"
+import { AuthShell } from "@/components/auth/AuthShell"
 import {
   createCheckoutSession,
   createPortalSession,
@@ -68,7 +70,8 @@ function StepIndicator({ current, labels }: { current: number; labels: string[] 
 
 function SubscribePageContent() {
   const router = useRouter()
-  const { session } = useAuth()
+  const { session, activeMembership } = useAuth()
+  const isOwner = activeMembership?.role === "company_owner"
   const [status, setStatus] = useState<string | null>(null)
   const [subscription, setSubscription] = useState<SubscriptionResponse | null>(null)
   const [loading, setLoading] = useState(false)
@@ -129,18 +132,21 @@ function SubscribePageContent() {
   const currentTierIndex = tierIndexFromPlanDisplayName(subscription?.plan_display_name)
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 px-4 py-12">
+    <AuthShell>
       <div className={`w-full ${isLapsed ? "max-w-lg" : "max-w-6xl"}`}>
-        {/* Brand header */}
-        <div className="mb-8 text-center">
-          <h1 className="text-2xl font-bold text-zinc-900">Venue Voice</h1>
-          <p className="mt-1 text-sm text-zinc-500">Let&apos;s get your account set up</p>
-        </div>
-
-        <div className="rounded-2xl border border-zinc-200 bg-white p-8 shadow-sm">
+        <Card className="p-8">
           <StepIndicator current={2} labels={STEP_LABELS} />
 
-          {isLapsed ? (
+          {!isOwner ? (
+            <div className="py-6 text-center">
+              <p className="text-sm font-medium text-zinc-700">
+                Only the company owner can manage billing.
+              </p>
+              <p className="mt-1 text-sm text-zinc-500">
+                Contact your company owner to restore access.
+              </p>
+            </div>
+          ) : isLapsed ? (
             <div>
               <div className="mb-6 text-center">
                 <h2 className="text-xl font-semibold text-zinc-900">Reactivate your subscription</h2>
@@ -213,9 +219,9 @@ function SubscribePageContent() {
               )}
             </div>
           )}
-        </div>
+        </Card>
       </div>
-    </div>
+    </AuthShell>
   )
 }
 

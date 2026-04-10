@@ -46,7 +46,7 @@ def stripe_reconciliation_job() -> None:
         logger.info("Stripe reconciliation job starting")
 
         # Page through all subscriptions in Stripe (limit 100 per page)
-        params: dict = {"limit": 100, "expand": ["data.customer"]}
+        params: dict = {"limit": 100, "expand": ["data.customer", "data.items.data.price"]}
         has_more = True
         starting_after: str | None = None
 

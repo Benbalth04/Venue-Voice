@@ -1,0 +1,23 @@
+# Dev API gateway (HTTP only). docker-compose publishes host port CADDY_PUBLISH_80 (default 5000) to :80.
+#
+# Blue/green: change backend_blue to backend_green in reverse_proxy, then:
+#   docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile
+#
+:80 {
+	request_body {
+		max_size 30MB
+	}
+
+	header {
+		X-Frame-Options DENY
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+
+	reverse_proxy backend_blue:5000 {
+		transport http {
+			dial_timeout 10s
+			read_timeout 60s
+		}
+	}
+}

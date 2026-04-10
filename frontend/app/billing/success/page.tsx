@@ -6,7 +6,9 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/contexts/AuthContext"
 import { AuthGuard } from "@/components/auth/AuthGuard"
 import { Button } from "@/components/ui/button"
+import { Card } from "@/components/ui/card"
 import { extractErrorMessage, verifyCheckoutSession } from "@/lib/api/client"
+import { AuthShell } from "@/components/auth/AuthShell"
 
 const COUNTDOWN_SECONDS = 5
 
@@ -98,8 +100,8 @@ function BillingSuccessContent() {
 
   if (phase === "verifying") {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-zinc-50 px-4">
-        <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-10 shadow-sm text-center">
+      <AuthShell>
+        <Card className="w-full max-w-md p-10 text-center">
           <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-violet-100">
             <svg className="h-8 w-8 animate-spin text-violet-700" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
@@ -116,15 +118,15 @@ function BillingSuccessContent() {
           <p className="mt-2 text-sm text-zinc-500">
             {isUpgradeFlow ? "Hang tight — this only takes a moment." : "This only takes a moment."}
           </p>
-        </div>
-      </div>
+        </Card>
+      </AuthShell>
     )
   }
 
   if (phase === "error") {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-zinc-50 px-4">
-        <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-10 shadow-sm text-center">
+      <AuthShell>
+        <Card className="w-full max-w-md p-10 text-center">
           <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-amber-100">
             <svg className="h-8 w-8 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path
@@ -152,14 +154,14 @@ function BillingSuccessContent() {
               Go to dashboard
             </Link>
           </div>
-        </div>
-      </div>
+        </Card>
+      </AuthShell>
     )
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 px-4">
-      <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-10 shadow-sm text-center">
+    <AuthShell>
+      <Card className="w-full max-w-md p-10 text-center">
         <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
           <svg className="h-8 w-8 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
@@ -198,19 +200,20 @@ function BillingSuccessContent() {
         <p className="mt-6 text-xs text-zinc-400">
           You will be redirected to your dashboard automatically.
         </p>
-      </div>
-    </div>
+      </Card>
+    </AuthShell>
   )
 }
 
+/** Stripe return URL after checkout. Crisp chat is enabled by `<CrispChat />` inside `AuthGuard`. */
 export default function BillingSuccessPage() {
   return (
     <AuthGuard>
       <Suspense
         fallback={
-          <div className="flex min-h-screen items-center justify-center bg-zinc-50">
-            Loading...
-          </div>
+          <AuthShell>
+            <p className="text-sm text-zinc-500">Loading…</p>
+          </AuthShell>
         }
       >
         <BillingSuccessContent />

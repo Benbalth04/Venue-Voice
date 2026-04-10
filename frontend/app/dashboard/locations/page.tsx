@@ -8,6 +8,7 @@ import { DropdownSelect } from "@/components/ui/DropdownSelect"
 import { DataTable, type DataTableColumn } from "@/components/ui/DataTable"
 import { LoadingBlock } from "@/components/ui/LoadingSpinner"
 import { useConfirm } from "@/components/ui/ConfirmDialog"
+import { useQRSubmissionBlocked } from "@/components/layout/QRSubmissionBlockedContext"
 import { supabase } from "@/lib/supabase/client"
 import {
   createLocation,
@@ -199,6 +200,7 @@ function LocationModal({
 
 export default function LocationsPage() {
   const { confirm, ConfirmDialogRender } = useConfirm()
+  const { refreshSubmissionBlockedQrCount } = useQRSubmissionBlocked()
   const [locations, setLocations] = useState<LocationResponse[]>([])
   const [notificationGroups, setNotificationGroups] = useState<NotificationGroupResponse[]>([])
   const [loading, setLoading] = useState(true)
@@ -350,7 +352,7 @@ export default function LocationsPage() {
     if (loc.is_active) {
       const ok = await confirm({
         title: "Deactivate location",
-        message: "This will deactivate all associated survey assignments. Continue?",
+        message: "This will deactivate all associated QR codes. Continue?",
         confirmLabel: "Deactivate",
         cancelLabel: "Cancel",
         variant: "danger",
@@ -362,6 +364,7 @@ export default function LocationsPage() {
     try {
       const updated = await updateLocation(token, loc.id, { is_active: !loc.is_active, updated_at: loc.updated_at })
       setLocations((prev) => prev.map((l) => (l.id === updated.id ? updated : l)))
+      void refreshSubmissionBlockedQrCount()
     } catch (err) {
       if (isStaleObjectError(err)) {
         await load()

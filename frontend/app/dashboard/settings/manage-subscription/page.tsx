@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
 import { useAuth } from "@/contexts/AuthContext"
 import { BillingToggle } from "@/components/subscription/BillingToggle"
 import { Button } from "@/components/ui/button"
@@ -8,6 +9,7 @@ import {
   createPortalSession,
   extractErrorMessage,
   fetchSubscription,
+  syncSubscription,
   type SubscriptionResponse,
 } from "@/lib/api/client"
 import {
@@ -63,6 +65,7 @@ interface ManagePlanCardProps {
   upgradeOrSwitchLabel: string
   portalLoading: boolean
   onOpenPortal: () => void
+  isOwner: boolean
 }
 
 function ManagePlanCard({
@@ -78,6 +81,7 @@ function ManagePlanCard({
   upgradeOrSwitchLabel,
   portalLoading,
   onOpenPortal,
+  isOwner,
 }: ManagePlanCardProps) {
   const borderClass = popular
     ? "border-2 border-violet-600 shadow-md ring-4 ring-violet-100"
@@ -133,23 +137,19 @@ function ManagePlanCard({
         ))}
       </ul>
 
-      <div className="mt-6 space-y-2">
-        {isBelowCurrentTier ? (
-          <>
+      {isOwner && !isBelowCurrentTier && (
+        <div className="mt-6 space-y-2">
+          {isCurrent ? (
             <Button variant="outline" className="w-full" onClick={onOpenPortal} disabled={portalLoading}>
-              {portalLoading ? "Redirecting…" : "Open portal"}
+              {portalLoading ? "Redirecting…" : "Manage subscription"}
             </Button>
-          </>
-        ) : isCurrent ? (
-          <Button variant="outline" className="w-full" onClick={onOpenPortal} disabled={portalLoading}>
-            {portalLoading ? "Redirecting…" : "Manage subscription"}
-          </Button>
-        ) : (
-          <Button className="w-full" onClick={onOpenPortal} disabled={portalLoading}>
-            {portalLoading ? "Redirecting…" : upgradeOrSwitchLabel}
-          </Button>
-        )}
-      </div>
+          ) : (
+            <Button className="w-full" onClick={onOpenPortal} disabled={portalLoading}>
+              {portalLoading ? "Redirecting…" : upgradeOrSwitchLabel}
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -159,13 +159,18 @@ function ManagePlanCard({
 // ---------------------------------------------------------------------------
 
 export default function ManageSubscriptionPage() {
-  const { session, user } = useAuth()
+  const router = useRouter()
+  const { session, user, activeMembership } = useAuth()
+  const isOwner = activeMembership?.role === "company_owner"
   const userTimeZone = user?.timezone ?? DEFAULT_USER_TIMEZONE
   const [sub, setSub] = useState<SubscriptionResponse | null>(null)
   const [pageLoading, setPageLoading] = useState(true)
   const [billing, setBilling] = useState<BillingInterval>("monthly")
   const [portalLoading, setPortalLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [syncLoading, setSyncLoading] = useState(false)
+  const [syncMessage, setSyncMessage] = useState<string | null>(null)
+  const [syncIsError, setSyncIsError] = useState(false)
 
   const loadSubscription = useCallback(async () => {
     if (!session?.access_token) return
@@ -199,6 +204,30 @@ export default function ManageSubscriptionPage() {
     }
   }
 
+  async function handleSyncCheck() {
+    if (!session?.access_token) return
+    setSyncLoading(true)
+    setSyncMessage(null)
+    setSyncIsError(false)
+    try {
+      const result = await syncSubscription(session.access_token)
+      if (!result.sync_successful) {
+        setSyncMessage("We couldn't reach Stripe right now. Please wait a moment and try again.")
+        setSyncIsError(false)
+      } else if (result.is_active) {
+        router.replace("/dashboard")
+      } else {
+        setSyncMessage("Subscription still not active. If you believe this is an error, please contact support.")
+        setSyncIsError(false)
+      }
+    } catch (err) {
+      setSyncMessage(extractErrorMessage(err, "Unable to check subscription status. Please try again."))
+      setSyncIsError(true)
+    } finally {
+      setSyncLoading(false)
+    }
+  }
+
   const currentTierIndex = tierIndexFromPlanDisplayName(sub?.plan_display_name ?? null)
   const subscribedBilling: BillingInterval =
     sub?.billing_interval === "yearly" ? "yearly" : "monthly"
@@ -212,10 +241,18 @@ export default function ManageSubscriptionPage() {
             View your current plan and make changes via the billing portal.
           </p>
         </div>
-        <Button variant="outline" onClick={handleOpenPortal} disabled={portalLoading} className="shrink-0">
-          {portalLoading ? "Redirecting…" : "Manage payment methods & invoices"}
-        </Button>
+        {isOwner && (
+          <Button variant="outline" onClick={handleOpenPortal} disabled={portalLoading} className="shrink-0">
+            {portalLoading ? "Redirecting…" : "Manage payment methods & invoices"}
+          </Button>
+        )}
       </div>
+
+      {!isOwner && (
+        <div className="mb-5 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-600">
+          Only the company owner can manage billing.
+        </div>
+      )}
 
       {sub?.cancel_at_period_end && (
         <div className="mb-5 flex items-center justify-between gap-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
@@ -240,6 +277,24 @@ export default function ManageSubscriptionPage() {
       {error && (
         <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
+        </div>
+      )}
+
+      {isOwner && (
+        <div className="mb-5">
+          <Button
+            variant="outline"
+            onClick={handleSyncCheck}
+            disabled={syncLoading}
+            className="text-sm"
+          >
+            {syncLoading ? "Checking…" : "Already paid? Check subscription status"}
+          </Button>
+          {syncMessage && (
+            <p className={`mt-2 text-sm ${syncIsError ? "text-red-600" : "text-zinc-500"}`}>
+              {syncMessage}
+            </p>
+          )}
         </div>
       )}
 
@@ -287,6 +342,7 @@ export default function ManageSubscriptionPage() {
                   upgradeOrSwitchLabel={upgradeOrSwitchLabel}
                   portalLoading={portalLoading}
                   onOpenPortal={handleOpenPortal}
+                  isOwner={isOwner}
                 />
               )
             })}

@@ -35,3 +35,9 @@ body {
 html {
   scroll-behavior: smooth;
 }
+
+/* Crisp chat launcher + panel above dashboard guard overlay (z-50) */
+.crisp-client,
+#crisp-chatbox {
+  z-index: 2147483000 !important;
+}

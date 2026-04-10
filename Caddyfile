@@ -1,3 +1,32 @@
+# Production Caddy. Set API_HOST in the caddy service environment (e.g. .env.production).
+#
+# Blue/green: change backend_blue to backend_green in reverse_proxy below, then:
+#   docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile
+#
+{$API_HOST:api.example.com} {
+	request_body {
+		max_size 15MB
+	}
+
+	header {
+		X-Frame-Options DENY
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), accelerometer=(), gyroscope=(), magnetometer=()"
+		X-Permitted-Cross-Domain-Policies "none"
+	}
+
+	reverse_proxy backend_blue:5000 {
+		transport http {
+			dial_timeout 10s
+			read_timeout 60s
+			write_timeout 60s
+		}
+	}
+}
+
 status.venuevoice.com.au {
-    reverse_proxy uptime_kuma:3001
+	reverse_proxy uptime_kuma:3001
 }

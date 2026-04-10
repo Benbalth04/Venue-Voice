@@ -10,23 +10,26 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from ..auth.jwt import get_current_user
+from ..auth.membership import get_company_from_membership, get_current_membership, require_company_admin
 from ..auth.plan_enforcement import require_feature
 from ..auth.subscription import require_active_subscription
 from ..auth.user_timezone import get_user_zoneinfo
+from ..auth.viewer_scoping import assert_survey_access
 from ..db.postgres import get_db_connection
-from ..models.postgres_model import User as UserORM
+from ..models.postgres_model import Membership as MembershipORM, User as UserORM
 from ..schemas.pydantic_model import (
     AnalyticsFiltersResponse,
     AnalyticsResponseDetail,
     AnalyticsResponseList,
     DeleteResponseRequest,
+    NewResponsesResponse,
     PhotoSignedUrlResponse,
 )
 from ..services.analytics_service import (
     delete_response,
     get_analytics_filters,
     get_analytics_responses,
+    get_new_responses_since,
     get_response_detail,
 )
 from ..core.errors.app_error import AppError
@@ -38,6 +41,7 @@ from ..models.postgres_model import (
     SurveyResponse as SurveyResponseORM,
     SurveyResponsePhoto as SurveyResponsePhotoORM,
     SurveySession as SurveySessionORM,
+    SurveyVersion as SurveyVersionORM,
 )
 
 router = APIRouter(dependencies=[Depends(require_active_subscription)])
@@ -74,14 +78,14 @@ def _shared_filter_params(
 # ------------------------------------------------------------------
 @router.get("/analytics/unread-count")
 def unread_response_count(
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(get_current_membership),
     db: Session = Depends(get_db_connection),
 ):
     """Return unread completed survey response count for the current user."""
     from ..services.analytics_service import get_unread_response_count
 
     try:
-        return {"count": get_unread_response_count(user_id=current_user.id, db=db)}
+        return {"count": get_unread_response_count(membership=membership, db=db)}
     except Exception:
         return {"count": 0}
 
@@ -91,15 +95,46 @@ def unread_response_count(
 # ------------------------------------------------------------------
 @router.get("/analytics/has-unread")
 def has_unread_reviews(
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(get_current_membership),
     db: Session = Depends(get_db_connection),
 ):
     """Lightweight endpoint: returns true if user has any unread survey responses."""
     from ..services.analytics_service import has_unread_responses
     try:
-        return {"has_unread": has_unread_responses(user_id=current_user.id, db=db)}
+        return {"has_unread": has_unread_responses(membership=membership, db=db)}
     except Exception:
         return {"has_unread": False}
+
+
+# ------------------------------------------------------------------
+# GET /analytics/new-responses
+# ------------------------------------------------------------------
+@router.get("/analytics/new-responses", response_model=NewResponsesResponse)
+def new_responses_since(
+    since: str = Query(..., description="ISO 8601 datetime; responses submitted after this timestamp"),
+    membership: MembershipORM = Depends(get_current_membership),
+    db: Session = Depends(get_db_connection),
+):
+    """Return responses submitted since `since` for toast notifications. Capped at 10 min lookback."""
+    from datetime import datetime as dt
+
+    try:
+        parsed_since = dt.fromisoformat(since.replace("Z", "+00:00"))
+        # Strip timezone info for naive UTC comparison (DB stores naive UTC datetimes)
+        if parsed_since.tzinfo is not None:
+            from datetime import timezone
+            parsed_since = parsed_since.astimezone(timezone.utc).replace(tzinfo=None)
+    except (ValueError, TypeError) as exc:
+        raise ValidationError(
+            code="INVALID_SINCE",
+            message="'since' must be a valid ISO 8601 datetime string",
+        ) from exc
+
+    try:
+        responses = get_new_responses_since(membership=membership, db=db, since=parsed_since)
+        return {"responses": responses}
+    except Exception:
+        return {"responses": []}
 
 
 # ------------------------------------------------------------------
@@ -107,12 +142,12 @@ def has_unread_reviews(
 # ------------------------------------------------------------------
 @router.get("/analytics/filters", response_model=AnalyticsFiltersResponse)
 def analytics_filters(
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(get_current_membership),
     db: Session = Depends(get_db_connection),
 ):
     """Return available filter values for surveys, QR codes, and locations."""
     try:
-        return get_analytics_filters(user_id=current_user.id, db=db)
+        return get_analytics_filters(membership=membership, db=db)
     except AppError:
         raise
     except Exception:
@@ -130,14 +165,14 @@ def analytics_filters(
 @router.get("/analytics/responses", response_model=AnalyticsResponseList)
 def analytics_responses(
     params: dict = Depends(_shared_filter_params),
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(get_current_membership),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
     """Paginated, filterable, sortable list of survey sessions."""
     try:
         return get_analytics_responses(
-            user_id=current_user.id, db=db, user_tz=user_tz, **params
+            membership=membership, db=db, user_tz=user_tz, **params
         )
     except AppError:
         raise
@@ -156,7 +191,7 @@ def analytics_responses(
 @router.get("/analytics/response/{response_id}", response_model=AnalyticsResponseDetail)
 def analytics_response_detail(
     response_id: str,
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(get_current_membership),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
@@ -169,7 +204,7 @@ def analytics_response_detail(
     try:
         return get_response_detail(
             response_id=rid,
-            user_id=current_user.id,
+            membership=membership,
             db=db,
             user_tz=user_tz,
         )
@@ -185,17 +220,16 @@ def analytics_response_detail(
 
 
 # ------------------------------------------------------------------
-# DELETE /analytics/response/{response_id}
+# DELETE /analytics/response/{response_id}  (admin only)
 # ------------------------------------------------------------------
 @router.delete("/analytics/response/{response_id}", status_code=204)
 def analytics_delete_response(
     response_id: str,
     payload: DeleteResponseRequest,
-    current_user: UserORM = Depends(get_current_user),
-    _: None = Depends(require_active_subscription),
+    membership: MembershipORM = Depends(require_company_admin),
     db: Session = Depends(get_db_connection),
 ):
-    """Soft-delete a survey response (and all child records) by ID."""
+    """Soft-delete a survey response (and all child records) by ID. Admin only."""
     try:
         rid = uuid.UUID(response_id)
     except ValueError:
@@ -205,7 +239,7 @@ def analytics_delete_response(
         delete_response(
             db=db,
             response_id=rid,
-            user_id=current_user.id,
+            membership=membership,
             confirmation=payload.confirmation,
         )
     except AppError:
@@ -230,7 +264,7 @@ def analytics_delete_response(
 def analytics_response_photo_signed_url(
     response_id: str,
     question_id: str,
-    current_user: UserORM = Depends(get_current_user),
+    membership: MembershipORM = Depends(get_current_membership),
     db: Session = Depends(get_db_connection),
     _photo_feature: None = Depends(require_feature("photo_feedback")),
 ):
@@ -245,17 +279,7 @@ def analytics_response_photo_signed_url(
     except ValueError:
         raise ValidationError(code="INVALID_QUESTION_ID", message="Invalid question_id UUID")
 
-    # Verify the response belongs to the current user's company
-    company = (
-        db.query(CompanyORM)
-        .filter(
-            CompanyORM.owner_user_id == current_user.id,
-            CompanyORM.deleted_at.is_(None),
-        )
-        .first()
-    )
-    if not company:
-        raise PermissionError(code="NO_COMPANY_FOR_USER", message="No company associated with this user")
+    company = get_company_from_membership(membership, db)
 
     resp = (
         db.query(SurveyResponseORM)
@@ -270,6 +294,18 @@ def analytics_response_photo_signed_url(
     )
     if not resp:
         raise NotFoundError(code="RESPONSE_NOT_FOUND", message="Response not found")
+
+    if membership.role == "viewer":
+        sv = (
+            db.query(SurveyVersionORM)
+            .filter(
+                SurveyVersionORM.id == resp.survey_version_id,
+                SurveyVersionORM.deleted_at.is_(None),
+            )
+            .first()
+        )
+        if sv:
+            assert_survey_access(membership, sv.survey_id, db)
 
     photo = (
         db.query(SurveyResponsePhotoORM)

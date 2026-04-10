@@ -17,9 +17,9 @@ from ...core.datetime_user_tz import (
 from ...core.timezone_australia import effective_zoneinfo_for_stored_timezone
 from ...models.email_event import EmailEvent
 from ...auth.plan_enforcement import get_over_limit_status
-from ...models.postgres_model import Company, Subscription, User
+from ...models.postgres_model import Company, Membership, Subscription, User
 from ...services.plan_policy import get_policy_for_subscription
-from ...services.stripe_service import get_subscription
+from ...services.stripe_service import get_company_subscription
 from ...models.stripe_webhook_event import StripeWebhookEvent
 from ..email.constants import EMAIL_CATEGORY_STRIPE_BILLING
 from .stripe_billing_display import coerce_stripe_unix_timestamp
@@ -153,8 +153,8 @@ def handle_stripe_webhook_event(db: Session, event: dict[str, Any]) -> None:
         elif etype == "charge.refunded":
             invoice_dict = None
 
-    except stripe.StripeError as exc:
-        logger.error("Stripe API error building email context type=%s: %s", etype, exc)
+    except stripe.StripeError:
+        logger.exception("Stripe API error building email context type=%s", etype)
     except Exception:
         logger.exception("Unexpected error building Stripe email context type=%s", etype)
 
@@ -189,7 +189,7 @@ def handle_stripe_webhook_event(db: Session, event: dict[str, Any]) -> None:
     # No data is modified — this is purely a diagnostic log.
     if any(j.template == "plan_downgraded" for j in jobs):
         try:
-            sub_orm = get_subscription(user, db)
+            sub_orm = get_company_subscription(company, db)
             policy = get_policy_for_subscription(sub_orm)
             new_plan = (sub_orm.plan_display_name or "unknown").lower() if sub_orm else "unknown"
             over_limit = get_over_limit_status(db, company.id, policy)
@@ -282,13 +282,17 @@ def _resolve_user_and_company(
     sub = db.query(Subscription).filter(Subscription.stripe_customer_id == stripe_customer_id).first()
     if not sub:
         return None, None
-    user = db.query(User).filter(User.id == sub.user_id).first()
-    if not user:
+    company = db.query(Company).filter(Company.id == sub.company_id, Company.deleted_at.is_(None)).first()
+    if not company:
         return None, None
-    company = (
-        db.query(Company)
-        .filter(Company.owner_user_id == user.id, Company.deleted_at.is_(None))
+    owner_membership = (
+        db.query(Membership)
+        .filter(Membership.company_id == company.id, Membership.role == "company_owner")
         .first()
+    )
+    user = (
+        db.query(User).filter(User.id == owner_membership.user_id).first()
+        if owner_membership else None
     )
     return user, company
 
@@ -321,6 +325,7 @@ def apply_user_timezone_to_billing_context(
     merged: dict[str, Any],
     *,
     template: str,
+    company: Company | None = None,
 ) -> None:
     """Convert ``*_unix`` fields from ``stripe_event_mapper`` into localized ``*_display`` strings.
 
@@ -360,7 +365,11 @@ def apply_user_timezone_to_billing_context(
         raw = merged.pop("access_until_unix", None)
         unix = coerce_stripe_unix_timestamp(raw)
         if unix is None:
-            sub = db.query(Subscription).filter(Subscription.user_id == user.id).first()
+            sub = (
+                db.query(Subscription).filter(Subscription.company_id == company.id).first()
+                if company is not None
+                else None
+            )
             if sub and sub.current_period_end is not None:
                 aware = assume_utc(sub.current_period_end)
                 if aware is not None:
@@ -381,7 +390,7 @@ def _enqueue_billing_email(
 ) -> None:
     idempotency_key = f"{stripe_event_id}:{job.template}"
     merged = {**base_ctx, **job.context}
-    apply_user_timezone_to_billing_context(db, user, merged, template=job.template)
+    apply_user_timezone_to_billing_context(db, user, merged, template=job.template, company=company)
     row = EmailEvent(
         company_id=company.id,
         flow_run_id=None,

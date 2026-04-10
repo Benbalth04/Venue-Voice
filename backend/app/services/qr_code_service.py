@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import io
 import logging
-import os
 import uuid
 from urllib.parse import urlparse
 
@@ -20,6 +19,7 @@ from ..integrations.supabase_storage import (
     get_supabase_service_client,
     upload_qr_asset,
 )
+from ..core.config import settings
 from ..core.errors.exceptions import ExternalAPIError, ValidationError
 
 logger = logging.getLogger(__name__)
@@ -128,11 +128,12 @@ def upload_qr_assets_to_supabase(
 
 
 def default_redirect_url_for_qr_id(qr_id: uuid.UUID) -> str:
-    origin = os.getenv("FRONTEND_ORIGIN", "").rstrip("/")
+    """Public scan URL for a QR id; uses APP_ORIGIN (same as emails, survey redirects)."""
+    origin = settings.app_origin.rstrip("/")
     if not origin:
         raise ExternalAPIError(
             service_name="config",
-            error_message="FRONTEND_ORIGIN is not configured",
+            error_message="APP_ORIGIN is not configured",
             code="SERVER_MISCONFIGURATION",
             status_code=503,
         )

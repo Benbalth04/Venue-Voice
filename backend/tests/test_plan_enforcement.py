@@ -363,17 +363,17 @@ class TestAssertCanActivateLocation:
     @patch("app.auth.plan_enforcement.acquire_company_resource_lock")
     @patch("app.auth.plan_enforcement.count_locations", return_value=1)
     @patch("app.auth.plan_enforcement.get_policy_for_subscription")
-    @patch("app.auth.plan_enforcement.get_subscription")
+    @patch("app.auth.plan_enforcement.get_company_subscription")
     def test_raises_when_at_active_cap(
         self, mock_get_sub, mock_get_policy, _mock_count, _mock_lock
     ):
         mock_get_sub.return_value = _make_sub("Starter")
         mock_get_policy.return_value = SimpleNamespace(max_locations=1)
-        user = SimpleNamespace()
+        company = SimpleNamespace(id=uuid.uuid4())
         db = MagicMock()
         company_id = uuid.uuid4()
         with pytest.raises(SubscriptionLimitError) as exc_info:
-            assert_can_activate_location(db, company_id, user)
+            assert_can_activate_location(db, company_id, company)
         assert exc_info.value.details["resource"] == "locations"
         assert exc_info.value.details["limit"] == 1
         assert exc_info.value.details["current"] == 1
@@ -381,27 +381,27 @@ class TestAssertCanActivateLocation:
     @patch("app.auth.plan_enforcement.acquire_company_resource_lock")
     @patch("app.auth.plan_enforcement.count_locations", return_value=0)
     @patch("app.auth.plan_enforcement.get_policy_for_subscription")
-    @patch("app.auth.plan_enforcement.get_subscription")
+    @patch("app.auth.plan_enforcement.get_company_subscription")
     def test_allows_when_below_cap(
         self, mock_get_sub, mock_get_policy, _mock_count, _mock_lock
     ):
         mock_get_sub.return_value = _make_sub("Starter")
         mock_get_policy.return_value = SimpleNamespace(max_locations=1)
-        user = SimpleNamespace()
+        company = SimpleNamespace(id=uuid.uuid4())
         db = MagicMock()
-        assert_can_activate_location(db, uuid.uuid4(), user)  # no raise
+        assert_can_activate_location(db, uuid.uuid4(), company)  # no raise
 
     @patch("app.auth.plan_enforcement.acquire_company_resource_lock")
     @patch("app.auth.plan_enforcement.count_locations")
     @patch("app.auth.plan_enforcement.get_policy_for_subscription")
-    @patch("app.auth.plan_enforcement.get_subscription")
+    @patch("app.auth.plan_enforcement.get_company_subscription")
     def test_unlimited_skips_count_and_lock(
         self, mock_get_sub, mock_get_policy, mock_count, mock_lock
     ):
         mock_get_sub.return_value = _make_sub("Pro")
         mock_get_policy.return_value = SimpleNamespace(max_locations=-1)
-        user = SimpleNamespace()
+        company = SimpleNamespace(id=uuid.uuid4())
         db = MagicMock()
-        assert_can_activate_location(db, uuid.uuid4(), user)
+        assert_can_activate_location(db, uuid.uuid4(), company)
         mock_count.assert_not_called()
         mock_lock.assert_not_called()

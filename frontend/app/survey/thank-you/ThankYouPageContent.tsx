@@ -12,6 +12,7 @@ export default function ThankYouPageContent() {
 
   const [message, setMessage] = useState("Thank you for your feedback!")
   const [companyName, setCompanyName] = useState<string | null>(null)
+  const [primaryColor, setPrimaryColor] = useState("#7C3AED")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -30,6 +31,7 @@ export default function ThankYouPageContent() {
         if (!cancelled) {
           setMessage(data.thank_you_message)
           setCompanyName(data.company_name)
+          if (data.primary_color) setPrimaryColor(data.primary_color)
         }
       } catch {
         if (!cancelled) {
@@ -46,7 +48,7 @@ export default function ThankYouPageContent() {
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-zinc-50">
-        <Loader2 className="h-8 w-8 animate-spin text-violet-600" />
+        <Loader2 className="h-8 w-8 animate-spin text-zinc-400" />
       </div>
     )
   }
@@ -63,7 +65,7 @@ export default function ThankYouPageContent() {
     <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-50 px-4">
       <div
         className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-8 text-center shadow-lg"
-        style={{ borderTopWidth: "4px", borderTopColor: "#7C3AED" }}
+        style={{ borderTopWidth: "4px", borderTopColor: primaryColor }}
       >
         <CheckCircle2 className="mx-auto h-16 w-16 text-emerald-500" />
         <h1 className="mt-4 text-xl font-semibold text-zinc-900">Thank you</h1>

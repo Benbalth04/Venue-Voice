@@ -47,6 +47,12 @@ class SubscriptionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class SyncSubscriptionResponse(SubscriptionResponse):
+    """Extends SubscriptionResponse with a flag indicating whether Stripe was reachable."""
+
+    sync_successful: bool
+
+
 class SubscriptionWarning(BaseModel):
     """A single over-limit or feature-downgrade warning for the account."""
 
@@ -68,6 +74,8 @@ class SubscriptionStatusResponse(BaseModel):
     plan: str | None
     over_limit: dict[str, bool]  # {"locations": bool, "active_surveys": bool, "active_flows": bool}
     warnings: list[SubscriptionWarning]
+    can_invite_users: bool  # False when at or over the plan's member limit
+    max_company_members: int  # -1 = unlimited
 
 
 class CheckoutSessionResponse(BaseModel):
@@ -97,6 +105,52 @@ class DeleteResponseRequest(BaseModel):
     confirmation: str
 
 
+class MembershipSummary(BaseModel):
+    membership_id: uuid.UUID
+    company_id: uuid.UUID
+    company_name: str
+    role: str  # 'company_owner' | 'company_admin' | 'viewer'
+    all_surveys: bool
+    all_locations: bool
+
+
+class CompanyMemberResponse(BaseModel):
+    membership_id: uuid.UUID
+    user_id: uuid.UUID
+    email: str
+    first_name: str
+    last_name: str
+    role: str
+    all_surveys: bool
+    all_locations: bool
+    invited_by_name: str | None = None
+    timezone: str
+    last_login_at: datetime | None = None
+    created_at: datetime
+
+
+class InviteUserRequest(BaseModel):
+    email: EmailStr
+    first_name: str
+    last_name: str
+    role: str = "viewer"  # 'viewer' | 'company_admin'; only company_owner may invite admins
+
+
+class SetViewerPermissionsRequest(BaseModel):
+    all_surveys: bool
+    all_locations: bool
+    survey_ids: list[uuid.UUID] = []
+    location_ids: list[uuid.UUID] = []
+
+
+class ViewerPermissionsResponse(BaseModel):
+    membership_id: uuid.UUID
+    all_surveys: bool
+    all_locations: bool
+    survey_ids: list[uuid.UUID]
+    location_ids: list[uuid.UUID]
+
+
 class User(BaseModel):
     id: uuid.UUID
     email: str
@@ -112,11 +166,13 @@ class UserResponse(BaseModel):
     first_name: str
     last_name: str
     onboarding_complete: bool
+    invite_pending: bool = False
     email_verified: bool
     timezone: str
     subscription_plan_name: str | None = None
     company_name: str | None = None
     user_display_name: str | None = None
+    memberships: list[MembershipSummary] = []
 
 
 class SetupAccountRequest(BaseModel):
@@ -135,10 +191,16 @@ class SetupAccountRequest(BaseModel):
 class UpdateUserTimezoneRequest(BaseModel):
     timezone: str
 
+
+class CompleteInviteRequest(BaseModel):
+    first_name: str
+    last_name: str
+    timezone: str
+
+
 class Company(BaseModel):
     id: uuid.UUID
     name: str
-    owner_user_id: uuid.UUID
     primary_industry: str | None = None
     company_size: str | None = None
     location_count: int | None = None
@@ -267,16 +329,21 @@ class LocationNotificationGroupUpdate(BaseModel):
 
 class QRCodeCreate(BaseModel):
     title: str
-    location_survey_id: uuid.UUID
+    location_id: uuid.UUID
+    survey_id: uuid.UUID
     redirect_url: str | None = Field(
         default=None,
-        description="URL encoded in the QR image. If omitted, defaults to {FRONTEND_ORIGIN}/r/{id}.",
+        description="URL encoded in the QR image. If omitted, defaults to {APP_ORIGIN}/r/{id}.",
     )
     color: str = Field(default="#000000", description="Hex color for QR modules, e.g. #000000.")
+
+
 class QRCodeUpdate(BaseModel):
     title: str | None = None
-    location_survey_id: uuid.UUID | None = None
+    location_id: uuid.UUID | None = None
+    survey_id: uuid.UUID | None = None
     is_active: bool | None = None
+    color: str | None = None
     updated_at: datetime
 
 
@@ -294,6 +361,9 @@ class QRCodeResponse(BaseModel):
     qr_status: str = Field(description="QR code only: active, inactive, or deleted.")
     location_survey_status: str = Field(
         description="Linked location–survey assignment: active, scheduled, inactive, or deleted.",
+    )
+    accepting_submissions_by_survey_and_location: bool = Field(
+        description="True when the linked survey is published (active, not deleted) and the location is active (not deleted).",
     )
     location_id: uuid.UUID
     location_name: str | None
@@ -344,6 +414,14 @@ class AuthResponse(BaseModel):
     access_token: str
     user: User
     company: Company | None = None
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ForgotPasswordResponse(BaseModel):
+    message: str
 
 
 # --------------------------------------------------
@@ -1406,3 +1484,14 @@ class EngagementBreakdownSeries(BaseModel):
 class EngagementBreakdownResponse(BaseModel):
     breakdown_by: Literal["location", "qr_code"]
     series: list[EngagementBreakdownSeries]
+
+
+class NewResponseNotification(BaseModel):
+    response_id: str
+    survey_name: str
+    location_name: str
+    submitted_at: datetime
+
+
+class NewResponsesResponse(BaseModel):
+    responses: list[NewResponseNotification]

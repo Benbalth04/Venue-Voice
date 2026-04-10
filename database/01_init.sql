@@ -12,6 +12,7 @@ CREATE TABLE users (
     first_name TEXT NOT NULL,
     last_name TEXT NOT NULL,
     onboarding_complete BOOLEAN DEFAULT FALSE NOT NULL,
+    invite_pending BOOLEAN DEFAULT FALSE NOT NULL,
     email_verified BOOLEAN DEFAULT FALSE NOT NULL,
     timezone TEXT NOT NULL DEFAULT 'Australia/Brisbane',
     created_at TIMESTAMP DEFAULT NOW(),
@@ -24,7 +25,6 @@ CREATE TABLE users (
 
 CREATE TABLE companies (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    owner_user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE SET NULL,
     name TEXT NOT NULL,
     primary_industry TEXT,
     company_size TEXT,
@@ -34,6 +34,65 @@ CREATE TABLE companies (
     created_at TIMESTAMP DEFAULT NOW(),
     deleted_at TIMESTAMP NULL
 );
+
+--------------------------------------------------
+-- MEMBERSHIPS
+--------------------------------------------------
+CREATE TABLE memberships (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK (role IN ('company_admin', 'company_owner', 'viewer')),
+    all_surveys BOOLEAN NOT NULL DEFAULT TRUE,
+    all_locations BOOLEAN NOT NULL DEFAULT TRUE,
+    invited_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMP NULL,
+    UNIQUE (company_id, user_id)
+);
+CREATE UNIQUE INDEX uq_memberships_one_admin
+    ON memberships (company_id)
+    WHERE role = 'company_admin';
+CREATE UNIQUE INDEX uq_memberships_one_owner
+    ON memberships (company_id)
+    WHERE role = 'company_owner';
+CREATE INDEX idx_memberships_user_id ON memberships (user_id);
+CREATE INDEX idx_memberships_company_id ON memberships (company_id);
+
+
+--------------------------------------------------
+-- SUBSCRIPTIONS
+--------------------------------------------------
+CREATE TABLE subscriptions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    company_id UUID NOT NULL UNIQUE REFERENCES companies(id) ON DELETE CASCADE,
+    stripe_customer_id TEXT NOT NULL UNIQUE,
+    stripe_subscription_id TEXT UNIQUE,
+    status TEXT NOT NULL DEFAULT 'trialing' CHECK (
+        status IN (
+            'trialing',
+            'active',
+            'pending_cancel',
+            'past_due',
+            'canceled',
+            'incomplete',
+            'incomplete_expired',
+            'unpaid'
+        )
+    ),
+    trial_end TIMESTAMP NULL,
+    current_period_end TIMESTAMP NULL,
+    plan_display_name TEXT NULL,
+    billing_interval TEXT NULL CHECK (billing_interval IN ('monthly', 'yearly')),
+    cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE,
+    price_id TEXT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX idx_subscriptions_company_id ON subscriptions(company_id);
+CREATE INDEX idx_subscriptions_stripe_customer_id ON subscriptions(stripe_customer_id);
+CREATE INDEX idx_subscriptions_stripe_subscription_id ON subscriptions(stripe_subscription_id);
 
 --------------------------------------------------
 -- LOCATIONS
@@ -70,6 +129,29 @@ CREATE TABLE surveys (
     deleted_at TIMESTAMP NULL,
     UNIQUE(company_id, name)
 );
+
+--------------------------------------------------
+-- VIEWER PERMISSIONS
+--------------------------------------------------
+CREATE TABLE viewer_permissions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    membership_id UUID NOT NULL REFERENCES memberships(id) ON DELETE CASCADE,
+    survey_id UUID REFERENCES surveys(id) ON DELETE CASCADE,
+    location_id UUID REFERENCES locations(id) ON DELETE CASCADE,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    CONSTRAINT exactly_one_scope CHECK (
+        (survey_id IS NOT NULL AND location_id IS NULL) OR
+        (survey_id IS NULL AND location_id IS NOT NULL)
+    )
+);
+CREATE UNIQUE INDEX uq_vp_membership_survey
+    ON viewer_permissions (membership_id, survey_id)
+    WHERE survey_id IS NOT NULL AND location_id IS NULL;
+CREATE UNIQUE INDEX uq_vp_membership_location
+    ON viewer_permissions (membership_id, location_id)
+    WHERE location_id IS NOT NULL AND survey_id IS NULL;
+CREATE INDEX idx_viewer_permissions_membership_id ON viewer_permissions (membership_id);
+
 
 --------------------------------------------------
 -- SURVEY VERSIONS
@@ -557,39 +639,18 @@ CREATE TABLE redirect_confirmations (
 CREATE INDEX idx_redirect_confirmations_response_id ON redirect_confirmations(survey_response_id);
 
 --------------------------------------------------
--- SUBSCRIPTIONS
+-- STRIPE WEBHOOKS
 --------------------------------------------------
-CREATE TABLE subscriptions (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-    stripe_customer_id TEXT NOT NULL UNIQUE,
-    stripe_subscription_id TEXT UNIQUE,
-    status TEXT NOT NULL DEFAULT 'trialing' CHECK (
-        status IN (
-            'trialing',
-            'active',
-            'pending_cancel',
-            'past_due',
-            'canceled',
-            'incomplete',
-            'incomplete_expired',
-            'unpaid'
-        )
-    ),
-    trial_end TIMESTAMP NULL,
-    current_period_end TIMESTAMP NULL,
-    plan_display_name TEXT NULL,
-    billing_interval TEXT NULL CHECK (billing_interval IN ('monthly', 'yearly')),
-    cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE,
-    price_id TEXT NULL,
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+CREATE TABLE IF NOT EXISTS stripe_webhook_events (
+    stripe_event_id TEXT PRIMARY KEY,
+    event_type TEXT NOT NULL,
+    received_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_subscriptions_user_id ON subscriptions(user_id);
-CREATE INDEX idx_subscriptions_stripe_customer_id ON subscriptions(stripe_customer_id);
-CREATE INDEX idx_subscriptions_stripe_subscription_id ON subscriptions(stripe_subscription_id);
 
+
+--------------------------------------------------
 -- Survey Dashboard performance indexes
+--------------------------------------------------
 CREATE INDEX IF NOT EXISTS idx_survey_responses_version_datetime
     ON survey_responses(survey_version_id, completion_datetime)
     WHERE deleted_at IS NULL;
@@ -613,15 +674,6 @@ CREATE INDEX IF NOT EXISTS idx_ai_analysis_response_question_nodeletion
     ON ai_analysis(survey_response_id, question_id)
     WHERE deleted_at IS NULL;
 
-
---------------------------------------------------
--- STRIPE WEBHOOKS
---------------------------------------------------
-CREATE TABLE IF NOT EXISTS stripe_webhook_events (
-    stripe_event_id TEXT PRIMARY KEY,
-    event_type TEXT NOT NULL,
-    received_at TIMESTAMP NOT NULL DEFAULT NOW()
-);
 
 
 --------------------------------------------------

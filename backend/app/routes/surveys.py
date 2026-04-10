@@ -4,20 +4,23 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.errors.exceptions import ConflictError, NotFoundError, PermissionError, StaleObjectError, SubscriptionFeatureError, SubscriptionLimitError, ValidationError, suggest_upgrade_plan
 from app.core.timezone_australia import effective_zoneinfo_for_stored_timezone
 
-from app.auth.jwt import get_current_user
+from app.auth.membership import get_company_from_membership, get_current_membership, require_company_admin
 from app.auth.plan_enforcement import acquire_company_resource_lock, count_active_surveys
 from app.auth.subscription import require_active_subscription
 from app.auth.user_timezone import format_dt_for_user
+from app.auth.viewer_scoping import apply_survey_filter, assert_survey_access, survey_ids_subquery
 from app.services.plan_policy import get_policy_for_subscription
-from app.services.stripe_service import get_subscription
+from app.services.stripe_service import get_company_subscription
 from app.db.postgres import get_db_connection
 from app.models.postgres_model import Survey as SurveyORM
 from app.models.postgres_model import User as UserORM
+from app.models.postgres_model import Membership as MembershipORM
 from ..models.postgres_model import Company as CompanyORM
 from app.models.postgres_model import Question as QuestionORM
 from app.models.postgres_model import QuestionType as QuestionTypeORM
@@ -202,21 +205,18 @@ def _sync_questions_from_schema(
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
-def _get_user_company(
-    current_user=Depends(get_current_user),
-    db: Session = Depends(get_db_connection),
-) -> CompanyORM:
-    company = (
-        db.query(CompanyORM)
-        .filter(
-            CompanyORM.owner_user_id == current_user.id,
-            CompanyORM.deleted_at.is_(None),
+def _require_draft_for_survey_rename(survey: SurveyORM) -> None:
+    """Survey titles may only be changed while the survey is still a draft."""
+    if survey.status != SurveyStatus.draft:
+        raise PermissionError(
+            code="SURVEY_RENAME_NOT_ALLOWED",
+            message="Only draft surveys can be renamed.",
         )
-        .first()
-    )
-    if not company:
-        raise NotFoundError(code="COMPANY_NOT_FOUND", message="Company not found for user")
-    return company
+
+
+def _get_user_company(membership: MembershipORM, db: Session) -> CompanyORM:
+    """Resolve company from membership. Replaces the old owner_user_id pattern."""
+    return get_company_from_membership(membership, db)
 
 
 # Photo question types that require a Growth or Pro plan.
@@ -273,11 +273,7 @@ def _to_survey_with_schema(
     )
 
 
-def _get_survey_or_404(survey_id: str, user: Any, db: Session, company_id = None) -> SurveyORM:
-
-    if company_id is None:
-        company_id = _get_user_company(user, db).id
-
+def _get_survey_or_404(survey_id: str, company_id: uuid.UUID, db: Session) -> SurveyORM:
     try:
         sid = uuid.UUID(survey_id)
     except ValueError:
@@ -346,7 +342,7 @@ def _get_latest_version_or_404(survey_id: uuid.UUID, db: Session) -> SurveyVersi
 # ------------------------------------------------------------------
 @router.get("/surveys/question-types", response_model=list[QuestionTypeResponse])
 def list_question_types(
-    current_user=Depends(get_current_user),
+    membership: MembershipORM = Depends(get_current_membership),
     db: Session = Depends(get_db_connection),
 ):
     """Return all question types from the question_types table."""
@@ -373,20 +369,22 @@ def list_question_types(
 @router.get("/surveys", response_model=list[SurveyListItem])
 def list_surveys(
     status: str | None = Query(None, description="Filter by status, e.g. 'active'"),
-    current_user=Depends(get_current_user),
+    membership: MembershipORM = Depends(get_current_membership),
     db: Session = Depends(get_db_connection),
 ):
     """List surveys. Optional ?status=active to filter to active surveys only (e.g. for distribution dropdown)."""
-    company = _get_user_company(current_user, db)
-    company_id = company.id
+    company = _get_user_company(membership, db)
+    survey_sq = survey_ids_subquery(membership, db)
+    current_user = db.query(UserORM).filter(UserORM.id == membership.user_id).first()
 
     q = (
         db.query(SurveyORM)
         .filter(
-            SurveyORM.company_id == company_id,
+            SurveyORM.company_id == company.id,
             SurveyORM.deleted_at.is_(None),
         )
     )
+    q = apply_survey_filter(q, survey_sq, SurveyORM.id)
     if status == "active":
         q = q.filter(SurveyORM.status == SurveyStatus.active)
     q = q.order_by(SurveyORM.updated_at.desc())
@@ -394,7 +392,7 @@ def list_surveys(
 
     result = []
     for s in surveys:
-        last_edited_by = _get_last_edited_by(s.id, s.latest_version, current_user.id, db)
+        last_edited_by = _get_last_edited_by(s.id, s.latest_version, membership.user_id, db)
         result.append(_survey_to_list_item(s, user=current_user, last_edited_by=last_edited_by))
     return result
 
@@ -405,11 +403,14 @@ def list_surveys(
 @router.get("/surveys/{survey_id}", response_model=SurveyListItem)
 def get_survey(
     survey_id: str,
-    current_user=Depends(get_current_user),
+    membership: MembershipORM = Depends(get_current_membership),
     db: Session = Depends(get_db_connection),
 ):
-    survey = _get_survey_or_404(survey_id, current_user, db)
-    last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)
+    company = _get_user_company(membership, db)
+    survey = _get_survey_or_404(survey_id, company.id, db)
+    assert_survey_access(membership, survey.id, db)
+    current_user = db.query(UserORM).filter(UserORM.id == membership.user_id).first()
+    last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, membership.user_id, db)
     return _survey_to_list_item(survey, user=current_user, last_edited_by=last_edited_by)
 
 
@@ -419,12 +420,15 @@ def get_survey(
 @router.get("/surveys/{survey_id}/latest", response_model=SurveyWithSchema)
 def get_survey_latest(
     survey_id: str,
-    current_user=Depends(get_current_user),
+    membership: MembershipORM = Depends(get_current_membership),
     db: Session = Depends(get_db_connection),
 ):
-    survey = _get_survey_or_404(survey_id, current_user, db)
+    company = _get_user_company(membership, db)
+    survey = _get_survey_or_404(survey_id, company.id, db)
+    assert_survey_access(membership, survey.id, db)
     sv = _get_latest_version_or_404(survey.id, db)
-    last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)
+    current_user = db.query(UserORM).filter(UserORM.id == membership.user_id).first()
+    last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, membership.user_id, db)
     return _to_survey_with_schema(survey, sv, user=current_user, last_edited_by=last_edited_by)
 
 
@@ -434,15 +438,16 @@ def get_survey_latest(
 @router.post("/surveys", response_model=SurveyWithSchema, status_code=201)
 def create_survey(
     payload: SurveyCreate,
-    current_user=Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     db: Session = Depends(get_db_connection),
 ):
     title = payload.title.strip()
     if not title:
         raise ValidationError(code="INVALID_SURVEY_TITLE", message="Survey title cannot be empty", status_code=422)
-    
-    company = _get_user_company(current_user, db)
+
+    company = _get_user_company(membership, db)
     company_id = company.id
+    current_user = db.query(UserORM).filter(UserORM.id == membership.user_id).first()
 
     # Uniqueness check per company
     existing = (
@@ -463,7 +468,7 @@ def create_survey(
 
     _check_photo_feedback_allowed(
         payload.survey_schema_json,
-        get_policy_for_subscription(get_subscription(current_user, db)),
+        get_policy_for_subscription(get_company_subscription(company, db)),
     )
 
     survey = SurveyORM(
@@ -481,16 +486,20 @@ def create_survey(
         version_number=1,
         schema_json=payload.survey_schema_json,
         theme_settings=theme_settings,
-        created_by=current_user.id,
+        created_by=membership.user_id,
     )
     db.add(sv)
     db.flush()
     _sync_questions_from_schema(db, sv.id, payload.survey_schema_json)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise ConflictError(code="SURVEY_TITLE_CONFLICT", message=f"A survey named '{title}' already exists")
     db.refresh(survey)
     db.refresh(sv)
 
-    return _to_survey_with_schema(survey, sv, user=current_user, last_edited_by=str(current_user.id))
+    return _to_survey_with_schema(survey, sv, user=current_user, last_edited_by=str(membership.user_id))
 
 
 # ------------------------------------------------------------------
@@ -500,10 +509,12 @@ def create_survey(
 def save_survey_version(
     survey_id: str,
     payload: SurveySaveVersion,
-    current_user=Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     db: Session = Depends(get_db_connection),
 ):
-    survey = _get_survey_or_404(survey_id, current_user, db)
+    company = _get_user_company(membership, db)
+    current_user = db.query(UserORM).filter(UserORM.id == membership.user_id).first()
+    survey = _get_survey_or_404(survey_id, company.id, db)
     if survey.status == SurveyStatus.active:
         raise ValidationError(
             code="SURVEY_ACTIVE_NO_EDIT",
@@ -528,7 +539,7 @@ def save_survey_version(
 
     _check_photo_feedback_allowed(
         payload.survey_schema_json,
-        get_policy_for_subscription(get_subscription(current_user, db)),
+        get_policy_for_subscription(get_company_subscription(company, db)),
     )
 
     last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)
@@ -558,7 +569,7 @@ def save_survey_version(
         version_number=new_version_number,
         schema_json=payload.survey_schema_json,
         theme_settings=theme_settings,
-        created_by=current_user.id,
+        created_by=membership.user_id,
     )
     db.add(sv)
     db.flush()
@@ -578,7 +589,7 @@ def save_survey_version(
     revalidate_flows_for_survey(db, survey.id)
     db.commit()
 
-    return _to_survey_with_schema(survey, sv, user=current_user, last_edited_by=str(current_user.id))
+    return _to_survey_with_schema(survey, sv, user=current_user, last_edited_by=str(membership.user_id))
 
 
 # ------------------------------------------------------------------
@@ -588,15 +599,17 @@ def save_survey_version(
 def update_survey_meta(
     survey_id: str,
     payload: SurveyUpdateMeta,
-    current_user=Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     db: Session = Depends(get_db_connection),
 ):
-    survey = _get_survey_or_404(survey_id, current_user, db)
-    company = _get_user_company(current_user, db)
+    company = _get_user_company(membership, db)
+    survey = _get_survey_or_404(survey_id, company.id, db)
+    current_user = db.query(UserORM).filter(UserORM.id == membership.user_id).first()
 
     update_values: dict = {"updated_at": datetime.now(timezone.utc)}
 
     if payload.title is not None:
+        _require_draft_for_survey_rename(survey)
         new_title = payload.title.strip()
         if not new_title:
             raise ValidationError(code="INVALID_SURVEY_TITLE", message="Title cannot be empty", status_code=422)
@@ -628,7 +641,11 @@ def update_survey_meta(
     if rowcount == 0:
         raise StaleObjectError("Survey", str(survey.id))
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise ConflictError(code="SURVEY_TITLE_CONFLICT", message="A survey with that name already exists")
     db.refresh(survey)
     last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)
     return _survey_to_list_item(survey, user=current_user, last_edited_by=last_edited_by)
@@ -641,17 +658,18 @@ def update_survey_meta(
 def publish_survey(
     survey_id: str,
     payload: SurveyStatusTransition,
-    current_user=Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     db: Session = Depends(get_db_connection),
 ):
-    survey = _get_survey_or_404(survey_id, current_user, db)
+    company = _get_user_company(membership, db)
+    current_user = db.query(UserORM).filter(UserORM.id == membership.user_id).first()
+    survey = _get_survey_or_404(survey_id, company.id, db)
     sv = _get_latest_version_or_404(survey.id, db)
     valid, errors = validate_survey_schema(sv.schema_json, db)
     if not valid:
         raise ValidationError(code="INVALID_SURVEY_SCHEMA", message="Survey schema validation failed", details={"schema_errors": errors}, status_code=422)
 
-    company = _get_user_company(current_user, db)
-    sub = get_subscription(current_user, db)
+    sub = get_company_subscription(company, db)
     policy = get_policy_for_subscription(sub)
     plan_key = (sub.plan_display_name or "starter").strip().lower() if sub else "starter"
 
@@ -678,6 +696,16 @@ def publish_survey(
     if rowcount == 0:
         raise StaleObjectError("Survey", str(survey.id))
 
+    # Unpublish sets assignment rows to is_active=False; turn them back on when the survey goes live again.
+    (
+        db.query(LocationSurveyORM)
+        .filter(
+            LocationSurveyORM.survey_id == survey.id,
+            LocationSurveyORM.deleted_at.is_(None),
+        )
+        .update({"is_active": True}, synchronize_session=False)
+    )
+
     db.commit()
     db.refresh(survey)
     last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)
@@ -691,10 +719,12 @@ def publish_survey(
 def archive_survey(
     survey_id: str,
     payload: SurveyStatusTransition,
-    current_user=Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     db: Session = Depends(get_db_connection),
 ):
-    survey = _get_survey_or_404(survey_id, current_user, db)
+    company = _get_user_company(membership, db)
+    current_user = db.query(UserORM).filter(UserORM.id == membership.user_id).first()
+    survey = _get_survey_or_404(survey_id, company.id, db)
 
     rowcount = (
         db.query(SurveyORM)
@@ -717,10 +747,12 @@ def archive_survey(
 def unpublish_survey(
     survey_id: str,
     payload: SurveyStatusTransition,
-    current_user=Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     db: Session = Depends(get_db_connection),
 ):
-    survey = _get_survey_or_404(survey_id, current_user, db)
+    company = _get_user_company(membership, db)
+    current_user = db.query(UserORM).filter(UserORM.id == membership.user_id).first()
+    survey = _get_survey_or_404(survey_id, company.id, db)
     if survey.status != SurveyStatus.active:
         raise ValidationError(
             code="SURVEY_NOT_ACTIVE",
@@ -757,10 +789,12 @@ def unpublish_survey(
 def unarchive_survey(
     survey_id: str,
     payload: SurveyStatusTransition,
-    current_user=Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     db: Session = Depends(get_db_connection),
 ):
-    survey = _get_survey_or_404(survey_id, current_user, db)
+    company = _get_user_company(membership, db)
+    current_user = db.query(UserORM).filter(UserORM.id == membership.user_id).first()
+    survey = _get_survey_or_404(survey_id, company.id, db)
     if survey.status != SurveyStatus.archived:
         raise ValidationError(
             code="SURVEY_NOT_ARCHIVED",
@@ -788,15 +822,14 @@ def unarchive_survey(
 @router.post("/surveys/{survey_id}/duplicate", response_model=SurveyWithSchema, status_code=201)
 def duplicate_survey(
     survey_id: str,
-    current_user=Depends(get_current_user),
+    membership: MembershipORM = Depends(require_company_admin),
     db: Session = Depends(get_db_connection),
 ):
-    
-    
-    company = _get_user_company(current_user, db)
+    company = _get_user_company(membership, db)
     company_id = company.id
+    current_user = db.query(UserORM).filter(UserORM.id == membership.user_id).first()
 
-    source = _get_survey_or_404(survey_id, current_user, db, company_id)
+    source = _get_survey_or_404(survey_id, company_id, db)
     source_sv = _get_latest_version_or_404(source.id, db)
 
 
@@ -834,7 +867,7 @@ def duplicate_survey(
         version_number=1,
         schema_json=source_sv.schema_json,
         theme_settings=theme_settings,
-        created_by=current_user.id,
+        created_by=membership.user_id,
     )
     db.add(new_sv)
     db.flush()
@@ -843,4 +876,4 @@ def duplicate_survey(
     db.refresh(new_survey)
     db.refresh(new_sv)
 
-    return _to_survey_with_schema(new_survey, new_sv, user=current_user, last_edited_by=str(current_user.id))
+    return _to_survey_with_schema(new_survey, new_sv, user=current_user, last_edited_by=str(membership.user_id))
