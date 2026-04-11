@@ -406,7 +406,7 @@ export default function LocationsPage() {
       key: "name",
       label: "Name",
       sortable: true,
-      align: "center",
+      align: "left",
       render: (loc) => (
         <div className="flex flex-col gap-0.5">
           <div className="flex items-center gap-2">

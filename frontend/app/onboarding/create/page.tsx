@@ -54,6 +54,9 @@ const HOW_HEARD_OPTIONS: DropdownOption[] = [
   "Other",
 ].map((o) => ({ value: o, label: o }))
 
+/** Dropdown value for free-text follow-up (must match option value above). */
+const OTHER_OPTION_VALUE = "Other"
+
 const TIMEZONE_OPTIONS: DropdownOption[] = AUSTRALIA_TIMEZONE_OPTIONS.map((o) => ({
   value: o.value,
   label: o.label,
@@ -129,9 +132,13 @@ function Field({
 }
 
 const inputClass = (hasError?: boolean) =>
-  `mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500 ${
-    hasError ? "border-red-300 bg-red-50" : "border-zinc-200 bg-white"
+  `mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none transition-colors focus:ring-2 focus:ring-violet-500 ${
+    hasError ? "border-red-300 bg-red-50" : "border-zinc-200 bg-white hover:border-zinc-300"
   }`
+
+/** Optional text below a dropdown; same visual language as text inputs, slightly more top spacing. */
+const otherDetailInputClass =
+  "mt-2 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-800 outline-none transition-colors placeholder:text-zinc-400 hover:border-zinc-300 focus:ring-2 focus:ring-violet-500"
 
 // ─── Page content ────────────────────────────────────────────────────────────────
 
@@ -151,6 +158,8 @@ function CreateCompanyContent() {
     companySize: "",
     locationCount: "",
     howHeard: "",
+    primaryIndustryOther: "",
+    howHeardOther: "",
   }))
 
   const [fieldErrors, setFieldErrors] = useState<{ companyName?: string; locationName?: string }>({})
@@ -175,6 +184,24 @@ function CreateCompanyContent() {
 
   // ── Slide 2 ──────────────────────────────────────────────────────────────────
 
+  function buildPrimaryIndustryPayload(): string | null {
+    if (!form.primaryIndustry) return null
+    if (form.primaryIndustry === OTHER_OPTION_VALUE) {
+      const detail = form.primaryIndustryOther.trim()
+      return detail ? `Other — ${detail}` : OTHER_OPTION_VALUE
+    }
+    return form.primaryIndustry
+  }
+
+  function buildHowHeardPayload(): string | null {
+    if (!form.howHeard) return null
+    if (form.howHeard === OTHER_OPTION_VALUE) {
+      const detail = form.howHeardOther.trim()
+      return detail ? `Other — ${detail}` : OTHER_OPTION_VALUE
+    }
+    return form.howHeard
+  }
+
   async function handleSlide2Continue() {
     if (!session?.access_token) { router.replace("/login"); return }
     setSubmitError(null)
@@ -187,10 +214,10 @@ function CreateCompanyContent() {
         location_state: form.locationState || null,
         location_country: form.locationCountry || null,
         location_google_business_url: form.locationGoogleUrl || null,
-        primary_industry: form.primaryIndustry || null,
+        primary_industry: buildPrimaryIndustryPayload(),
         company_size: form.companySize || null,
         location_count: form.locationCount ? parseInt(form.locationCount, 10) || null : null,
-        how_heard: form.howHeard || null,
+        how_heard: buildHowHeardPayload(),
       })
       setStep(2)
     } catch (err) {
@@ -327,9 +354,25 @@ function CreateCompanyContent() {
                     className="mt-1"
                     options={INDUSTRY_OPTIONS}
                     value={form.primaryIndustry}
-                    onChange={(v) => setField("primaryIndustry", v)}
+                    onChange={(v) => {
+                      setFormState((prev) => ({
+                        ...prev,
+                        primaryIndustry: v,
+                        ...(v !== OTHER_OPTION_VALUE ? { primaryIndustryOther: "" } : {}),
+                      }))
+                    }}
                     placeholder="Select (optional)"
                   />
+                  {form.primaryIndustry === OTHER_OPTION_VALUE ? (
+                    <input
+                      className={otherDetailInputClass}
+                      placeholder="Add details (optional)"
+                      value={form.primaryIndustryOther}
+                      maxLength={2000}
+                      onChange={(e) => setField("primaryIndustryOther", e.target.value)}
+                      aria-label="Industry, other details"
+                    />
+                  ) : null}
                 </Field>
 
                 <Field label="Company size">
@@ -358,9 +401,25 @@ function CreateCompanyContent() {
                     className="mt-1"
                     options={HOW_HEARD_OPTIONS}
                     value={form.howHeard}
-                    onChange={(v) => setField("howHeard", v)}
+                    onChange={(v) => {
+                      setFormState((prev) => ({
+                        ...prev,
+                        howHeard: v,
+                        ...(v !== OTHER_OPTION_VALUE ? { howHeardOther: "" } : {}),
+                      }))
+                    }}
                     placeholder="Select (optional)"
                   />
+                  {form.howHeard === OTHER_OPTION_VALUE ? (
+                    <input
+                      className={otherDetailInputClass}
+                      placeholder="Add details (optional)"
+                      value={form.howHeardOther}
+                      maxLength={2000}
+                      onChange={(e) => setField("howHeardOther", e.target.value)}
+                      aria-label="How you heard about us, other details"
+                    />
+                  ) : null}
                 </Field>
               </div>
 

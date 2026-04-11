@@ -564,9 +564,9 @@ export default function DistributionPage() {
       key: "title",
       label: "Title",
       sortable: true,
-      align: "center",
+      align: "left",
       render: (qr) => (
-        <div className="flex items-center justify-center gap-3">
+        <div className="flex items-center justify-start gap-3">
           <button
             type="button"
             onClick={() => setQRPanel(qr)}

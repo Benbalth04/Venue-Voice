@@ -26,13 +26,6 @@ export const TOUR_STEPS: TourStep[] = [
       "Create your physical locations — stores, venues, or any place where you want to collect feedback. Each location can run multiple surveys.",
   },
   {
-    targetId: "tour-assign-surveys",
-    route: "/dashboard/distribution/assign_surveys",
-    title: "Assign Surveys",
-    description:
-      "Link a survey to a specific location to create a deployment. Each deployment can be allowed its own QR codes and tracks responses independently.",
-  },
-  {
     targetId: "tour-qr-codes",
     route: "/dashboard/distribution/qr_codes",
     title: "QR Codes",
