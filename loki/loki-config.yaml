@@ -6,7 +6,7 @@ server:
   log_level: warn
 
 common:
-  instance_addr: 127.0.0.1
+  instance_addr: loki
   path_prefix: /loki
   storage:
     filesystem:
@@ -49,6 +49,10 @@ compactor:
   retention_enabled: true
   retention_delete_delay: 2h
   compaction_interval: 10m
-
+  delete_request_store: filesystem
+  compactor_ring:
+    kvstore:
+      store: inmemory
+      
 analytics:
   reporting_enabled: false
