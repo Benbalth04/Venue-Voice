@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from enum import Enum as PyEnum
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 from typing import Any, Literal
 
 
@@ -175,6 +175,18 @@ class UserResponse(BaseModel):
     memberships: list[MembershipSummary] = []
 
 
+def _sanitize_optional_text(v: Any, max_len: int) -> str | None:
+    """Strip, cap length, drop NULs. Used for onboarding free-text (ORM uses bound params; this limits abuse)."""
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        raise ValueError("Must be a string")
+    s = v.replace("\x00", "").strip()
+    if not s:
+        return None
+    return s[:max_len]
+
+
 class SetupAccountRequest(BaseModel):
     company_name: str
     location_name: str
@@ -186,6 +198,41 @@ class SetupAccountRequest(BaseModel):
     company_size: str | None = None
     location_count: int | None = None
     how_heard: str | None = None
+
+    @field_validator("company_name", mode="before")
+    @classmethod
+    def sanitize_company_name(cls, v: Any) -> str:
+        if not isinstance(v, str):
+            raise ValueError("Company name must be a string")
+        s = v.replace("\x00", "").strip()
+        if not s:
+            raise ValueError("Company name is required")
+        return s[:500]
+
+    @field_validator("location_name", mode="before")
+    @classmethod
+    def sanitize_location_name(cls, v: Any) -> str:
+        if not isinstance(v, str):
+            raise ValueError("Location name must be a string")
+        s = v.replace("\x00", "").strip()
+        if not s:
+            raise ValueError("Location name is required")
+        return s[:500]
+
+    @field_validator("location_state", "location_country", mode="before")
+    @classmethod
+    def sanitize_location_fields(cls, v: Any) -> str | None:
+        return _sanitize_optional_text(v, 200)
+
+    @field_validator("location_google_business_url", mode="before")
+    @classmethod
+    def sanitize_google_url(cls, v: Any) -> str | None:
+        return _sanitize_optional_text(v, 2000)
+
+    @field_validator("primary_industry", "company_size", "how_heard", mode="before")
+    @classmethod
+    def sanitize_company_metadata_strings(cls, v: Any) -> str | None:
+        return _sanitize_optional_text(v, 2000)
 
 
 class UpdateUserTimezoneRequest(BaseModel):
