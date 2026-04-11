@@ -3,8 +3,16 @@
 # Blue/green: change backend_blue to backend_green in reverse_proxy below, then:
 #   docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile
 #
-# trusted_proxies: Cloudflare IP ranges — Caddy restores the real client IP from
-# X-Forwarded-For only when requests arrive from these ranges.
+# TLS: All domains use a Cloudflare Origin Certificate (*.venuevoice.com.au).
+# ACME / Let's Encrypt is NOT used — Origin Certs bypass the Cloudflare Access
+# ACME-challenge-blocking problem and work with Cloudflare Full (Strict) SSL mode.
+#
+# To set up the cert: Cloudflare Dashboard → SSL/TLS → Origin Server → Create Certificate
+# Save as certs/cloudflare-origin.pem and certs/cloudflare-origin.key on the server.
+# Never commit the certs/ directory.
+#
+# trusted_proxies: Caddy restores the real client IP from X-Forwarded-For only
+# when requests arrive from these Cloudflare IP ranges.
 # Source: https://www.cloudflare.com/ips/   Review quarterly.
 {
 	servers {
@@ -35,6 +43,8 @@
 }
 
 {$API_HOST:api.example.com} {
+	tls /etc/caddy/certs/cloudflare-origin.pem /etc/caddy/certs/cloudflare-origin.key
+
 	request_body {
 		max_size 15MB
 	}
@@ -62,6 +72,8 @@
 }
 
 status.venuevoice.com.au {
+	tls /etc/caddy/certs/cloudflare-origin.pem /etc/caddy/certs/cloudflare-origin.key
+
 	reverse_proxy uptime_kuma:3001 {
 		header_up X-Real-IP {remote_host}
 		header_up X-Forwarded-For {remote_host}
@@ -70,6 +82,8 @@ status.venuevoice.com.au {
 }
 
 grafana.venuevoice.com.au {
+	tls /etc/caddy/certs/cloudflare-origin.pem /etc/caddy/certs/cloudflare-origin.key
+
 	reverse_proxy grafana:3000 {
 		# Grafana requires Host forwarded as upstream address for redirects and WebSocket live streaming
 		header_up Host {upstream_hostport}
