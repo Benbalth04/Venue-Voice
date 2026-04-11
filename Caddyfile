@@ -66,7 +66,6 @@
 			write_timeout 60s
 		}
 		header_up X-Real-IP {remote_host}
-		header_up X-Forwarded-For {remote_host}
 		header_up X-Forwarded-Proto {scheme}
 	}
 }
@@ -76,7 +75,6 @@ status.venuevoice.com.au {
 
 	reverse_proxy uptime_kuma:3001 {
 		header_up X-Real-IP {remote_host}
-		header_up X-Forwarded-For {remote_host}
 		header_up X-Forwarded-Proto {scheme}
 	}
 }
@@ -88,7 +86,6 @@ grafana.venuevoice.com.au {
 		# Grafana requires Host forwarded as upstream address for redirects and WebSocket live streaming
 		header_up Host {upstream_hostport}
 		header_up X-Real-IP {remote_host}
-		header_up X-Forwarded-For {remote_host}
 		header_up X-Forwarded-Proto {scheme}
 	}
 }

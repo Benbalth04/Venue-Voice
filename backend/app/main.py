@@ -60,6 +60,7 @@ app.include_router(stripe_webhook_router, prefix="/api/v1", tags=["stripe-webhoo
 
 # Inner: transforms IDs; outer: CORS (runs first on the request).
 origins = settings.cors_origins.split(",")
+origins = [o.strip() for o in settings.cors_origins.split(",")]
 
 app.add_middleware(
     CORSMiddleware,

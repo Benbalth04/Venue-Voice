@@ -5,3 +5,4 @@ certs/
 .claude*
 production_deploy.txt
 stripe-dev-cmd.txt
+cloudflare-certs.txt
