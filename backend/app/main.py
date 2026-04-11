@@ -21,7 +21,7 @@ from .core.errors.app_error import AppError
 from .core.errors.handlers import app_error_handler, generic_exception_handler
 from .core.logging_config import configure_logging
 from .core.sentry import init_sentry
-from .middleware.request_logging import RequestLoggingMiddleware
+from .middleware.request_logging import PostCORSMiddleware, RequestLoggingMiddleware
 from .tasks.email_reconciliation import start_scheduler, stop_scheduler
 
 
@@ -58,10 +58,18 @@ app.include_router(company_users_router, prefix="/api/v1", tags=["company-users"
 # Webhook endpoint has no JWT auth — Stripe-Signature header is used instead
 app.include_router(stripe_webhook_router, prefix="/api/v1", tags=["stripe-webhook"])
 
-# Inner: transforms IDs; outer: CORS (runs first on the request).
-origins = settings.cors_origins.split(",")
+# Middleware is prepended by add_middleware, so the actual request order is:
+#   RequestLoggingMiddleware → CORSMiddleware → PostCORSMiddleware → handler
+#
+# RequestLoggingMiddleware (outermost): sees every request including OPTIONS
+#   before CORS runs; logs cors_preflight_arrived / request_started.
+# CORSMiddleware: validates Origin and short-circuits OPTIONS; returns 400 if
+#   the origin is not in allow_origins.
+# PostCORSMiddleware (innermost): only reached when CORS passes; logs
+#   request_passed_cors so you can confirm a request made it through CORS.
 origins = [o.strip() for o in settings.cors_origins.split(",")]
 
+app.add_middleware(PostCORSMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -69,8 +77,6 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Company-ID"],
 )
-# RequestLoggingMiddleware runs inside CORS (added after) so it sees the
-# authenticated request with all headers already processed.
 app.add_middleware(RequestLoggingMiddleware)
 
 @app.get("/")
