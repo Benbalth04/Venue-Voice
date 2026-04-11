@@ -5,12 +5,14 @@ import uuid
 from typing import TYPE_CHECKING, Any
 from urllib.request import urlopen, Request
 
+import sentry_sdk
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import jwt
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
+from ..core.logging_config import user_id_var
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import User as UserORM
 from ..core.errors.exceptions import AuthError, ExternalAPIError
@@ -149,4 +151,10 @@ def _ensure_application_user(jwt_payload: dict[str, Any], db: Session,) -> UserO
 def get_current_user(
     jwt_payload: dict[str, Any] = Depends(get_current_user_payload), db_session = Depends(get_db_connection),):
     """Verify JWT, auto-bootstrap user if missing, return application user."""
-    return _ensure_application_user(jwt_payload, db_session)
+    user = _ensure_application_user(jwt_payload, db_session)
+    # Propagate the resolved user_id into the logging and Sentry contexts so
+    # every subsequent log call within this request includes user_id.
+    user_id_str = str(user.id)
+    user_id_var.set(user_id_str)
+    sentry_sdk.set_user({"id": user_id_str})
+    return user

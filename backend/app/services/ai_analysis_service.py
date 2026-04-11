@@ -38,14 +38,20 @@ def run_ai_analysis_for_response(db: Session, survey_response: SurveyResponseORM
     Skips empty/short text and existing rows. Never raises to callers — logs and persists failures.
     """
     if survey_response is None or survey_response.id is None:
-        logger.warning("run_ai_analysis_for_response: missing survey_response")
+        logger.warning(
+            "ai_analysis_skipped_missing_response",
+            extra={"event_type": "ai_analysis_skipped_missing_response"},
+        )
         return
 
     try:
         sid = survey_response.survey_version_id
         rid = survey_response.id
     except Exception:
-        logger.exception("run_ai_analysis_for_response: invalid survey_response object")
+        logger.exception(
+            "ai_analysis_invalid_response_object",
+            extra={"event_type": "ai_analysis_invalid_response_object"},
+        )
         return
 
     session = (
@@ -54,7 +60,13 @@ def run_ai_analysis_for_response(db: Session, survey_response: SurveyResponseORM
         .first()
     )
     if not session:
-        logger.warning("run_ai_analysis_for_response: session not found for response %s", rid)
+        logger.warning(
+            "ai_analysis_session_not_found",
+            extra={
+                "event_type": "ai_analysis_session_not_found",
+                "response_id": str(rid),
+            },
+        )
         return
 
     qr = (
@@ -130,9 +142,12 @@ def run_ai_analysis_for_response(db: Session, survey_response: SurveyResponseORM
         except IntegrityError:
             db.rollback()
             logger.info(
-                "AI analysis skipped (duplicate): response=%s question=%s",
-                rid,
-                qid,
+                "ai_analysis_skipped_duplicate",
+                extra={
+                    "event_type": "ai_analysis_skipped_duplicate",
+                    "response_id": str(rid),
+                    "question_id": str(qid),
+                },
             )
             continue
 
@@ -148,6 +163,16 @@ def run_ai_analysis_for_response(db: Session, survey_response: SurveyResponseORM
             row.error = None
             db.commit()
             existing_qids.add(qid)
+            logger.info(
+                "ai_analysis_completed",
+                extra={
+                    "event_type": "ai_analysis_completed",
+                    "response_id": str(rid),
+                    "question_id": str(qid),
+                    "sentiment": result.get("sentiment"),
+                    "processing_time_ms": elapsed_ms,
+                },
+            )
         except ValueError as e:
             elapsed_ms = int((time.monotonic() - t0) * 1000)
             row.status = "failed"
@@ -158,7 +183,10 @@ def run_ai_analysis_for_response(db: Session, survey_response: SurveyResponseORM
                 db.commit()
             except Exception:
                 db.rollback()
-                logger.exception("Failed to persist AI analysis failure row")
+                logger.exception(
+                    "ai_analysis_persist_failed",
+                    extra={"event_type": "ai_analysis_persist_failed", "response_id": str(rid)},
+                )
             existing_qids.add(qid)
         except ExternalAPIError as e:
             elapsed_ms = int((time.monotonic() - t0) * 1000)
@@ -167,24 +195,35 @@ def run_ai_analysis_for_response(db: Session, survey_response: SurveyResponseORM
             row.error = (e.message or str(e))[:2000]
             row.analysis = {}
             logger.warning(
-                "OpenAI sentiment failed for response=%s question=%s: %s",
-                rid,
-                qid,
-                e.message,
+                "ai_analysis_openai_failed",
+                extra={
+                    "event_type": "ai_analysis_openai_failed",
+                    "response_id": str(rid),
+                    "question_id": str(qid),
+                    "error_message": e.message,
+                    "processing_time_ms": elapsed_ms,
+                },
             )
             try:
                 db.commit()
             except Exception:
                 db.rollback()
-                logger.exception("Failed to persist AI analysis failure row")
+                logger.exception(
+                    "ai_analysis_persist_failed",
+                    extra={"event_type": "ai_analysis_persist_failed", "response_id": str(rid)},
+                )
             existing_qids.add(qid)
         except Exception as e:
             elapsed_ms = int((time.monotonic() - t0) * 1000)
             db.rollback()
             logger.exception(
-                "Unexpected error during AI analysis response=%s question=%s",
-                rid,
-                qid,
+                "ai_analysis_unexpected_error",
+                extra={
+                    "event_type": "ai_analysis_unexpected_error",
+                    "response_id": str(rid),
+                    "question_id": str(qid),
+                    "processing_time_ms": elapsed_ms,
+                },
             )
             fail = AIAnalysisORM(
                 company_id=company_id,
@@ -206,4 +245,10 @@ def run_ai_analysis_for_response(db: Session, survey_response: SurveyResponseORM
                 db.rollback()
             except Exception:
                 db.rollback()
-                logger.exception("Could not insert failed AI analysis placeholder")
+                logger.exception(
+                    "ai_analysis_placeholder_insert_failed",
+                    extra={
+                        "event_type": "ai_analysis_placeholder_insert_failed",
+                        "response_id": str(rid),
+                    },
+                )

@@ -15,8 +15,11 @@ It is intentionally NOT exposed as a public HTTP endpoint.
 from __future__ import annotations
 
 import logging
+import uuid
 
 import stripe
+
+from ..core.logging_config import request_id_var
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +31,10 @@ def stripe_reconciliation_job() -> None:
     from ..db.postgres import SessionLocal
     from ..models.postgres_model import JobRun
     from ..services.stripe_service import sync_subscription_from_stripe_object
+
+    # Give this job run a unique correlation ID so its logs can be traced in Loki.
+    job_id = str(uuid.uuid4())
+    request_id_var.set(job_id)
 
     triggered_at = datetime.now(timezone.utc)
 
@@ -43,7 +50,10 @@ def stripe_reconciliation_job() -> None:
     status = "failed"
 
     try:
-        logger.info("Stripe reconciliation job starting")
+        logger.info(
+            "stripe_reconciliation_started",
+            extra={"event_type": "stripe_reconciliation_started", "job_id": job_id},
+        )
 
         # Page through all subscriptions in Stripe (limit 100 per page)
         params: dict = {"limit": 100, "expand": ["data.customer", "data.items.data.price"]}
@@ -57,7 +67,14 @@ def stripe_reconciliation_job() -> None:
             try:
                 page = stripe.Subscription.list(**params)
             except stripe.StripeError as exc:
-                logger.error("Stripe API error during reconciliation: %s", exc)
+                logger.error(
+                    "stripe_api_error",
+                    extra={
+                        "event_type": "stripe_api_error",
+                        "job_id": job_id,
+                        "error_message": str(exc),
+                    },
+                )
                 break
 
             for stripe_sub in page.data:
@@ -66,7 +83,12 @@ def stripe_reconciliation_job() -> None:
                     synced += 1
                 except Exception:
                     logger.exception(
-                        "Failed to reconcile subscription %s", stripe_sub.id
+                        "stripe_subscription_sync_failed",
+                        extra={
+                            "event_type": "stripe_subscription_sync_failed",
+                            "job_id": job_id,
+                            "stripe_subscription_id": stripe_sub.id,
+                        },
                     )
                     errors += 1
 
@@ -75,14 +97,21 @@ def stripe_reconciliation_job() -> None:
                 starting_after = page.data[-1].id
 
         logger.info(
-            "Stripe reconciliation complete — synced=%d errors=%d",
-            synced,
-            errors,
+            "stripe_reconciliation_completed",
+            extra={
+                "event_type": "stripe_reconciliation_completed",
+                "job_id": job_id,
+                "subscriptions_synced": synced,
+                "subscriptions_failed": errors,
+            },
         )
         status = "success"
 
     except Exception:
-        logger.exception("Unhandled error in Stripe reconciliation job")
+        logger.exception(
+            "stripe_reconciliation_failed",
+            extra={"event_type": "stripe_reconciliation_failed", "job_id": job_id},
+        )
     finally:
         db.close()
         completed_at = datetime.now(timezone.utc)

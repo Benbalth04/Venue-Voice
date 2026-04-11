@@ -7,10 +7,13 @@ sent due to application crashes or transient failures.
 from __future__ import annotations
 
 import logging
+import uuid
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
+
+from ..core.logging_config import request_id_var
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +28,10 @@ def reconciliation_job() -> None:
     from ..models.postgres_model import JobRun
     from ..services.email import reconcile_pending_emails, reconcile_stripe_billing_emails
 
+    # Give this job run a unique correlation ID so its logs can be traced in Loki.
+    job_id = str(uuid.uuid4())
+    request_id_var.set(job_id)
+
     triggered_at = datetime.now(timezone.utc)
 
     # Separate session for the audit record so it persists even if the job session fails.
@@ -37,14 +44,28 @@ def reconciliation_job() -> None:
     status = "failed"
     data: dict = {}
     try:
-        logger.debug("Email reconciliation job starting")
+        logger.info(
+            "email_reconciliation_started",
+            extra={"event_type": "email_reconciliation_started", "job_id": job_id},
+        )
         flow_result = reconcile_pending_emails(db)
         stripe_result = reconcile_stripe_billing_emails(db)
         data = {"flow_emails": flow_result, "stripe_emails": stripe_result}
         status = "success"
-        logger.debug("Email reconciliation job complete")
+        logger.info(
+            "email_reconciliation_completed",
+            extra={
+                "event_type": "email_reconciliation_completed",
+                "job_id": job_id,
+                "flow_emails": flow_result,
+                "stripe_emails": stripe_result,
+            },
+        )
     except Exception:
-        logger.exception("Unhandled error in email reconciliation job")
+        logger.exception(
+            "email_reconciliation_failed",
+            extra={"event_type": "email_reconciliation_failed", "job_id": job_id},
+        )
     finally:
         db.close()
         completed_at = datetime.now(timezone.utc)
@@ -79,8 +100,11 @@ def start_scheduler() -> None:
 
     scheduler.start()
     logger.info(
-        "Scheduler started: email_reconciliation (5 min, flow + Stripe billing), "
-        "stripe_reconciliation (daily 14:00 UTC / 12:00 AM AEST)"
+        "scheduler_started",
+        extra={
+            "event_type": "scheduler_started",
+            "jobs": ["email_reconciliation (5 min)", "stripe_reconciliation (daily 14:00 UTC)"],
+        },
     )
 
 
@@ -88,4 +112,7 @@ def stop_scheduler() -> None:
     """Gracefully shut down the scheduler."""
     if scheduler.running:
         scheduler.shutdown(wait=False)
-        logger.info("Email reconciliation scheduler stopped")
+        logger.info(
+            "scheduler_stopped",
+            extra={"event_type": "scheduler_stopped"},
+        )

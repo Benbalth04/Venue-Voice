@@ -345,6 +345,20 @@ def survey_redirect(
         )
     db.commit()
 
+    logger.info(
+        "qr_scanned",
+        extra={
+            "event_type": "qr_scanned",
+            "qr_code_id": str(qr.id),
+            "location_survey_id": str(location_survey.id),
+            "location_id": str(location.id),
+            "company_id": str(qr.company_id),
+            "survey_id": str(survey.id),
+            "session_id": str(session.id),
+            "device_type": device_type,
+        },
+    )
+
     return {
         "valid": True,
         "redirect_url": redirect_url,
@@ -684,6 +698,21 @@ async def submit_survey(
     response_id = resp.id
     db.commit()
 
+    # Analytics event — emitted after commit so the response is durable.
+    logger.info(
+        "survey_submitted",
+        extra={
+            "event_type": "survey_submitted",
+            "response_id": str(response_id),
+            "survey_id": str(sv.survey_id),
+            "company_id": str(sess.company_id),
+            "qr_code_id": str(sess.qr_code_id),
+            "answer_count": len(answers),
+            "has_photos": bool(photo_files_validated),
+            "time_taken_seconds": time_taken,
+        },
+    )
+
     # Upload photos to Supabase and persist metadata.
     # Done after the main commit so the survey_response row exists in the DB.
     # If an upload fails the error is logged and the response is still returned
@@ -735,9 +764,12 @@ async def submit_survey(
             db.commit()
         except Exception:
             logger.exception(
-                "Photo upload failed after survey submit (response_id=%s); "
-                "attempting best-effort storage cleanup",
-                response_id,
+                "photo_upload_failed",
+                extra={
+                    "event_type": "photo_upload_failed",
+                    "response_id": str(response_id),
+                    "uploaded_count": len(uploaded_paths),
+                },
             )
             # Best-effort cleanup of any already-uploaded objects
             if uploaded_paths:
@@ -745,7 +777,10 @@ async def submit_survey(
                     supabase_client = get_supabase_service_client()
                     delete_survey_photos_best_effort(supabase_client, uploaded_paths)
                 except Exception:
-                    logger.exception("Failed to clean up partial photo uploads")
+                    logger.exception(
+                        "photo_cleanup_failed",
+                        extra={"event_type": "photo_cleanup_failed", "response_id": str(response_id)},
+                    )
 
     from ..services.ai_analysis_service import run_ai_analysis_for_response
     from ..services.flow_service import (
@@ -788,8 +823,11 @@ async def submit_survey(
                 )
             except Exception:
                 logger.exception(
-                    "Flow metadata check failed (response_id=%s) — defaulting to no-flow path",
-                    response_id,
+                    "flow_metadata_check_failed",
+                    extra={
+                        "event_type": "flow_metadata_check_failed",
+                        "response_id": str(response_id),
+                    },
                 )
                 meta = FlowExecutionMetadata(
                     has_active_flow=False, has_redirect_action=False, requires_ai_sentiment=False
@@ -822,7 +860,8 @@ async def submit_survey(
                     workflow_action = execute_flows_for_response(db, **common_kwargs)
                 except Exception:
                     logger.exception(
-                        "Sync flow execution failed (response_id=%s)", response_id
+                        "sync_flow_execution_failed",
+                        extra={"event_type": "sync_flow_execution_failed", "response_id": str(response_id)},
                     )
 
             else:
@@ -831,13 +870,15 @@ async def submit_survey(
                     run_ai_analysis_for_response(db, saved)
                 except Exception:
                     logger.exception(
-                        "Sync AI analysis failed (response_id=%s)", response_id
+                        "sync_ai_analysis_failed",
+                        extra={"event_type": "sync_ai_analysis_failed", "response_id": str(response_id)},
                     )
                 try:
                     workflow_action = execute_flows_for_response(db, **common_kwargs)
                 except Exception:
                     logger.exception(
-                        "Sync flow execution failed (response_id=%s)", response_id
+                        "sync_flow_execution_failed",
+                        extra={"event_type": "sync_flow_execution_failed", "response_id": str(response_id)},
                     )
 
     company = (

@@ -1054,9 +1054,12 @@ def _persist_flow_run(
         )
         if existing is not None:
             logger.info(
-                "Flow run already exists for flow_id=%s response_id=%s — skipping (idempotent)",
-                flow.id,
-                response_id,
+                "flow_run_skipped_idempotent",
+                extra={
+                    "event_type": "flow_run_skipped_idempotent",
+                    "flow_id": str(flow.id),
+                    "response_id": str(response_id),
+                },
             )
             return existing
 
@@ -1271,6 +1274,19 @@ def execute_flows_for_response(
 
     db.commit()
 
+    logger.info(
+        "flows_executed",
+        extra={
+            "event_type": "flows_executed",
+            "response_id": str(survey_response_id),
+            "location_survey_id": str(location_survey_id),
+            "flows_evaluated": len(persisted_flow_runs),
+            "actions_triggered": sum(
+                1 for fr in persisted_flow_runs if fr.success
+            ),
+        },
+    )
+
     # Attempt immediate email delivery. Failures are logged and left in
     # "pending" status so the reconciliation job can retry them.
     from .email import send_emails_for_flow_run
@@ -1279,8 +1295,11 @@ def execute_flows_for_response(
             send_emails_for_flow_run(flow_run.id, db)
         except Exception:
             logger.exception(
-                "Immediate email send failed for flow_run_id=%s — reconciliation will retry",
-                flow_run.id,
+                "email_send_failed",
+                extra={
+                    "event_type": "email_send_failed",
+                    "flow_run_id": str(flow_run.id),
+                },
             )
 
     return first_action
@@ -1307,7 +1326,11 @@ def run_flow_background(
         )
     except Exception:
         logger.exception(
-            "Background flow execution failed for response_id=%s", survey_response_id
+            "background_flow_execution_failed",
+            extra={
+                "event_type": "background_flow_execution_failed",
+                "response_id": str(survey_response_id),
+            },
         )
     finally:
         db.close()
@@ -1350,7 +1373,11 @@ def run_ai_then_flow_background(
         )
     except Exception:
         logger.exception(
-            "Background AI+flow execution failed for response_id=%s", survey_response_id
+            "background_ai_flow_execution_failed",
+            extra={
+                "event_type": "background_ai_flow_execution_failed",
+                "response_id": str(survey_response_id),
+            },
         )
     finally:
         db.close()
@@ -1374,11 +1401,19 @@ def run_ai_background(*, survey_response_id: uuid.UUID) -> None:
             run_ai_analysis_for_response(db, response)
         else:
             logger.warning(
-                "Background AI analysis: response_id=%s not found, skipping", survey_response_id
+                "background_ai_response_not_found",
+                extra={
+                    "event_type": "background_ai_response_not_found",
+                    "response_id": str(survey_response_id),
+                },
             )
     except Exception:
         logger.exception(
-            "Background AI analysis failed for response_id=%s", survey_response_id
+            "background_ai_analysis_failed",
+            extra={
+                "event_type": "background_ai_analysis_failed",
+                "response_id": str(survey_response_id),
+            },
         )
     finally:
         db.close()

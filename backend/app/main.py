@@ -19,7 +19,9 @@ from .routes.company_users import router as company_users_router
 from .core.config import settings
 from .core.errors.app_error import AppError
 from .core.errors.handlers import app_error_handler, generic_exception_handler
+from .core.logging_config import configure_logging
 from .core.sentry import init_sentry
+from .middleware.request_logging import RequestLoggingMiddleware
 from .tasks.email_reconciliation import start_scheduler, stop_scheduler
 
 
@@ -30,8 +32,11 @@ async def lifespan(app: FastAPI):
     stop_scheduler()
 
 
-# Initialise Sentry before constructing the app so the integrations can
-# instrument the ASGI machinery and all middleware from the start.
+# 1. Configure structured JSON logging first — must run before any logger is
+#    used so that all subsequent log calls (including Sentry init) are JSON.
+configure_logging()
+
+# 2. Initialise Sentry after logging so the SDK's own log output is also JSON.
 init_sentry()
 
 app = FastAPI(lifespan=lifespan)
@@ -63,6 +68,9 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Company-ID"],
 )
+# RequestLoggingMiddleware runs inside CORS (added after) so it sees the
+# authenticated request with all headers already processed.
+app.add_middleware(RequestLoggingMiddleware)
 
 @app.get("/")
 async def root():

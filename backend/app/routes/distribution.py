@@ -552,5 +552,14 @@ def resolve_qr(
 
     check_qr_rate_limit(request, str(qr.id))
 
+    logger.info(
+        "qr_title_resolved",
+        extra={
+            "event_type": "qr_title_resolved",
+            "qr_code_id": str(qr.id),
+            "title": title,
+        },
+    )
+
     redirect_url = f"{settings.app_origin.rstrip('/')}/r/{qr.id}"
     return RedirectResponse(url=redirect_url, status_code=302)
