@@ -10,22 +10,8 @@ correlate their own logs with backend Loki traces.
 
 Skipped paths
 -------------
-/health and / requests are intentionally not logged to keep Loki free of
-uptime-checker noise. OPTIONS preflight requests are handled separately
-(see below) — they get their own trace log without generating a request_id.
-
-Middleware layers
------------------
-RequestLoggingMiddleware  — outermost; sees every request before CORS runs.
-                            Logs event_type=cors_preflight_arrived for OPTIONS,
-                            event_type=request_started for everything else.
-
-CORSMiddleware            — Starlette built-in; short-circuits OPTIONS and
-                            returns 400 when the origin is not in allow_origins.
-
-PostCORSMiddleware        — innermost; only reached when CORS has passed.
-                            Logs event_type=request_passed_cors so you can
-                            confirm the request made it through CORS.
+/health and OPTIONS requests are intentionally not logged to keep Loki free
+of uptime-checker noise.
 """
 
 import logging
@@ -46,45 +32,8 @@ _SKIP_PATHS: frozenset[str] = frozenset({"/health", "/"})
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
-        # ------------------------------------------------------------------
-        # OPTIONS preflight: log before and after CORS handling so we can
-        # see exactly what arrives and whether CORS accepted or rejected it.
-        # No request_id is generated — preflights are stateless probes.
-        # ------------------------------------------------------------------
-        if request.method == "OPTIONS":
-            logger.info(
-                "cors_preflight_arrived",
-                extra={
-                    "event_type": "cors_preflight_arrived",
-                    "layer": "pre_cors",
-                    "method": "OPTIONS",
-                    "path": request.url.path,
-                    "origin": request.headers.get("origin"),
-                    "access_control_request_method": request.headers.get("access-control-request-method"),
-                    "access_control_request_headers": request.headers.get("access-control-request-headers"),
-                },
-            )
-            response = await call_next(request)
-            cors_rejected = response.status_code == 400
-            log_fn = logger.warning if cors_rejected else logger.info
-            log_fn(
-                "cors_preflight_response",
-                extra={
-                    "event_type": "cors_preflight_response",
-                    "layer": "pre_cors",
-                    "method": "OPTIONS",
-                    "path": request.url.path,
-                    "status_code": response.status_code,
-                    "cors_rejected": cors_rejected,
-                    "allow_origin": response.headers.get("access-control-allow-origin"),
-                    "allow_methods": response.headers.get("access-control-allow-methods"),
-                    "allow_headers": response.headers.get("access-control-allow-headers"),
-                },
-            )
-            return response
-
-        # Skip health-check noise.
-        if request.url.path in _SKIP_PATHS:
+        # Skip noisy / non-meaningful paths.
+        if request.method == "OPTIONS" or request.url.path in _SKIP_PATHS:
             return await call_next(request)
 
         # ------------------------------------------------------------------
@@ -104,11 +53,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             "request_started",
             extra={
                 "event_type": "request_started",
-                "layer": "pre_cors",
                 "method": request.method,
                 "path": request.url.path,
                 "query": str(request.url.query) or None,
-                "origin": request.headers.get("origin"),
                 "user_agent": request.headers.get("user-agent"),
                 "client_ip": (request.client.host if request.client else None),
             },
@@ -141,25 +88,3 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         # ------------------------------------------------------------------
         response.headers["X-Request-ID"] = request_id
         return response
-
-
-class PostCORSMiddleware(BaseHTTPMiddleware):
-    """Sits between CORSMiddleware and the route handlers.
-
-    A log entry here means the request survived CORS validation. If you see
-    cors_preflight_arrived but no request_passed_cors, CORS rejected the
-    request before it reached this layer.
-    """
-
-    async def dispatch(self, request: Request, call_next) -> Response:
-        logger.info(
-            "request_passed_cors",
-            extra={
-                "event_type": "request_passed_cors",
-                "layer": "post_cors",
-                "method": request.method,
-                "path": request.url.path,
-                "origin": request.headers.get("origin"),
-            },
-        )
-        return await call_next(request)
