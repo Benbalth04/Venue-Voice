@@ -33,6 +33,7 @@ def send_stripe_email(
     to_email: str,
     template: str,
     context: dict[str, Any],
+    idempotency_key: str | None = None,
 ) -> None:
     """Send one transactional billing email (always from info@venuevoice.com.au, BCC ops)."""
     if not _RESEND_API_KEY:
@@ -62,6 +63,8 @@ def send_stripe_email(
             "subject": subject,
             "html": html,
         }
+        if idempotency_key:
+            params["idempotency_key"] = idempotency_key  # type: ignore[typeddict-unknown-key]
         resend.Emails.send(params)
 
     call_with_exponential_backoff(_send, operation_name=f"Resend Stripe template={template}")
@@ -94,13 +97,17 @@ def process_pending_stripe_emails(db: Session, *, limit: int = 50) -> dict:
 
     stmt = (
         sa_update(EmailEventORM)
-        .where(EmailEventORM.id.in_(claim_ids))
+        .where(
+            EmailEventORM.id.in_(claim_ids),
+            EmailEventORM.status == "pending",
+        )
         .values(status="sending")
         .returning(
             EmailEventORM.id,
             EmailEventORM.recipient_email,
             EmailEventORM.template_name,
             EmailEventORM.context_json,
+            EmailEventORM.idempotency_key,
         )
         .execution_options(synchronize_session=False)
     )
@@ -113,7 +120,7 @@ def process_pending_stripe_emails(db: Session, *, limit: int = 50) -> dict:
     processed = 0
     failed = 0
     for row in rows:
-        eid, recipient, template, ctx = row[0], row[1], row[2], row[3] or {}
+        eid, recipient, template, ctx, idem_key = row[0], row[1], row[2], row[3] or {}, row[4]
         if not recipient or not template:
             mark_email_events(
                 db, [eid], status="failed_permanent", error="Missing recipient or template_name"
@@ -121,7 +128,12 @@ def process_pending_stripe_emails(db: Session, *, limit: int = 50) -> dict:
             failed += 1
             continue
         try:
-            send_stripe_email(to_email=recipient, template=template, context=dict(ctx))
+            send_stripe_email(
+                to_email=recipient,
+                template=template,
+                context=dict(ctx),
+                idempotency_key=idem_key or None,
+            )
             mark_email_events(db, [eid], status="sent", sent_at=datetime.now(timezone.utc))
             processed += 1
             logger.info("Stripe email queue processed email_event_id=%s template=%s", eid, template)

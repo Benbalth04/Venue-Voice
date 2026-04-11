@@ -182,8 +182,17 @@ def handle_stripe_webhook_event(db: Session, event: dict[str, Any]) -> None:
 
     evt_id = str(event.get("id") or "")
     base_ctx = _base_email_context(user)
+    # For lifecycle-start templates, key on subscription ID so that
+    # checkout.session.completed and customer.subscription.created (which both fire
+    # for the same new subscription) share one idempotency key and only one email is sent.
+    sub_entity_key: str | None = None
+    if subscription_dict:
+        raw_sub_id = subscription_dict.get("id")
+        if isinstance(raw_sub_id, str) and raw_sub_id:
+            sub_entity_key = f"sub_{raw_sub_id}"
     for job in jobs:
-        _enqueue_billing_email(db, evt_id, user, company, job, base_ctx)
+        entity_key = sub_entity_key if job.template in _SUBSCRIPTION_LIFECYCLE_START_TEMPLATES else None
+        _enqueue_billing_email(db, evt_id, user, company, job, base_ctx, entity_key=entity_key)
 
     # After a downgrade, log the over-limit state for observability.
     # No data is modified — this is purely a diagnostic log.
@@ -306,6 +315,8 @@ def _base_email_context(user: User) -> dict[str, Any]:
     }
 
 
+_SUBSCRIPTION_LIFECYCLE_START_TEMPLATES = frozenset({"trial_started", "subscription_activated"})
+
 _TEMPLATES_TRIAL_END = frozenset({"trial_started", "trial_ending_soon"})
 _TEMPLATES_NEXT_BILLING = frozenset(
     {
@@ -387,8 +398,10 @@ def _enqueue_billing_email(
     company: Company,
     job: StripeEmailJob,
     base_ctx: dict[str, Any],
+    *,
+    entity_key: str | None = None,
 ) -> None:
-    idempotency_key = f"{stripe_event_id}:{job.template}"
+    idempotency_key = f"{entity_key or stripe_event_id}:{job.template}"
     merged = {**base_ctx, **job.context}
     apply_user_timezone_to_billing_context(db, user, merged, template=job.template, company=company)
     row = EmailEvent(
