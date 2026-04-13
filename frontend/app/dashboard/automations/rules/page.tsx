@@ -18,7 +18,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
-import { AlertTriangle, Bell, Check, ChevronDown, GripVertical, Loader2, Pencil, Plus, Save, Trash2 } from "lucide-react"
+import { AlertTriangle, Bell, Check, ChevronDown, Copy, GripVertical, Loader2, Pencil, Plus, Save, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner"
 import { Card } from "@/components/ui/card"
@@ -279,6 +279,7 @@ function SortableLeafCondition({
   questions,
   onUpdate,
   onDelete,
+  onDuplicate,
   brokenMessage,
 }: {
   label: string
@@ -286,6 +287,7 @@ function SortableLeafCondition({
   questions: LogicQuestionOption[]
   onUpdate: (next: ConditionDraft) => void
   onDelete: () => void
+  onDuplicate: () => void
   brokenMessage?: string | null
 }) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
@@ -303,6 +305,7 @@ function SortableLeafCondition({
         questions={questions}
         onUpdate={onUpdate}
         onDelete={onDelete}
+        onDuplicate={onDuplicate}
         dragAttributes={attributes}
         dragListeners={listeners}
         brokenMessage={brokenMessage}
@@ -321,7 +324,9 @@ function ConditionGroupCard({
   questions,
   onUpdateGroup,
   onDeleteGroup,
+  onDuplicateGroup,
   onDeleteSubCondition,
+  onDuplicateSubCondition,
   brokenConditionMap,
 }: {
   groupIndex: number
@@ -329,7 +334,9 @@ function ConditionGroupCard({
   questions: LogicQuestionOption[]
   onUpdateGroup: (next: GroupDraft) => void
   onDeleteGroup: () => void
+  onDuplicateGroup: () => void
   onDeleteSubCondition: (localId: string) => void
+  onDuplicateSubCondition: (localId: string) => void
   brokenConditionMap: Map<string, string>
 }) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
@@ -376,6 +383,14 @@ function ConditionGroupCard({
               </button>
               <button
                 type="button"
+                className="rounded-lg border border-zinc-200 bg-white p-2 text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700"
+                onClick={onDuplicateGroup}
+                aria-label={`Duplicate group ${groupIndex + 1}`}
+              >
+                <Copy className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
                 className="rounded-lg border border-zinc-200 bg-white p-2 text-zinc-400 hover:bg-red-50 hover:text-red-600"
                 onClick={onDeleteGroup}
                 aria-label={`Delete group ${groupIndex + 1}`}
@@ -413,6 +428,7 @@ function ConditionGroupCard({
                         onUpdateGroup({ ...group, conditions: next_ })
                       }}
                       onDelete={() => onDeleteSubCondition(cond.localId)}
+                      onDuplicate={() => onDuplicateSubCondition(cond.localId)}
                       brokenMessage={cond.id ? brokenConditionMap.get(cond.id) : undefined}
                     />
                     {idx < group.conditions.length - 1 && (
@@ -442,6 +458,7 @@ function SortableTopLevelLeaf({
   questions,
   onUpdateItem,
   onDeleteItem,
+  onDuplicateItem,
   brokenConditionMap,
 }: {
   item: ConditionDraft & { kind: "condition" }
@@ -449,6 +466,7 @@ function SortableTopLevelLeaf({
   questions: LogicQuestionOption[]
   onUpdateItem: (next: TopLevelItem) => void
   onDeleteItem: () => void
+  onDuplicateItem: () => void
   brokenConditionMap: Map<string, string>
 }) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: item.localId })
@@ -463,6 +481,7 @@ function SortableTopLevelLeaf({
         questions={questions}
         onUpdate={(next) => onUpdateItem({ kind: "condition", ...next })}
         onDelete={onDeleteItem}
+        onDuplicate={onDuplicateItem}
         dragAttributes={attributes}
         dragListeners={listeners}
         brokenMessage={item.id ? brokenConditionMap.get(item.id) : undefined}
@@ -481,7 +500,9 @@ function SortableTopLevelItem({
   questions,
   onUpdateItem,
   onDeleteItem,
+  onDuplicateItem,
   onDeleteSubCondition,
+  onDuplicateSubCondition,
   brokenConditionMap,
 }: {
   item: TopLevelItem
@@ -489,7 +510,9 @@ function SortableTopLevelItem({
   questions: LogicQuestionOption[]
   onUpdateItem: (next: TopLevelItem) => void
   onDeleteItem: () => void
+  onDuplicateItem: () => void
   onDeleteSubCondition: (groupLocalId: string, condLocalId: string) => void
+  onDuplicateSubCondition: (groupLocalId: string, condLocalId: string) => void
   brokenConditionMap: Map<string, string>
 }) {
   if (item.kind === "group") {
@@ -500,7 +523,9 @@ function SortableTopLevelItem({
         questions={questions}
         onUpdateGroup={(next) => onUpdateItem(next)}
         onDeleteGroup={onDeleteItem}
+        onDuplicateGroup={onDuplicateItem}
         onDeleteSubCondition={(condLocalId) => onDeleteSubCondition(item.localId, condLocalId)}
+        onDuplicateSubCondition={(condLocalId) => onDuplicateSubCondition(item.localId, condLocalId)}
         brokenConditionMap={brokenConditionMap}
       />
     )
@@ -513,6 +538,7 @@ function SortableTopLevelItem({
       questions={questions}
       onUpdateItem={onUpdateItem}
       onDeleteItem={onDeleteItem}
+      onDuplicateItem={onDuplicateItem}
       brokenConditionMap={brokenConditionMap}
     />
   )
@@ -751,6 +777,50 @@ export default function RulesPage() {
     setDraft((cur) =>
       cur ? { ...cur, items: cur.items.filter((_, i) => i !== index) } : cur,
     )
+  }
+
+  function duplicateTopLevelItem(index: number) {
+    setDraft((cur) => {
+      if (!cur) return cur
+      const original = cur.items[index]
+      if (!original) return cur
+      const duplicate: TopLevelItem =
+        original.kind === "group"
+          ? {
+              ...original,
+              localId: uid(),
+              id: null,
+              conditions: original.conditions.map((c) => ({ ...c, localId: uid(), id: null })),
+            }
+          : { ...original, localId: uid(), id: null }
+      const items = [
+        ...cur.items.slice(0, index + 1),
+        duplicate,
+        ...cur.items.slice(index + 1),
+      ]
+      return { ...cur, items }
+    })
+  }
+
+  function duplicateSubCondition(groupLocalId: string, condLocalId: string) {
+    setDraft((cur) => {
+      if (!cur) return cur
+      return {
+        ...cur,
+        items: cur.items.map((item) => {
+          if (item.kind !== "group" || item.localId !== groupLocalId) return item
+          const idx = item.conditions.findIndex((c) => c.localId === condLocalId)
+          if (idx === -1) return item
+          const duplicate = { ...item.conditions[idx], localId: uid(), id: null }
+          const conditions = [
+            ...item.conditions.slice(0, idx + 1),
+            duplicate,
+            ...item.conditions.slice(idx + 1),
+          ]
+          return { ...item, conditions }
+        }),
+      }
+    })
   }
 
   async function deleteSubCondition(groupLocalId: string, condLocalId: string) {
@@ -1096,7 +1166,9 @@ export default function RulesPage() {
                               questions={supportedQuestions}
                               onUpdateItem={(next) => updateItem(index, next)}
                               onDeleteItem={() => void deleteTopLevelItem(index)}
+                              onDuplicateItem={() => duplicateTopLevelItem(index)}
                               onDeleteSubCondition={deleteSubCondition}
+                              onDuplicateSubCondition={duplicateSubCondition}
                               brokenConditionMap={brokenConditionMap}
                             />
                             {index < draft.items.length - 1 && (

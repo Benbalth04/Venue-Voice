@@ -9,6 +9,7 @@ export function QuestionCard({
   dragListeners,
   onSelect,
   onDelete,
+  onDuplicate,
   questionTypeLabels,
 }: {
   question: Question
@@ -17,6 +18,7 @@ export function QuestionCard({
   dragListeners: unknown
   onSelect: () => void
   onDelete: () => void
+  onDuplicate: () => void
   questionTypeLabels?: Record<string, string>
 }) {
   return (
@@ -43,6 +45,18 @@ export function QuestionCard({
           onClick={(e) => e.stopPropagation()}
         >
           <GripIcon />
+        </button>
+
+        <button
+          type="button"
+          className="mt-0.5 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-600 shadow-sm outline-none hover:bg-zinc-50 focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2"
+          aria-label="Duplicate question"
+          onClick={(e) => {
+            e.stopPropagation()
+            onDuplicate()
+          }}
+        >
+          <CopyIcon />
         </button>
 
         <div className="min-w-0 flex-1">
@@ -107,6 +121,23 @@ function questionTypeLabel(type: string): string {
     phone: "Phone",
   }
   return labels[type] ?? type
+}
+
+function CopyIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      aria-hidden="true"
+    >
+      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  )
 }
 
 function TrashIcon() {

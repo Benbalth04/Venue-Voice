@@ -319,6 +319,21 @@ export default function SurveyEditorPage() {
     )
   }
 
+  function duplicateQuestion(questionId: string) {
+    setSchema((prev) => {
+      const idx = prev.questions.findIndex((q) => q.id === questionId)
+      if (idx === -1) return prev
+      const original = prev.questions[idx]
+      const duplicate = { ...original, id: crypto.randomUUID() }
+      const questions = [
+        ...prev.questions.slice(0, idx + 1),
+        duplicate,
+        ...prev.questions.slice(idx + 1),
+      ]
+      return { ...prev, version: prev.version + 1, questions }
+    })
+  }
+
   function reorderQuestions(nextIds: string[]) {
     const byId = new Map(schema.questions.map((q) => [q.id, q]))
     setSchema((prev) => ({
@@ -570,6 +585,7 @@ export default function SurveyEditorPage() {
                   selection={selection}
                   onSelect={setSelection}
                   onDeleteQuestion={deleteQuestion}
+                  onDuplicateQuestion={duplicateQuestion}
                   onReorderQuestions={reorderQuestions}
                   questionTypeLabels={Object.fromEntries(questionTypes.map((qt) => [qt.type, qt.label]))}
                 />

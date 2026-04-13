@@ -1,6 +1,6 @@
 "use client"
 
-import { GripVertical, Trash2 } from "lucide-react"
+import { Copy, GripVertical, Trash2 } from "lucide-react"
 import { AiAnalysisInfoTooltip } from "@/components/analytics/AiAnalysisInfoTooltip"
 import { Card } from "@/components/ui/card"
 import { DropdownSelect, SingleSelectDropdown } from "@/components/ui/DropdownSelect"
@@ -117,6 +117,7 @@ export function RuleConditionCard({
   questions,
   onUpdate,
   onDelete,
+  onDuplicate,
   dragAttributes,
   dragListeners,
   brokenMessage,
@@ -126,6 +127,7 @@ export function RuleConditionCard({
   questions: LogicQuestionOption[]
   onUpdate: (next: ConditionDraft) => void
   onDelete: () => void
+  onDuplicate: () => void
   dragAttributes?: React.HTMLAttributes<HTMLElement>
   dragListeners?: Record<string, unknown>
   brokenMessage?: string | null
@@ -237,6 +239,14 @@ export function RuleConditionCard({
               {...(dragListeners as React.HTMLAttributes<HTMLButtonElement>)}
             >
               <GripVertical className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              className="rounded-lg border border-zinc-200 bg-white p-2 text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700"
+              onClick={onDuplicate}
+              aria-label={`Duplicate ${label}`}
+            >
+              <Copy className="h-4 w-4" />
             </button>
             <button
               type="button"

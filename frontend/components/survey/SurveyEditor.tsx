@@ -32,6 +32,7 @@ export function SurveyEditor({
   selection,
   onSelect,
   onDeleteQuestion,
+  onDuplicateQuestion,
   onReorderQuestions,
   questionTypeLabels,
 }: {
@@ -39,6 +40,7 @@ export function SurveyEditor({
   selection: EditorSelection
   onSelect: (next: EditorSelection) => void
   onDeleteQuestion: (questionId: string) => void
+  onDuplicateQuestion: (questionId: string) => void
   onReorderQuestions: (nextQuestionIds: string[]) => void
   questionTypeLabels?: Record<string, string>
 }) {
@@ -121,6 +123,7 @@ export function SurveyEditor({
                     dragListeners={{}}
                     onSelect={() => onSelect({ type: "question", questionId: q.id })}
                     onDelete={() => onDeleteQuestion(q.id)}
+                    onDuplicate={() => onDuplicateQuestion(q.id)}
                     questionTypeLabels={questionTypeLabels}
                   />
                 }
