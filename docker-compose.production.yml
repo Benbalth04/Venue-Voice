@@ -75,12 +75,18 @@ services:
     networks:
       - monitoring
       - app
+    healthcheck:
+      test: ["CMD-SHELL", "node extra/healthcheck.js"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
 
   uptime_kuma_provisioner:
     image: python:3.11-slim
     restart: "no"
     command: >
-      sh -c "pip install uptime-kuma-api --quiet &&
+      sh -c "pip install 'uptime-kuma-api==1.2.1' --quiet &&
              python /provision/provision.py"
     volumes:
       - ./uptime-kuma/provision.py:/provision/provision.py:ro
@@ -93,7 +99,8 @@ services:
       - monitoring
       - app
     depends_on:
-      - uptime_kuma
+      uptime_kuma:
+        condition: service_healthy
 
   loki:
     image: grafana/loki:3.4.2

@@ -83,8 +83,6 @@ grafana.venuevoice.com.au {
 	tls /etc/caddy/certs/cloudflare-origin.pem /etc/caddy/certs/cloudflare-origin.key
 
 	reverse_proxy grafana:3000 {
-		# Grafana requires Host forwarded as upstream address for redirects and WebSocket live streaming
-		header_up Host {upstream_hostport}
 		header_up X-Real-IP {remote_host}
 		header_up X-Forwarded-Proto {scheme}
 	}

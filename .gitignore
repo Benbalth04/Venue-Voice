@@ -7,3 +7,4 @@ production_deploy.txt
 stripe-dev-cmd.txt
 cloudflare-certs.txt
 __pycache__/
+database/test_data/*

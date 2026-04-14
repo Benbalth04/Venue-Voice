@@ -43,6 +43,9 @@ limits_config:
   ingestion_rate_mb: 16
   ingestion_burst_size_mb: 32
   max_label_names_per_series: 10
+  # Single-node: enforce rate limits locally instead of querying peer ingesters.
+  # Prevents "empty ring" errors from the distributed rate store.
+  ingestion_rate_strategy: local
 
 compactor:
   working_directory: /loki/compactor

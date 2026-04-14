@@ -226,6 +226,7 @@ def create_checkout_session(company: Company, owner: User, db: Session, plan: st
                 mode="subscription",
                 line_items=[{"price": price_id, "quantity": 1}],
                 subscription_data=subscription_data,
+                allow_promotion_codes=True,
                 metadata={"company_id": str(company.id)},
                 success_url=f"{_APP_ORIGIN}/billing/success?session_id={{CHECKOUT_SESSION_ID}}",
                 cancel_url=f"{_APP_ORIGIN}/billing/failed?session_id={{CHECKOUT_SESSION_ID}}",
