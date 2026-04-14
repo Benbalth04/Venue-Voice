@@ -8,6 +8,7 @@ from supabase import Client, create_client
 
 from ..core.config import settings
 from ..core.errors.exceptions import ExternalAPIError, ValidationError
+from ..core.observability import track_external_call
 
 logger = logging.getLogger(__name__)
 
@@ -50,14 +51,15 @@ def upload_qr_asset(
     last_err: str | None = None
     for attempt in range(max_retries):
         try:
-            client.storage.from_(QR_CODES_BUCKET).upload(
-                storage_path,
-                data,
-                file_options={
-                    "content-type": mime_type,
-                    "upsert": "false",
-                },
-            )
+            with track_external_call("supabase_storage", "upload_qr"):
+                client.storage.from_(QR_CODES_BUCKET).upload(
+                    storage_path,
+                    data,
+                    file_options={
+                        "content-type": mime_type,
+                        "upsert": "false",
+                    },
+                )
             return storage_path
         except Exception as e:
             last_err = str(e)
@@ -176,14 +178,15 @@ def upload_survey_photo(
     last_err: str | None = None
     for attempt in range(max_retries):
         try:
-            client.storage.from_(SURVEY_PHOTOS_BUCKET).upload(
-                storage_path,
-                data,
-                file_options={
-                    "content-type": mime_type,
-                    "upsert": "false",
-                },
-            )
+            with track_external_call("supabase_storage", "upload_photo"):
+                client.storage.from_(SURVEY_PHOTOS_BUCKET).upload(
+                    storage_path,
+                    data,
+                    file_options={
+                        "content-type": mime_type,
+                        "upsert": "false",
+                    },
+                )
             return storage_path
         except Exception as e:
             last_err = str(e)

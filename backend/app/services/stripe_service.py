@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from ..core.config import settings
 from ..core.errors.exceptions import ExternalAPIError, NotFoundError, PermissionError, ValidationError
+from ..core.observability import track_external_call
 from ..models.postgres_model import Company, Subscription, User
 from ..services.billing.stripe_billing_display import plan_display_name_from_price
 
@@ -154,11 +155,12 @@ def get_or_create_stripe_customer(company: Company, owner: User, db: Session) ->
         return sub.stripe_customer_id
 
     try:
-        customer = stripe.Customer.create(
-            email=owner.email,
-            name=company.name,
-            metadata={"company_id": str(company.id)},
-        )
+        with track_external_call("stripe", "customer_create"):
+            customer = stripe.Customer.create(
+                email=owner.email,
+                name=company.name,
+                metadata={"company_id": str(company.id)},
+            )
     except stripe.StripeError as exc:
         raise ExternalAPIError(
             service_name="Stripe",
@@ -218,15 +220,16 @@ def create_checkout_session(company: Company, owner: User, db: Session, plan: st
         subscription_data["trial_period_days"] = _FREE_TRIAL_DAYS
 
     try:
-        session = stripe.checkout.Session.create(
-            customer=customer_id,
-            mode="subscription",
-            line_items=[{"price": price_id, "quantity": 1}],
-            subscription_data=subscription_data,
-            metadata={"company_id": str(company.id)},
-            success_url=f"{_APP_ORIGIN}/billing/success?session_id={{CHECKOUT_SESSION_ID}}",
-            cancel_url=f"{_APP_ORIGIN}/billing/failed?session_id={{CHECKOUT_SESSION_ID}}",
-        )
+        with track_external_call("stripe", "checkout_session_create"):
+            session = stripe.checkout.Session.create(
+                customer=customer_id,
+                mode="subscription",
+                line_items=[{"price": price_id, "quantity": 1}],
+                subscription_data=subscription_data,
+                metadata={"company_id": str(company.id)},
+                success_url=f"{_APP_ORIGIN}/billing/success?session_id={{CHECKOUT_SESSION_ID}}",
+                cancel_url=f"{_APP_ORIGIN}/billing/failed?session_id={{CHECKOUT_SESSION_ID}}",
+            )
     except stripe.StripeError as exc:
         raise ExternalAPIError(
             service_name="Stripe",
@@ -252,7 +255,8 @@ def verify_checkout_session_for_company(session_id: str, company: Company, db: S
         )
 
     try:
-        co = stripe.checkout.Session.retrieve(sid)
+        with track_external_call("stripe", "checkout_session_retrieve"):
+            co = stripe.checkout.Session.retrieve(sid)
     except stripe.InvalidRequestError as exc:
         raise ValidationError(
             code="INVALID_CHECKOUT_SESSION",
@@ -290,7 +294,8 @@ def verify_checkout_session_for_company(session_id: str, company: Company, db: S
         customer_id = raw_customer if isinstance(raw_customer, str) else getattr(raw_customer, "id", None)
         if customer_id:
             try:
-                cust = stripe.Customer.retrieve(customer_id)
+                with track_external_call("stripe", "customer_retrieve"):
+                    cust = stripe.Customer.retrieve(customer_id)
                 raw_customer_meta = getattr(cust, "metadata", None)
                 cm = dict(raw_customer_meta) if hasattr(raw_customer_meta, "items") else {}
                 meta_company_id = cm.get("company_id")
@@ -328,7 +333,8 @@ def create_portal_session(company: Company, db: Session) -> str:
         }
         if portal_config:
             create_params["configuration"] = portal_config
-        session = stripe.billing_portal.Session.create(**create_params)
+        with track_external_call("stripe", "portal_session_create"):
+            session = stripe.billing_portal.Session.create(**create_params)
     except stripe.StripeError as exc:
         raise ExternalAPIError(
             service_name="Stripe",
@@ -477,7 +483,8 @@ def sync_subscription_from_stripe_object(stripe_sub: stripe.Subscription, db: Se
         if not company_id_str:
             # Try customer-level metadata
             try:
-                customer = stripe.Customer.retrieve(customer_id)
+                with track_external_call("stripe", "customer_retrieve"):
+                    customer = stripe.Customer.retrieve(customer_id)
                 raw_customer_meta = getattr(customer, "metadata", None)
                 customer_meta = (
                     dict(raw_customer_meta) if hasattr(raw_customer_meta, "items") else {}

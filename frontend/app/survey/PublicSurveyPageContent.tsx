@@ -6,6 +6,7 @@ import { Loader2 } from "lucide-react"
 import { SurveyRenderer, getUnansweredRequiredIds, type SurveyResponses, type SurveyResponseValue } from "@/components/survey/SurveyRenderer"
 import {
   fetchSurveyForSession,
+  fetchSurveyRedirect,
   submitSurvey,
   SurveySubmissionValidationError,
   extractErrorMessage,
@@ -84,6 +85,10 @@ export default function PublicSurveyPageContent() {
   const sessionId = searchParams.get("session") ?? ""
   const qrCodeId = searchParams.get("qr") ?? ""
 
+  // May differ from the URL param when the session was auto-created because
+  // the user bypassed the QR redirect page.
+  const [effectiveSessionId, setEffectiveSessionId] = useState(sessionId)
+
   const [survey, setSurvey] = useState<Survey | null>(null)
   const [responses, setResponses] = useState<SurveyResponses>({})
   const [loading, setLoading] = useState(true)
@@ -99,7 +104,7 @@ export default function PublicSurveyPageContent() {
   responsesRef.current = responses
 
   useEffect(() => {
-    if (!sessionId || !qrCodeId) {
+    if (!qrCodeId) {
       setError("Invalid session. Please scan the QR code again.")
       setLoading(false)
       return
@@ -109,12 +114,33 @@ export default function PublicSurveyPageContent() {
 
     async function load() {
       try {
-        const data = await fetchSurveyForSession(sessionId, qrCodeId)
+        let resolvedSessionId = sessionId
+
+        // If there is no session in the URL (user bypassed QR redirect), auto-create
+        // one via the redirect endpoint so the survey can still be loaded and submitted.
+        if (!sessionId) {
+          const redirectResult = await fetchSurveyRedirect(qrCodeId)
+          if (!redirectResult.valid || !redirectResult.session_id) {
+            if (!cancelled) setError("Survey not available. Please scan the QR code again.")
+            return
+          }
+          resolvedSessionId = redirectResult.session_id
+          if (!cancelled) {
+            setEffectiveSessionId(resolvedSessionId)
+            window.history.replaceState(
+              {},
+              "",
+              `?session=${encodeURIComponent(resolvedSessionId)}&qr=${encodeURIComponent(qrCodeId)}`,
+            )
+          }
+        }
+
+        const data = await fetchSurveyForSession(resolvedSessionId, qrCodeId)
         if (cancelled) return
 
         setSurvey(surveyFromApi(data.schema as Record<string, unknown>))
 
-        const draft = loadDraft(sessionId, qrCodeId)
+        const draft = loadDraft(resolvedSessionId, qrCodeId)
         if (draft && Object.keys(draft).length > 0) {
           setResponses(draft)
         }
@@ -134,17 +160,17 @@ export default function PublicSurveyPageContent() {
   }, [sessionId, qrCodeId])
 
   const persistDraft = useCallback(() => {
-    saveDraft(sessionId, qrCodeId, responsesRef.current)
-  }, [sessionId, qrCodeId])
+    saveDraft(effectiveSessionId, qrCodeId, responsesRef.current)
+  }, [effectiveSessionId, qrCodeId])
 
   useEffect(() => {
-    if (!sessionId || !qrCodeId || loading) return
+    if (!effectiveSessionId || !qrCodeId || loading) return
     if (draftTimer.current) clearTimeout(draftTimer.current)
     draftTimer.current = setTimeout(persistDraft, DRAFT_DEBOUNCE_MS)
     return () => {
       if (draftTimer.current) clearTimeout(draftTimer.current)
     }
-  }, [responses, sessionId, qrCodeId, loading, persistDraft])
+  }, [responses, effectiveSessionId, qrCodeId, loading, persistDraft])
 
   const handleResponseChange = useCallback((questionId: string, next: SurveyResponseValue) => {
     setResponses((prev) => ({ ...prev, [questionId]: next }))
@@ -154,7 +180,7 @@ export default function PublicSurveyPageContent() {
   }, [])
 
   const handleSubmit = useCallback(async () => {
-    if (!sessionId || !qrCodeId || submitting || !survey) return
+    if (!effectiveSessionId || !qrCodeId || submitting || !survey) return
 
     setSubmitAttempted(true)
     const missingIds = getUnansweredRequiredIds(survey, responsesRef.current)
@@ -170,9 +196,9 @@ export default function PublicSurveyPageContent() {
     try {
       const answers = responsesToAnswers(responsesRef.current)
       const photoFiles = collectPhotoFiles(responsesRef.current)
-      const result = await submitSurvey(sessionId, qrCodeId, answers, photoFiles)
+      const result = await submitSurvey(effectiveSessionId, qrCodeId, answers, photoFiles)
       submittedRef.current = true
-      clearDraft(sessionId, qrCodeId)
+      clearDraft(effectiveSessionId, qrCodeId)
       window.location.href = result.redirect_url
     } catch (err) {
       if (err instanceof SurveySubmissionValidationError) {
@@ -186,15 +212,15 @@ export default function PublicSurveyPageContent() {
     } finally {
       setSubmitting(false)
     }
-  }, [sessionId, qrCodeId, submitting, survey])
+  }, [effectiveSessionId, qrCodeId, submitting, survey])
 
   useEffect(() => {
     const saveAndAbandon = () => {
-      saveDraft(sessionId, qrCodeId, responsesRef.current)
-      if (!submittedRef.current && sessionId && qrCodeId) {
+      saveDraft(effectiveSessionId, qrCodeId, responsesRef.current)
+      if (!submittedRef.current && effectiveSessionId && qrCodeId) {
         const url = `${BACKEND_BASE}/api/v1/survey/abandon`
         const blob = new Blob(
-          [JSON.stringify({ session_id: sessionId, qr_code_id: qrCodeId })],
+          [JSON.stringify({ session_id: effectiveSessionId, qr_code_id: qrCodeId })],
           { type: "application/json" },
         )
         navigator.sendBeacon(url, blob)
@@ -206,7 +232,7 @@ export default function PublicSurveyPageContent() {
       window.removeEventListener("beforeunload", saveAndAbandon)
       window.removeEventListener("pagehide", saveAndAbandon)
     }
-  }, [sessionId, qrCodeId])
+  }, [effectiveSessionId, qrCodeId])
 
   if (loading) {
     return (

@@ -74,6 +74,26 @@ services:
       - uptime_kuma_data:/app/data
     networks:
       - monitoring
+      - app
+
+  uptime_kuma_provisioner:
+    image: python:3.11-slim
+    restart: "no"
+    command: >
+      sh -c "pip install uptime-kuma-api --quiet &&
+             python /provision/provision.py"
+    volumes:
+      - ./uptime-kuma/provision.py:/provision/provision.py:ro
+    environment:
+      UPTIME_KUMA_URL: http://uptime_kuma:3001
+      UPTIME_KUMA_ADMIN_USER: ${UPTIME_KUMA_ADMIN_USER:-admin}
+      UPTIME_KUMA_ADMIN_PASSWORD: ${UPTIME_KUMA_ADMIN_PASSWORD}
+      API_HOST: ${API_HOST:-api.example.com}
+    networks:
+      - monitoring
+      - app
+    depends_on:
+      - uptime_kuma
 
   loki:
     image: grafana/loki:3.4.2

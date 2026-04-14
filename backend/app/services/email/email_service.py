@@ -11,6 +11,7 @@ from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
 from ...core.datetime_user_tz import format_utc_instant_for_email_datetime
+from ...core.observability import track_external_call
 from ...core.timezone_australia import effective_zoneinfo_for_stored_timezone
 from ...integrations.supabase_storage import (
     generate_photo_signed_url,
@@ -318,7 +319,8 @@ def _send_via_resend(recipient_emails: list[str], subject: str, html: str) -> No
             "subject": subject,
             "html": html,
         }
-        resend.Emails.send(params)
+        with track_external_call("resend", "send_email"):
+            resend.Emails.send(params)
 
     call_with_exponential_backoff(_send, operation_name="Resend flow alert email")
 

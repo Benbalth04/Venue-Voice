@@ -547,6 +547,32 @@ async def submit_survey(
     if not sess:
         raise NotFoundError(code="SESSION_NOT_FOUND", message="Session not found")
 
+    # Fallback: ensure a non-deleted ScanEvent exists for this session
+    # (guards completed % integrity in analytics)
+    has_fallback_scan = False
+    active_scan = (
+        db.query(ScanEventORM)
+        .filter(
+            ScanEventORM.id == sess.scan_id,
+            ScanEventORM.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if not active_scan:
+        _ip = request.client.host if request.client else None
+        _ua = request.headers.get("user-agent")
+        fallback_scan = ScanEventORM(
+            qr_code_id=sess.qr_code_id,
+            company_id=sess.company_id,
+            location_snapshot_id=sess.location_snapshot_id,
+            session_id=sess.id,
+            ip_address=_ip,
+            user_agent=_ua,
+        )
+        db.add(fallback_scan)
+        db.flush()
+        has_fallback_scan = True
+
     # 4. Session expiry: reject if older than 15 minutes
     now_utc = datetime.now(timezone.utc)
     start_time_tz = sess.start_time
@@ -661,7 +687,7 @@ async def submit_survey(
                 normalized_answers.append((qid, text_val, None))
 
     end_time = now_utc
-    time_taken = int(session_age_seconds) if sess.start_time else None
+    time_taken = 0 if has_fallback_scan else (int(session_age_seconds) if sess.start_time else None)
 
     ip = request.client.host if request.client else None
     ua = request.headers.get("user-agent")

@@ -12,6 +12,7 @@ from openai import OpenAI, APITimeoutError, APIError
 
 from .config import settings
 from .errors.exceptions import ExternalAPIError
+from .observability import track_external_call
 
 logger = logging.getLogger(__name__)
 
@@ -98,13 +99,14 @@ def analyze_sentiment(text: str) -> tuple[dict[str, Any], str]:
 
     for attempt in range(_ATTEMPTS):
         try:
-            response = client.responses.create(
-                model=model,
-                input=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_content},
-                ]
-            )
+            with track_external_call("openai", "sentiment_analysis"):
+                response = client.responses.create(
+                    model=model,
+                    input=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": user_content},
+                    ]
+                )
             # Convert the response to a JSON string
             response_json_str = response.model_dump_json()
 
