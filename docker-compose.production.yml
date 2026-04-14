@@ -1,7 +1,7 @@
 # Production overrides — applies live env file and excludes services hosted externally.
 #
 # Usage:
-#   docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.production.yml up -d
+#   docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.production.yml up --build
 #
 # Set in .env.production:
 #   API_HOST=api.venuevoice.com.au

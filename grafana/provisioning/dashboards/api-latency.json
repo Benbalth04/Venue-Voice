@@ -18,10 +18,10 @@
         "current": { "value": "backend.*", "text": "backend.*" },
         "options": [
           { "value": "backend.*", "text": "All backends", "selected": true },
-          { "value": "backend-blue", "text": "backend-blue", "selected": false },
-          { "value": "backend-green", "text": "backend-green", "selected": false }
+          { "value": "backend_blue", "text": "backend_blue", "selected": false },
+          { "value": "backend_green", "text": "backend_green", "selected": false }
         ],
-        "query": "backend.*,backend-blue,backend-green"
+        "query": "backend.*,backend_blue,backend_green"
       }
     ]
   },
