@@ -6,184 +6,136 @@
   "tags": ["venue-voice", "api"],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 4,
   "refresh": "30s",
   "time": { "from": "now-3h", "to": "now" },
+
   "templating": {
     "list": [
       {
-        "name": "container",
-        "label": "Container",
+        "name": "service",
+        "label": "Service",
+        "type": "query",
+        "datasource": { "type": "loki", "uid": "loki" },
+        "query": {
+          "refId": "A",
+          "query": "label_values({job=\"docker\"}, service)"
+        },
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false,
+        "refresh": 2
+      },
+      {
+        "name": "level",
+        "label": "Level",
         "type": "custom",
-        "current": { "value": "backend.*", "text": "backend.*" },
         "options": [
-          { "value": "backend.*", "text": "All backends", "selected": true },
-          { "value": "backend_blue", "text": "backend_blue", "selected": false },
-          { "value": "backend_green", "text": "backend_green", "selected": false }
+          { "value": "info", "text": "info" },
+          { "value": "warning", "text": "warning" },
+          { "value": "error", "text": "error" }
         ],
-        "query": "backend.*,backend_blue,backend_green"
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false
       }
     ]
   },
+
   "panels": [
     {
       "id": 1,
       "title": "Request Rate (req/s)",
       "type": "timeseries",
       "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "reqps",
-          "color": { "mode": "palette-classic" }
-        }
-      },
-      "options": {
-        "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "multi" }
-      },
       "targets": [
         {
+          "refId": "A",
           "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "sum(rate({container_name=~\"$container\"} | json | event_type=`request_completed` [2m]))",
-          "legendFormat": "req/s",
-          "refId": "A"
+          "expr": "sum(rate({job=\"docker\"} | json | event_type=\"request_completed\" [5m]))"
         }
       ]
     },
+
     {
       "id": 2,
       "title": "Latency Percentiles (ms)",
       "type": "timeseries",
       "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "ms",
-          "color": { "mode": "palette-classic" }
-        }
-      },
-      "options": {
-        "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "multi" }
-      },
       "targets": [
         {
+          "refId": "A",
           "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "quantile_over_time(0.50, {container_name=~\"$container\"} | json | event_type=`request_completed` | unwrap latency_ms [2m])",
-          "legendFormat": "p50",
-          "refId": "A"
+          "expr": "quantile_over_time(0.50, {job=\"docker\"} | json | event_type=\"request_completed\" | unwrap latency_ms [5m])"
         },
         {
+          "refId": "B",
           "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "quantile_over_time(0.95, {container_name=~\"$container\"} | json | event_type=`request_completed` | unwrap latency_ms [2m])",
-          "legendFormat": "p95",
-          "refId": "B"
+          "expr": "quantile_over_time(0.95, {job=\"docker\"} | json | event_type=\"request_completed\" | unwrap latency_ms [5m])"
         },
         {
+          "refId": "C",
           "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "quantile_over_time(0.99, {container_name=~\"$container\"} | json | event_type=`request_completed` | unwrap latency_ms [2m])",
-          "legendFormat": "p99",
-          "refId": "C"
+          "expr": "quantile_over_time(0.99, {job=\"docker\"} | json | event_type=\"request_completed\" | unwrap latency_ms [5m])"
         }
       ]
     },
+
     {
       "id": 3,
       "title": "Error Rate (4xx + 5xx req/s)",
       "type": "timeseries",
       "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "reqps",
-          "color": { "fixedColor": "red", "mode": "fixed" }
-        }
-      },
-      "options": {
-        "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "multi" }
-      },
       "targets": [
         {
+          "refId": "A",
           "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "sum(rate({container_name=~\"$container\"} | json | event_type=`request_completed` | status_code >= 400 [2m]))",
-          "legendFormat": "errors/s",
-          "refId": "A"
+          "expr": "sum(rate({job=\"docker\"} | json | event_type=\"request_completed\" | status_code=~\"4..|5..\" [5m]))"
         }
       ]
     },
+
     {
       "id": 4,
       "title": "Status Code Distribution",
       "type": "piechart",
       "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" }
-        }
-      },
-      "options": {
-        "legend": { "displayMode": "list", "placement": "right" },
-        "pieType": "donut"
-      },
       "targets": [
         {
-          "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "sum by (status_code) (count_over_time({container_name=~\"$container\"} | json | event_type=`request_completed` [$__range]))",
-          "legendFormat": "{{status_code}}",
           "refId": "A",
-          "instant": true
+          "datasource": { "type": "loki", "uid": "loki" },
+          "instant": true,
+          "expr": "sum by (status_code) (count_over_time({job=\"docker\"} | json | event_type=\"request_completed\" [$__range]))"
         }
       ]
     },
+
     {
       "id": 5,
-      "title": "Top 10 Endpoints by Avg Latency (ms)",
+      "title": "Top Endpoints by Avg Latency (ms)",
       "type": "table",
       "gridPos": { "x": 0, "y": 16, "w": 12, "h": 10 },
-      "fieldConfig": {
-        "defaults": { "unit": "ms" },
-        "overrides": [
-          {
-            "matcher": { "id": "byName", "options": "path" },
-            "properties": [{ "id": "custom.width", "value": 400 }]
-          }
-        ]
-      },
-      "options": {
-        "sortBy": [{ "displayName": "Value", "desc": true }]
-      },
       "targets": [
         {
-          "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "sort_desc(avg by (path) (avg_over_time({container_name=~\"$container\"} | json | event_type=`request_completed` | unwrap latency_ms [$__range])))",
-          "legendFormat": "{{path}}",
           "refId": "A",
-          "instant": true
+          "datasource": { "type": "loki", "uid": "loki" },
+          "instant": true,
+          "expr": "topk(10, avg by (path) (avg_over_time({job=\"docker\"} | json | event_type=\"request_completed\" | unwrap latency_ms [$__range])))"
         }
       ]
     },
+
     {
       "id": 6,
       "title": "Request Volume by Endpoint",
       "type": "barchart",
       "gridPos": { "x": 12, "y": 16, "w": 12, "h": 10 },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "color": { "mode": "palette-classic" }
-        }
-      },
-      "options": {
-        "xField": "path",
-        "orientation": "horizontal",
-        "legend": { "displayMode": "list", "placement": "bottom" }
-      },
       "targets": [
         {
-          "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "sort_desc(sum by (path) (count_over_time({container_name=~\"$container\"} | json | event_type=`request_completed` [$__range])))",
-          "legendFormat": "{{path}}",
           "refId": "A",
-          "instant": true
+          "datasource": { "type": "loki", "uid": "loki" },
+          "instant": true,
+          "expr": "topk(10, sum by (path) (count_over_time({job=\"docker\"} | json | event_type=\"request_completed\" [$__range])))"
         }
       ]
     }

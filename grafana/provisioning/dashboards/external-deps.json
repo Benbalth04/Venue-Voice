@@ -6,22 +6,33 @@
   "tags": ["venue-voice", "database", "external-api"],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "30s",
   "time": { "from": "now-3h", "to": "now" },
   "templating": {
     "list": [
       {
-        "name": "container",
-        "label": "Container",
-        "type": "custom",
-        "current": { "value": "backend.*", "text": "backend.*" },
-        "options": [
-          { "value": "backend.*", "text": "All backends", "selected": true },
-          { "value": "backend_blue", "text": "backend_blue", "selected": false },
-          { "value": "backend_green", "text": "backend_green", "selected": false }
-        ],
-        "query": "backend.*,backend_blue,backend_green"
+        "name": "service",
+        "label": "Service",
+        "type": "query",
+        "datasource": { "type": "loki", "uid": "loki" },
+        "query": {
+          "label": "service",
+          "refId": "StandardVariableQuery",
+          "stream": "{job=\"docker\"}",
+          "type": 1
+        },
+        "includeAll": true,
+        "allValue": ".+",
+        "multi": false,
+        "sort": 1,
+        "refresh": 2,
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": []
       }
     ]
   },
@@ -44,7 +55,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "sum by (db_operation) (rate({container_name=~\"$container\"} | json | event_type=`db_query` [2m]))",
+          "expr": "sum by (db_operation) (rate({service=~\"$service\"} | json | event_type=`db_query` [2m]))",
           "legendFormat": "{{db_operation}}",
           "refId": "A"
         }
@@ -68,19 +79,19 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "quantile_over_time(0.50, {container_name=~\"$container\"} | json | event_type=`db_query` | unwrap latency_ms [2m])",
+          "expr": "quantile_over_time(0.50, {service=~\"$service\"} | json | event_type=`db_query` | unwrap latency_ms [2m])",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
           "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "quantile_over_time(0.95, {container_name=~\"$container\"} | json | event_type=`db_query` | unwrap latency_ms [2m])",
+          "expr": "quantile_over_time(0.95, {service=~\"$service\"} | json | event_type=`db_query` | unwrap latency_ms [2m])",
           "legendFormat": "p95",
           "refId": "B"
         },
         {
           "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "quantile_over_time(0.99, {container_name=~\"$container\"} | json | event_type=`db_query` | unwrap latency_ms [2m])",
+          "expr": "quantile_over_time(0.99, {service=~\"$service\"} | json | event_type=`db_query` | unwrap latency_ms [2m])",
           "legendFormat": "p99",
           "refId": "C"
         }
@@ -114,7 +125,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "sum(count_over_time({container_name=~\"$container\"} | json | event_type=`db_query` [$__range]))",
+          "expr": "sum(count_over_time({service=~\"$service\"} | json | event_type=`db_query` [$__range]))",
           "legendFormat": "Total queries",
           "refId": "A",
           "instant": true
@@ -149,7 +160,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "avg by (db_operation) (avg_over_time({container_name=~\"$container\"} | json | event_type=`db_query` | unwrap latency_ms [$__range]))",
+          "expr": "avg by (db_operation) (avg_over_time({service=~\"$service\"} | json | event_type=`db_query` | unwrap latency_ms [$__range]))",
           "legendFormat": "{{db_operation}}",
           "refId": "A",
           "instant": true
@@ -174,7 +185,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "sum by (api_service) (rate({container_name=~\"$container\"} | json | event_type=`external_api_call` [2m]))",
+          "expr": "sum by (api_service) (rate({service=~\"$service\"} | json | event_type=`external_api_call` [2m]))",
           "legendFormat": "{{api_service}}",
           "refId": "A"
         }
@@ -198,7 +209,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "quantile_over_time(0.95, {container_name=~\"$container\"} | json | event_type=`external_api_call` | unwrap latency_ms [2m]) by (api_service)",
+          "expr": "quantile_over_time(0.95, {service=~\"$service\"} | json | event_type=`external_api_call` | unwrap latency_ms [2m]) by (api_service)",
           "legendFormat": "{{api_service}} p95",
           "refId": "A"
         }
@@ -222,7 +233,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "sum by (api_service) (rate({container_name=~\"$container\"} | json | event_type=`external_api_call` | status=`error` [2m]))",
+          "expr": "sum by (api_service) (rate({service=~\"$service\", level=\"error\"} | json | event_type=`external_api_call` [2m]))",
           "legendFormat": "{{api_service}}",
           "refId": "A"
         }
@@ -252,7 +263,7 @@
       "targets": [
         {
           "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "sort_desc(sum by (api_service, api_operation) (count_over_time({container_name=~\"$container\"} | json | event_type=`external_api_call` [$__range])))",
+          "expr": "sort_desc(sum by (api_service, api_operation) (count_over_time({service=~\"$service\"} | json | event_type=`external_api_call` [$__range])))",
           "legendFormat": "{{api_service}} / {{api_operation}}",
           "refId": "A",
           "instant": true
