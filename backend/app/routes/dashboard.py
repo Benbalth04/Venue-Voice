@@ -107,16 +107,13 @@ def get_dashboard(
         else 0
     ) or 0
 
-    # Total scans (scan_events for QR codes belonging to company)
-    qr_ids = [
-        r[0]
-        for r in db.query(QRCodeORM.id)
-        .filter(
-            QRCodeORM.company_id == company.id,
-            QRCodeORM.deleted_at.is_(None),
-        )
-        .all()
-    ]
+    # Total scans (scan_events for QR codes belonging to company, scoped to viewer)
+    qr_q = db.query(QRCodeORM.id).filter(
+        QRCodeORM.company_id == company.id,
+        QRCodeORM.deleted_at.is_(None),
+    )
+    qr_q = apply_location_filter(qr_q, location_sq, QRCodeORM.location_id)
+    qr_ids = [r[0] for r in qr_q.all()]
     total_scans = (
         db.query(func.count(ScanEventORM.id))
         .filter(
@@ -128,16 +125,14 @@ def get_dashboard(
         else 0
     )
 
-    # Active surveys
-    active_surveys_orm = (
-        db.query(SurveyORM)
-        .filter(
-            SurveyORM.company_id == company.id,
-            SurveyORM.status == SurveyStatus.active,
-            SurveyORM.deleted_at.is_(None),
-        )
-        .all()
+    # Active surveys (scoped to viewer permissions)
+    active_surveys_q = db.query(SurveyORM).filter(
+        SurveyORM.company_id == company.id,
+        SurveyORM.status == SurveyStatus.active,
+        SurveyORM.deleted_at.is_(None),
     )
+    active_surveys_q = apply_survey_filter(active_surveys_q, survey_sq, SurveyORM.id)
+    active_surveys_orm = active_surveys_q.all()
     active_surveys_count = len(active_surveys_orm)
 
     # Question count per survey (from survey_versions -> questions)
@@ -166,19 +161,22 @@ def get_dashboard(
         for s in active_surveys_orm
     ]
 
-    # Active QR codes (with scan count)
-    active_qr_orm = (
-        db.query(QRCodeORM)
-        .join(LocationSurveyORM, LocationSurveyORM.id == QRCodeORM.location_survey_id)
-        .filter(
-            QRCodeORM.company_id == company.id,
-            QRCodeORM.is_active.is_(True),
-            QRCodeORM.deleted_at.is_(None),
+    # Active QR codes (with scan count, scoped to viewer permissions)
+    if company:
+        active_qr_q = (
+            db.query(QRCodeORM)
+            .join(LocationSurveyORM, LocationSurveyORM.id == QRCodeORM.location_survey_id)
+            .filter(
+                QRCodeORM.company_id == company.id,
+                QRCodeORM.is_active.is_(True),
+                QRCodeORM.deleted_at.is_(None),
+            )
         )
-        .all()
-        if company
-        else []
-    )
+        active_qr_q = apply_location_filter(active_qr_q, location_sq, QRCodeORM.location_id)
+        active_qr_q = apply_survey_filter(active_qr_q, survey_sq, LocationSurveyORM.survey_id)
+        active_qr_orm = active_qr_q.all()
+    else:
+        active_qr_orm = []
     active_qr_codes_count = len(active_qr_orm)
 
     def _scan_count(qr_id):

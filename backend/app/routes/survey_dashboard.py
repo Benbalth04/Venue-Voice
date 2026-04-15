@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from ..auth.membership import get_company_from_membership, get_current_membership
 from ..auth.subscription import require_active_subscription
 from ..auth.user_timezone import get_user_zoneinfo
-from ..auth.viewer_scoping import assert_survey_access
+from ..auth.viewer_scoping import assert_survey_access, clip_location_ids_for_viewer, clip_qr_code_ids_for_viewer
 from ..core.datetime_user_tz import (
     inclusive_local_date_range_to_utc_bounds,
     local_date_start_utc,
@@ -114,6 +114,8 @@ def get_survey_dashboard(
 ) -> SurveyDashboardResponse:
     company = get_company_from_membership(membership, db)
     assert_survey_access(membership, survey_id, db)
+    location_ids = clip_location_ids_for_viewer(membership, location_ids, db)
+    qr_code_ids = clip_qr_code_ids_for_viewer(membership, qr_code_ids, db)
     filters = _survey_dashboard_filters(
         location_ids=location_ids,
         qr_code_ids=qr_code_ids,
@@ -141,6 +143,8 @@ def get_old_questions_dashboard(
 ) -> OldQuestionsDashboardResponse:
     company = get_company_from_membership(membership, db)
     assert_survey_access(membership, survey_id, db)
+    location_ids = clip_location_ids_for_viewer(membership, location_ids, db)
+    qr_code_ids = clip_qr_code_ids_for_viewer(membership, qr_code_ids, db)
     filters = _survey_dashboard_filters(
         location_ids=location_ids,
         qr_code_ids=qr_code_ids,
@@ -170,6 +174,8 @@ def get_question_breakdown_endpoint(
 ) -> QuestionBreakdownResponse:
     company = get_company_from_membership(membership, db)
     assert_survey_access(membership, survey_id, db)
+    location_ids = clip_location_ids_for_viewer(membership, location_ids, db)
+    qr_code_ids = clip_qr_code_ids_for_viewer(membership, qr_code_ids, db)
     filters = _survey_dashboard_filters(
         location_ids=location_ids,
         qr_code_ids=qr_code_ids,
@@ -200,6 +206,8 @@ def get_engagement_breakdown_endpoint(
 ) -> EngagementBreakdownResponse:
     company = get_company_from_membership(membership, db)
     assert_survey_access(membership, survey_id, db)
+    location_ids = clip_location_ids_for_viewer(membership, location_ids, db)
+    qr_code_ids = clip_qr_code_ids_for_viewer(membership, qr_code_ids, db)
     filters = _survey_dashboard_filters(
         location_ids=location_ids,
         qr_code_ids=qr_code_ids,

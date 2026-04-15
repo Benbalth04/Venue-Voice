@@ -195,9 +195,9 @@ def get_engagement_data(
             ScanEventORM.scanned_at < filters.date_end,
         )
     )
-    if filters.qr_code_ids:
+    if filters.qr_code_ids is not None:
         scans_stmt = scans_stmt.where(ScanEventORM.qr_code_id.in_(filters.qr_code_ids))
-    if filters.location_ids:
+    if filters.location_ids is not None:
         scans_stmt = scans_stmt.where(QRCodeORM.location_id.in_(filters.location_ids))
     scans_stmt = scans_stmt.group_by(scan_day)
 
@@ -407,9 +407,9 @@ def _get_question_entities_by_location(
         .group_by(LocationSnapshotORM.location_id, LocationORM.name)
         .order_by(LocationORM.name)
     )
-    if filters.location_ids:
+    if filters.location_ids is not None:
         stmt = stmt.where(LocationSnapshotORM.location_id.in_(filters.location_ids))
-    if filters.qr_code_ids:
+    if filters.qr_code_ids is not None:
         stmt = stmt.where(SurveyResponseORM.qr_code_id.in_(filters.qr_code_ids))
     rows = db.execute(stmt).fetchall()
     return [(row[0], row[1]) for row in rows]
@@ -439,9 +439,9 @@ def _get_question_entities_by_qr_code(
         .group_by(SurveyResponseORM.qr_code_id, QRCodeORM.title)
         .order_by(QRCodeORM.title)
     )
-    if filters.qr_code_ids:
+    if filters.qr_code_ids is not None:
         stmt = stmt.where(SurveyResponseORM.qr_code_id.in_(filters.qr_code_ids))
-    if filters.location_ids:
+    if filters.location_ids is not None:
         stmt = (
             stmt
             .join(LocationSnapshotORM, LocationSnapshotORM.id == SurveyResponseORM.location_snapshot_id)
@@ -474,9 +474,9 @@ def _get_engagement_entities_by_location(
         )
         .group_by(LocationSnapshotORM.location_id, LocationORM.name)
     )
-    if filters.location_ids:
+    if filters.location_ids is not None:
         comp_stmt = comp_stmt.where(LocationSnapshotORM.location_id.in_(filters.location_ids))
-    if filters.qr_code_ids:
+    if filters.qr_code_ids is not None:
         comp_stmt = comp_stmt.where(SurveyResponseORM.qr_code_id.in_(filters.qr_code_ids))
 
     # Locations from scans
@@ -497,9 +497,9 @@ def _get_engagement_entities_by_location(
         )
         .group_by(QRCodeORM.location_id, LocationORM.name)
     )
-    if filters.location_ids:
+    if filters.location_ids is not None:
         scan_stmt = scan_stmt.where(QRCodeORM.location_id.in_(filters.location_ids))
-    if filters.qr_code_ids:
+    if filters.qr_code_ids is not None:
         scan_stmt = scan_stmt.where(ScanEventORM.qr_code_id.in_(filters.qr_code_ids))
 
     seen: dict[uuid.UUID, str] = {}
@@ -530,7 +530,7 @@ def _get_engagement_entities_by_qr_code(
         )
         .group_by(SurveyResponseORM.qr_code_id, QRCodeORM.title)
     )
-    if filters.qr_code_ids:
+    if filters.qr_code_ids is not None:
         comp_stmt = comp_stmt.where(SurveyResponseORM.qr_code_id.in_(filters.qr_code_ids))
 
     # QR codes from scans
@@ -549,9 +549,9 @@ def _get_engagement_entities_by_qr_code(
         )
         .group_by(ScanEventORM.qr_code_id, QRCodeORM.title)
     )
-    if filters.qr_code_ids:
+    if filters.qr_code_ids is not None:
         scan_stmt = scan_stmt.where(ScanEventORM.qr_code_id.in_(filters.qr_code_ids))
-    if filters.location_ids:
+    if filters.location_ids is not None:
         scan_stmt = (
             scan_stmt
             .join(LocationORM, LocationORM.id == QRCodeORM.location_id)
@@ -677,9 +677,9 @@ def _build_filtered_responses_subquery(
             SurveyResponseORM.completion_datetime < filters.date_end,
         )
     )
-    if filters.qr_code_ids:
+    if filters.qr_code_ids is not None:
         stmt = stmt.where(SurveyResponseORM.qr_code_id.in_(filters.qr_code_ids))
-    if filters.location_ids:
+    if filters.location_ids is not None:
         stmt = stmt.where(LocationSnapshotORM.location_id.in_(filters.location_ids))
     return stmt.subquery()
 

@@ -107,3 +107,59 @@ def assert_location_access(membership: Membership, location_id: uuid.UUID, db: S
             code="LOCATION_ACCESS_DENIED",
             message="You do not have permission to access this location.",
         )
+
+
+def clip_location_ids_for_viewer(
+    membership: Membership,
+    requested_ids: list[uuid.UUID] | None,
+    db: Session,
+) -> list[uuid.UUID] | None:
+    """Intersect caller-provided location_ids with viewer permissions.
+
+    - Admin / all_locations=True   → return requested_ids unchanged
+    - Restricted viewer, no filter → return list of all allowed location UUIDs
+    - Restricted viewer, with IDs  → return only the allowed intersection
+    """
+    if membership.role in ("company_admin", "company_owner") or membership.all_locations:
+        return requested_ids
+    allowed = {
+        r[0]
+        for r in db.query(ViewerPermission.location_id)
+        .filter(
+            ViewerPermission.membership_id == membership.id,
+            ViewerPermission.location_id.isnot(None),
+        )
+        .all()
+    }
+    if requested_ids is None:
+        return list(allowed)
+    return [lid for lid in requested_ids if lid in allowed]
+
+
+def clip_qr_code_ids_for_viewer(
+    membership: Membership,
+    requested_qr_ids: list[uuid.UUID] | None,
+    db: Session,
+) -> list[uuid.UUID] | None:
+    """Filter caller-provided qr_code_ids to those at viewer-accessible locations.
+
+    - Admin / all_locations=True    → return requested_qr_ids unchanged
+    - Restricted viewer, no filter  → return None (location filter alone handles scoping)
+    - Restricted viewer, with IDs   → return only QR codes whose location is permitted
+    """
+    if membership.role in ("company_admin", "company_owner") or membership.all_locations:
+        return requested_qr_ids
+    if requested_qr_ids is None:
+        return None
+    from ..models.postgres_model import QRCode as QRCodeORM
+    location_sq = location_ids_subquery(membership, db)
+    return [
+        r[0]
+        for r in db.query(QRCodeORM.id)
+        .filter(
+            QRCodeORM.id.in_(requested_qr_ids),
+            QRCodeORM.location_id.in_(location_sq),
+            QRCodeORM.deleted_at.is_(None),
+        )
+        .all()
+    ]
