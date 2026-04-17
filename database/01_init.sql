@@ -242,7 +242,7 @@ CREATE TABLE qr_codes (
     location_survey_id UUID NOT NULL REFERENCES location_surveys(id),
     location_id UUID NOT NULL REFERENCES locations(id),
     redirect_url TEXT NULL,
-    has_logo BOOLEAN DEFAULT TRUE NOT NULL,
+    has_logo BOOLEAN DEFAULT FALSE NOT NULL,
     color TEXT NOT NULL DEFAULT '#000000',
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
