@@ -26,9 +26,14 @@ export function CrispChat() {
     document.head.appendChild(s)
   }, [])
 
-  // Identify user when auth data becomes available
+  // Identify user when auth data becomes available; reset and hide on logout
   useEffect(() => {
-    if (!user || typeof window === "undefined" || !window.$crisp) return
+    if (typeof window === "undefined" || !window.$crisp) return
+    if (!user) {
+      window.$crisp.push(["do", "session:reset"])
+      window.$crisp.push(["do", "chat:hide"])
+      return
+    }
     window.$crisp.push(["set", "user:email", [user.email]])
     window.$crisp.push(["set", "user:nickname", [`${user.first_name} ${user.last_name}`]])
     window.$crisp.push(["set", "session:data", [[
@@ -37,6 +42,7 @@ export function CrispChat() {
       ["email_verified", String(user.email_verified)],
       ["onboarding_complete", String(user.onboarding_complete)],
     ]]])
+    window.$crisp.push(["do", "chat:show"])
   }, [user])
 
   return null

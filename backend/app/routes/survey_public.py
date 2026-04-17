@@ -915,7 +915,6 @@ async def submit_survey(
         )
         .first()
     )
-    thank_you_message = (company.thank_you_message or "Thank you for your feedback!") if company else "Thank you for your feedback!"
     redirect_url = f"{FRONTEND_ORIGIN}/survey/thank-you?session={sess.id}&qr={sess.qr_code_id}"
     if workflow_action and workflow_action.get("type") == "redirect" and workflow_action.get("url"):
         dest = str(workflow_action["url"])
@@ -941,7 +940,6 @@ async def submit_survey(
     return {
         "success": True,
         "redirect_url": redirect_url,
-        "thank_you_message": thank_you_message,
         "company_name": company.name if company else None,
     }
 
@@ -1048,11 +1046,6 @@ def get_thank_you_data(
         )
         .first()
     )
-    thank_you_message = (
-        (company.thank_you_message or "Thank you for your feedback!")
-        if company
-        else "Thank you for your feedback!"
-    )
     company_name = company.name if company else None
 
     sv = (
@@ -1065,8 +1058,13 @@ def get_thank_you_data(
     )
     primary_color = _primary_color_from_survey_schema(sv.schema_json if sv else None)
 
+    thank_you = (sv.schema_json or {}).get("thankYou", {}) if sv else {}
+    thank_you_title = thank_you.get("title") or "Thank you!"
+    thank_you_content = thank_you.get("content") or "Your feedback has been received."
+
     return {
-        "thank_you_message": thank_you_message,
+        "thank_you_title": thank_you_title,
+        "thank_you_content": thank_you_content,
         "company_name": company_name,
         "primary_color": primary_color,
     }

@@ -125,7 +125,6 @@ class Company(SoftDeleteMixin, Base):
     company_size: Mapped[str | None] = mapped_column(String, nullable=True)
     location_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     how_heard: Mapped[str | None] = mapped_column(String, nullable=True)
-    thank_you_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime,

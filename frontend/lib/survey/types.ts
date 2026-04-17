@@ -1,3 +1,8 @@
+export type SurveyThankYou = {
+  title: string
+  content: string
+}
+
 export type Survey = {
   /** Local change counter – incremented on every edit so components re-render.
    *  This is NOT the server-side latest_version. */
@@ -10,6 +15,7 @@ export type Survey = {
   settings: SurveySettings
 
   questions: Question[]
+  thankYou?: SurveyThankYou
 }
 
 export type Align = "left" | "center" | "right"

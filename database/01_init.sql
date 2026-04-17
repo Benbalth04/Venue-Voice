@@ -30,7 +30,6 @@ CREATE TABLE companies (
     company_size TEXT,
     location_count INTEGER,
     how_heard TEXT,
-    thank_you_message TEXT,
     created_at TIMESTAMP DEFAULT NOW(),
     deleted_at TIMESTAMP NULL
 );

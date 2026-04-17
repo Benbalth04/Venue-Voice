@@ -73,12 +73,12 @@ export interface SurveyForSessionResponse {
 export interface SurveySubmitResponse {
   success: boolean
   redirect_url: string
-  thank_you_message: string
   company_name: string | null
 }
 
 export interface ThankYouDataResponse {
-  thank_you_message: string
+  thank_you_title: string
+  thank_you_content: string
   company_name: string | null
   /** Hex colour from the submitted survey version theme (e.g. #7C3AED). */
   primary_color: string

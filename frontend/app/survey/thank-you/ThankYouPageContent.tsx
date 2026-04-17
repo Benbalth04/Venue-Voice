@@ -10,8 +10,8 @@ export default function ThankYouPageContent() {
   const sessionId = searchParams.get("session") ?? ""
   const qrCodeId = searchParams.get("qr") ?? ""
 
-  const [message, setMessage] = useState("Thank you for your feedback!")
-  const [companyName, setCompanyName] = useState<string | null>(null)
+  const [title, setTitle] = useState("Thank you!")
+  const [content, setContent] = useState("Your feedback has been received.")
   const [primaryColor, setPrimaryColor] = useState("#7C3AED")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -29,14 +29,12 @@ export default function ThankYouPageContent() {
       try {
         const data = await fetchThankYouData(sessionId, qrCodeId)
         if (!cancelled) {
-          setMessage(data.thank_you_message)
-          setCompanyName(data.company_name)
+          setTitle(data.thank_you_title)
+          setContent(data.thank_you_content)
           if (data.primary_color) setPrimaryColor(data.primary_color)
         }
       } catch {
-        if (!cancelled) {
-          setMessage("Thank you for your feedback!")
-        }
+        // defaults remain
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -68,8 +66,8 @@ export default function ThankYouPageContent() {
         style={{ borderTopWidth: "4px", borderTopColor: primaryColor }}
       >
         <CheckCircle2 className="mx-auto h-16 w-16 text-emerald-500" />
-        <h1 className="mt-4 text-xl font-semibold text-zinc-900">Thank you</h1>
-        <p className="mt-2 text-zinc-600">{message}</p>
+        <h1 className="mt-4 text-xl font-semibold text-zinc-900">{title}</h1>
+        <p className="mt-2 text-zinc-600">{content}</p>
       </div>
       <img
         src="/PrimaryLogo_PoweredBy.svg"

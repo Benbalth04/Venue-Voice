@@ -35,6 +35,14 @@ export function SettingsPanel({
     )
   }
 
+  if (selection?.type === "thankYou") {
+    return (
+      <PanelShell title="Thank You Screen">
+        <ThankYouSettings survey={survey} onSurveyChange={onSurveyChange} />
+      </PanelShell>
+    )
+  }
+
   return (
     <PanelShell title="Survey Settings">
       <SurveySettings
@@ -43,6 +51,52 @@ export function SettingsPanel({
         onSurveyChange={onSurveyChange}
       />
     </PanelShell>
+  )
+}
+
+function ThankYouSettings({
+  survey,
+  onSurveyChange,
+}: {
+  survey: Survey
+  onSurveyChange: (next: Survey) => void
+}) {
+  const title = survey.thankYou?.title ?? "Thank you!"
+  const content = survey.thankYou?.content ?? "Your feedback has been received."
+
+  function update(field: "title" | "content", value: string) {
+    onSurveyChange({
+      ...survey,
+      thankYou: { title, content, [field]: value },
+    })
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1.5">
+        <label className="text-xs font-medium text-zinc-700">Title</label>
+        <input
+          type="text"
+          maxLength={100}
+          value={title}
+          onChange={(e) => update("title", e.target.value)}
+          className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500"
+        />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <label className="text-xs font-medium text-zinc-700">Message</label>
+        <textarea
+          maxLength={500}
+          rows={4}
+          value={content}
+          onChange={(e) => update("content", e.target.value)}
+          className="resize-none rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500"
+        />
+        <p className="text-xs text-zinc-400">
+          Shown to respondents who are not asked to leave a Google review.
+        </p>
+      </div>
+    </div>
   )
 }
 

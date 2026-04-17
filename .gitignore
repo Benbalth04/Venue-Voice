@@ -8,3 +8,4 @@ stripe-dev-cmd.txt
 certs/cloudflare-certs.txt
 __pycache__/
 database/test_data/*
+database/migrations/*

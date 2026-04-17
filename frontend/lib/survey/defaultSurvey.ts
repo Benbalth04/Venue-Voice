@@ -27,4 +27,9 @@ export const defaultSurvey: Survey = {
   },
 
   questions: [],
+
+  thankYou: {
+    title: "Thank you!",
+    content: "Your feedback has been received.",
+  },
 }
