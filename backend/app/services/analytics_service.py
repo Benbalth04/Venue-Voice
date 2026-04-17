@@ -29,6 +29,7 @@ from ..models.postgres_model import (
     QRCode as QRCodeORM,
     Question as QuestionORM,
     ResponseRead as ResponseReadORM,
+    ScanEvent as ScanEventORM,
     Survey as SurveyORM,
     SurveyResponse as SurveyResponseORM,
     SurveyResponseAnswer as SurveyResponseAnswerORM,
@@ -769,6 +770,8 @@ def delete_response(
     if not response:
         raise NotFoundError("Response", response_id)
 
+    session = db.query(SurveySessionORM).filter(SurveySessionORM.id == response.session_id).first()
+
     now = datetime.utcnow()
     response.deleted_at = now
 
@@ -782,6 +785,12 @@ def delete_response(
         db.query(model).filter(
             fk_col == response.id,
             model.deleted_at.is_(None),
+        ).update({"deleted_at": now}, synchronize_session=False)
+
+    if session:
+        db.query(ScanEventORM).filter(
+            ScanEventORM.id == session.scan_id,
+            ScanEventORM.deleted_at.is_(None),
         ).update({"deleted_at": now}, synchronize_session=False)
 
     db.commit()
