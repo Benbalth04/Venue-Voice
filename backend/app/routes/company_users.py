@@ -35,6 +35,8 @@ from ..core.errors import (
     PermissionError,
     ValidationError,
 )
+from ..core.errors.app_error import AppError
+from ..core.errors.error_category import ErrorCategory
 from ..db.postgres import get_db_connection
 from ..integrations.supabase_admin import (
     get_last_sign_in_map,
@@ -497,16 +499,26 @@ def transfer_ownership(
                 error_message=f"Failed to update billing contact: {exc}",
             ) from exc
 
-    # Atomic role swap within the same transaction
-    target.role = "company_owner"
-    membership.role = "company_admin"
+    # Both unique partial indexes (one owner, one admin per company) mean no
+    # two-step flush order avoids a transient duplicate. Use viewer as a neutral
+    # intermediate role so neither restricted role ever has two holders:
+    #   1. target  → viewer   (frees the one-admin slot)
+    #   2. owner   → admin    (fills admin slot; owner slot now free)
+    #   3. target  → owner    (fills owner slot)
     try:
+        target.role = "viewer"
+        db.flush()
+        membership.role = "company_admin"
+        db.flush()
+        target.role = "company_owner"
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise NotFoundError(
-            code="MEMBERSHIP_NOT_FOUND",
-            message="Target membership no longer exists.",
+        raise AppError(
+            category=ErrorCategory.UNKNOWN,
+            code="INTERNAL_SERVER_ERROR",
+            message="Failed to transfer ownership. Please try again.",
+            status_code=500,
         )
 
     return {"ok": True}

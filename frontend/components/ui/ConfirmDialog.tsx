@@ -158,8 +158,8 @@ export function ConfirmDialog({
         onClick={(e) => e.stopPropagation()}
       >
         {/* Body */}
-        <div className="px-6 pt-6 pb-2">
-          <div className={["mb-4 flex h-10 w-10 items-center justify-center rounded-full", iconBg].join(" ")}>
+        <div className="px-6 pt-6 pb-2 text-center">
+          <div className={["mb-4 mx-auto flex h-10 w-10 items-center justify-center rounded-full", iconBg].join(" ")}>
             {iconEl}
           </div>
           <h2
@@ -205,7 +205,7 @@ export function ConfirmDialog({
         </div>
 
         {/* Footer */}
-        <div className="mt-4 flex justify-end gap-2 border-t border-zinc-100 bg-zinc-50/60 px-6 py-4">
+        <div className="mt-4 flex justify-center gap-2 border-t border-zinc-100 bg-zinc-50/60 px-6 py-4">
           <button
             ref={cancelRef}
             type="button"

@@ -189,6 +189,11 @@ export default function ResetPasswordClient() {
             {pageState === "submitting" ? "Updating…" : "Update password"}
           </Button>
         </form>
+        <p className="mt-6 text-center text-xs text-zinc-400">
+          <a href="mailto:info@venuevoice.com.au" className="hover:underline">
+            Having trouble? Contact support
+          </a>
+        </p>
       </Card>
     </AuthShell>
   )

@@ -20,7 +20,7 @@ from uptime_kuma_api import UptimeKumaApi, MonitorType
 KUMA_URL = os.environ["UPTIME_KUMA_URL"]
 ADMIN_USER = os.environ["UPTIME_KUMA_ADMIN_USER"]
 ADMIN_PASSWORD = os.environ["UPTIME_KUMA_ADMIN_PASSWORD"]
-API_HOST = os.environ.get("API_HOST", "api.example.com")
+API_HOST = os.environ["API_HOST"]
 
 # ---------------------------------------------------------------------------
 # Monitor definitions
