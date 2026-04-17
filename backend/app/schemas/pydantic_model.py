@@ -1537,6 +1537,7 @@ class NewResponseNotification(BaseModel):
     response_id: str
     survey_name: str
     location_name: str
+    qr_code_title: str
     submitted_at: datetime
 
 

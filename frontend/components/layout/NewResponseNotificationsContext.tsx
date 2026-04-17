@@ -1,36 +1,45 @@
 "use client"
 
-import { createContext, useContext, useEffect, useRef, type ReactNode } from "react"
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react"
 import { useRouter } from "next/navigation"
-import { toast } from "sonner"
 import { supabase } from "@/lib/supabase/client"
-import { fetchNewResponses } from "@/lib/api/client"
+import { fetchNewResponses, type NewResponseNotification } from "@/lib/api/client"
 import { useAuth } from "@/contexts/AuthContext"
+import { ResponseNotificationStack } from "@/components/layout/ResponseNotificationToasts"
 
-// Maximum individual toasts shown per poll before grouping into a batch toast
-const INDIVIDUAL_TOAST_LIMIT = 3
+const MAX_VISIBLE_TOASTS = 3
 const POLL_INTERVAL_MS = 30_000
 
-// Context is intentionally empty — this provider is side-effect only (toasts)
 const NewResponseNotificationsContext = createContext<null>(null)
 
-export function NewResponseNotificationsProvider({ children }: { children: ReactNode }) {
-  const { activeCompanyId } = useAuth()
+function NewResponseNotificationsInner({
+  children,
+  activeCompanyId,
+}: {
+  children: ReactNode
+  activeCompanyId: string | null
+}) {
   const router = useRouter()
+  const [queue, setQueue] = useState<NewResponseNotification[]>([])
 
-  // Tracks the ISO timestamp of the last successful poll; initialized to "now"
-  // so responses that predate the current session are never shown.
   const lastCheckedAtRef = useRef<string>(new Date().toISOString())
-
-  // Deduplicates response IDs across overlapping poll windows within a session.
   const seenIdsRef = useRef<Set<string>>(new Set())
 
-  // Reset notification state whenever the user switches companies so stale
-  // notifications from the previous company do not bleed into the new context.
-  useEffect(() => {
-    lastCheckedAtRef.current = new Date().toISOString()
-    seenIdsRef.current = new Set()
-  }, [activeCompanyId])
+  const dismiss = useCallback((responseId: string) => {
+    setQueue((q) => q.filter((n) => n.response_id !== responseId))
+  }, [])
+
+  const goToResponses = useCallback(() => {
+    router.push("/dashboard/analytics/view_responses")
+  }, [router])
 
   useEffect(() => {
     async function poll() {
@@ -46,18 +55,13 @@ export function NewResponseNotificationsProvider({ children }: { children: React
       try {
         const { responses } = await fetchNewResponses(session.access_token, since)
 
-        // Advance the cursor only on success — keeps the window intact on failure
-        // so the next poll retries from the same point (dedup Set prevents double-shows).
         lastCheckedAtRef.current = requestTime
 
         const novel = responses.filter((r) => !seenIdsRef.current.has(r.response_id))
         if (novel.length === 0) return
 
-        // Register all new IDs before showing toasts (guard against rapid re-renders)
         for (const r of novel) {
           seenIdsRef.current.add(r.response_id)
-
-          // Prune the Set if it grows very large (long-lived sessions with many responses)
           if (seenIdsRef.current.size > 1000) {
             const oldest = seenIdsRef.current.values().next().value
             if (oldest !== undefined) {
@@ -66,32 +70,16 @@ export function NewResponseNotificationsProvider({ children }: { children: React
           }
         }
 
-        const individual = novel.slice(0, INDIVIDUAL_TOAST_LIMIT)
-        const overflow = novel.length - individual.length
+        const sorted = [...novel].sort(
+          (a, b) => new Date(b.submitted_at).getTime() - new Date(a.submitted_at).getTime(),
+        )
 
-        for (const r of individual) {
-          toast("New response received", {
-            description: `${r.survey_name} · ${r.location_name}`,
-            duration: 6_000,
-            action: {
-              label: "View",
-              onClick: () => router.push("/dashboard/analytics/view_responses"),
-            },
-          })
-        }
-
-        if (overflow > 0) {
-          toast("New responses received", {
-            description: `+${overflow} more response${overflow === 1 ? "" : "s"} at your locations`,
-            duration: 6_000,
-            action: {
-              label: "View all",
-              onClick: () => router.push("/dashboard/analytics/view_responses"),
-            },
-          })
-        }
+        setQueue((q) => {
+          const incoming = new Set(sorted.map((r) => r.response_id))
+          return [...sorted, ...q.filter((n) => !incoming.has(n.response_id))]
+        })
       } catch {
-        // Silently ignore errors — the cursor is not advanced so the next poll retries
+        // Cursor not advanced; next poll retries
       }
     }
 
@@ -107,16 +95,39 @@ export function NewResponseNotificationsProvider({ children }: { children: React
       clearTimeout(initialLoad)
       clearInterval(interval)
     }
-  }, [activeCompanyId, router])
+  }, [activeCompanyId])
+
+  const visible = queue.slice(0, MAX_VISIBLE_TOASTS)
+  const overflowCount = Math.max(0, queue.length - MAX_VISIBLE_TOASTS)
 
   return (
-    <NewResponseNotificationsContext.Provider value={null}>
+    <>
       {children}
+      <ResponseNotificationStack
+        items={visible}
+        overflowCount={overflowCount}
+        onDismiss={dismiss}
+        onView={goToResponses}
+        onViewOverflow={goToResponses}
+      />
+    </>
+  )
+}
+
+export function NewResponseNotificationsProvider({ children }: { children: ReactNode }) {
+  const { activeCompanyId } = useAuth()
+  return (
+    <NewResponseNotificationsContext.Provider value={null}>
+      <NewResponseNotificationsInner
+        key={activeCompanyId ?? "no-company"}
+        activeCompanyId={activeCompanyId}
+      >
+        {children}
+      </NewResponseNotificationsInner>
     </NewResponseNotificationsContext.Provider>
   )
 }
 
-// Exported for completeness; nothing consumes it currently
 export function useNewResponseNotifications() {
   return useContext(NewResponseNotificationsContext)
 }

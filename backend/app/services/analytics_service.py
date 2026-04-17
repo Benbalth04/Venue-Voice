@@ -133,11 +133,13 @@ def get_new_responses_since(
             SurveyResponseORM.id.label("response_id"),
             SurveyORM.name.label("survey_name"),
             LocationSnapshotORM.name.label("location_name"),
+            QRCodeORM.title.label("qr_code_title"),
             SurveyResponseORM.completion_datetime.label("submitted_at"),
         )
         .join(SurveySessionORM, SurveySessionORM.id == SurveyResponseORM.session_id)
         .join(SurveyVersionORM, SurveyVersionORM.id == SurveySessionORM.survey_version_id)
         .join(SurveyORM, SurveyORM.id == SurveyVersionORM.survey_id)
+        .join(QRCodeORM, QRCodeORM.id == SurveyResponseORM.qr_code_id)
         .outerjoin(
             LocationSnapshotORM,
             LocationSnapshotORM.id == SurveySessionORM.location_snapshot_id,
@@ -170,6 +172,7 @@ def get_new_responses_since(
             "response_id": str(row.response_id),
             "survey_name": row.survey_name,
             "location_name": row.location_name or "Unknown location",
+            "qr_code_title": row.qr_code_title,
             "submitted_at": row.submitted_at,
         }
         for row in rows

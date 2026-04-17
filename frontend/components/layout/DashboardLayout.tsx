@@ -14,23 +14,6 @@ import { OnboardingTourOverlay } from "@/components/onboarding/OnboardingTourOve
 import { SubscriptionWarningBanner } from "@/components/subscription/SubscriptionWarningBanner"
 import { useAuth } from "@/contexts/AuthContext"
 import { NewResponseNotificationsProvider } from "@/components/layout/NewResponseNotificationsContext"
-import { Toaster } from "sonner"
-import type { ToasterProps } from "sonner"
-
-/** Matches `Card`: white surface, zinc border, soft shadow; violet accents for actions / close. */
-const dashboardSonnerToastOptions: NonNullable<ToasterProps["toastOptions"]> = {
-  classNames: {
-    toast:
-      "!rounded-2xl !border !border-zinc-200 !bg-white !p-4 !shadow-sm !gap-3 !text-zinc-900",
-    title: "!text-sm !font-semibold !text-zinc-900",
-    description: "!text-sm !text-zinc-500 !font-normal",
-    content: "!gap-0.5",
-    actionButton:
-      "!shrink-0 !rounded-xl !border-0 !bg-violet-600 !px-3 !py-1.5 !text-xs !font-semibold !text-white !shadow-sm hover:!bg-violet-700",
-    closeButton:
-      "!border-0 !bg-transparent !text-violet-600 hover:!bg-violet-50 hover:!text-violet-700",
-  },
-}
 
 const VIEWER_ALLOWED_PREFIXES = [
   "/dashboard/analytics/view_responses",
@@ -86,12 +69,6 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
                 <ViewerRouteGuard>
                   <main className="mx-auto flex-1 w-[80%] max-w-6xl py-8">{children}</main>
                 </ViewerRouteGuard>
-                <Toaster
-                  theme="light"
-                  closeButton
-                  position="bottom-right"
-                  toastOptions={dashboardSonnerToastOptions}
-                />
               </NewResponseNotificationsProvider>
             </QRSubmissionBlockedProvider>
           </BrokenFlowsProvider>
@@ -126,12 +103,6 @@ export function DashboardLayout({ children }: { children: ReactNode }) {
         </div>
       </div>
       <OnboardingTourOverlay />
-      <Toaster
-        theme="light"
-        closeButton
-        position="bottom-right"
-        toastOptions={dashboardSonnerToastOptions}
-      />
       </NewResponseNotificationsProvider>
       </OnboardingTourProvider>
       </QRSubmissionBlockedProvider>

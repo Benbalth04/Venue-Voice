@@ -1733,6 +1733,7 @@ export interface NewResponseNotification {
   response_id: string
   survey_name: string
   location_name: string
+  qr_code_title: string
   submitted_at: string
 }
 
