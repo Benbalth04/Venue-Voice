@@ -44,6 +44,7 @@ from ..integrations.supabase_storage import (
     get_supabase_service_client,
     upload_survey_photo,
 )
+from ..core.cache import cache_delete_pattern, cache_get, cache_set
 from ..core.config import settings
 from ..services.location_survey_service import utc_now, validate_qr_scan_access
 
@@ -382,11 +383,18 @@ def get_survey_for_session(
     Return survey schema for a valid session.
     Query params: session=session_id, qr=qr_code_id
     """
+    check_rate_limit(request, "survey_fetch", limit=30, window=60)
+
     try:
         session_uid = uuid.UUID(session)
         qr_uid = uuid.UUID(qr)
     except ValueError:
         raise ValidationError(code="INVALID_SESSION_OR_QR_ID", message="Invalid session or QR code ID")
+
+    cache_key = f"survey_session:{session}:{qr}"
+    cached = cache_get(cache_key)
+    if cached:
+        return json.loads(cached)
 
     sess = (
         db.query(SurveySessionORM)
@@ -422,11 +430,13 @@ def get_survey_for_session(
             .first()
         )
 
-    return {
+    result = {
         "survey_version_id": str(sv.id),
         "schema": sv.schema_json,
         "company_name": company.name if company else None,
     }
+    cache_set(cache_key, json.dumps(result), settings.survey_session_cache_ttl)
+    return result
 
 
 class AbandonBody(BaseModel):
@@ -723,6 +733,8 @@ async def submit_survey(
     sess.abandoned = False
     response_id = resp.id
     db.commit()
+
+    cache_delete_pattern(f"unread_count:*:{sess.company_id}")
 
     # Analytics event — emitted after commit so the response is durable.
     logger.info(

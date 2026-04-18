@@ -111,6 +111,8 @@ class Settings(BaseSettings):
     # Redis
     # ------------------------------------------------------------------
     redis_url: str = "redis://redis:6379/0"
+    survey_session_cache_ttl: int = 3600
+    unread_count_cache_ttl: int = 120
 
     # ------------------------------------------------------------------
     # Sentry

@@ -11,6 +11,8 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from ..auth.membership import get_company_from_membership, get_current_membership, require_company_admin
+from ..core.cache import cache_delete, cache_get, cache_set
+from ..core.config import settings
 from ..auth.plan_enforcement import require_feature
 from ..auth.subscription import require_active_subscription
 from ..auth.user_timezone import get_user_zoneinfo
@@ -84,8 +86,14 @@ def unread_response_count(
     """Return unread completed survey response count for the current user."""
     from ..services.analytics_service import get_unread_response_count
 
+    cache_key = f"unread_count:{membership.user_id}:{membership.company_id}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return {"count": int(cached)}
     try:
-        return {"count": get_unread_response_count(membership=membership, db=db)}
+        count = get_unread_response_count(membership=membership, db=db)
+        cache_set(cache_key, str(count), settings.unread_count_cache_ttl)
+        return {"count": count}
     except Exception:
         return {"count": 0}
 
@@ -99,9 +107,15 @@ def has_unread_reviews(
     db: Session = Depends(get_db_connection),
 ):
     """Lightweight endpoint: returns true if user has any unread survey responses."""
-    from ..services.analytics_service import has_unread_responses
+    cache_key = f"unread_count:{membership.user_id}:{membership.company_id}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return {"has_unread": int(cached) > 0}
+    from ..services.analytics_service import get_unread_response_count
     try:
-        return {"has_unread": has_unread_responses(membership=membership, db=db)}
+        count = get_unread_response_count(membership=membership, db=db)
+        cache_set(cache_key, str(count), settings.unread_count_cache_ttl)
+        return {"has_unread": count > 0}
     except Exception:
         return {"has_unread": False}
 

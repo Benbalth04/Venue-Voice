@@ -46,6 +46,7 @@ from ..schemas.pydantic_model import (
     AnalyticsResponseList,
     AnalyticsResponseRow,
 )
+from ..core.cache import cache_delete, cache_delete_pattern
 from ..core.errors.app_error import AppError
 from ..core.errors.error_category import ErrorCategory
 from ..core.errors.exceptions import NotFoundError, PermissionError, ValidationError
@@ -518,6 +519,7 @@ def get_response_detail(
 
     # Mark as read when user views the answers
     mark_response_read(user_id=user_id, response_id=response_id, db=db)
+    cache_delete(f"unread_count:{user_id}:{membership.company_id}")
 
     sv = (
         db.query(SurveyVersionORM)
@@ -797,3 +799,4 @@ def delete_response(
         ).update({"deleted_at": now}, synchronize_session=False)
 
     db.commit()
+    cache_delete_pattern(f"unread_count:*:{membership.company_id}")
