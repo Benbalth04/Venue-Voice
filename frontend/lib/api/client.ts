@@ -907,6 +907,28 @@ export interface AnalyticsFilters {
   sort_direction?: "asc" | "desc"
 }
 
+// Advanced filter types — mirror the backend AdvancedFilterPayload schema
+
+export interface AdvFilterConditionPayload {
+  condition_type: RuleConditionType
+  question_id: string
+  operator: RuleOperatorApi | null
+  value: string | string[] | null
+  group_local_id: string | null
+}
+
+export interface AdvFilterGroupPayload {
+  local_id: string
+  operator: "AND" | "OR"
+}
+
+export interface AdvancedFilterApiPayload {
+  survey_id: string
+  operator: "AND" | "OR"
+  groups: AdvFilterGroupPayload[]
+  conditions: AdvFilterConditionPayload[]
+}
+
 // ------------------------------------------------------------------
 // Auth helpers
 // ------------------------------------------------------------------
@@ -1703,7 +1725,10 @@ export function duplicateSurvey(token: string, id: string): Promise<SurveyWithSc
 // ------------------------------------------------------------------
 // Analytics
 // ------------------------------------------------------------------
-function _buildAnalyticsParams(filters: AnalyticsFilters): URLSearchParams {
+function _buildAnalyticsParams(
+  filters: AnalyticsFilters,
+  advancedFilter?: AdvancedFilterApiPayload | null,
+): URLSearchParams {
   const p = new URLSearchParams()
   if (filters.page != null) p.set("page", String(filters.page))
   if (filters.page_size != null) p.set("page_size", String(filters.page_size))
@@ -1715,6 +1740,9 @@ function _buildAnalyticsParams(filters: AnalyticsFilters): URLSearchParams {
   if (filters.date_end) p.set("date_end", filters.date_end)
   if (filters.sort_column) p.set("sort_column", filters.sort_column)
   if (filters.sort_direction) p.set("sort_direction", filters.sort_direction)
+  if (advancedFilter && advancedFilter.conditions.length > 0) {
+    p.set("advanced_filter", JSON.stringify(advancedFilter))
+  }
   return p
 }
 
@@ -1760,11 +1788,12 @@ export function fetchAnalyticsFilters(token: string): Promise<AnalyticsFiltersRe
 export function fetchAnalyticsResponses(
   token: string,
   filters: AnalyticsFilters,
+  advancedFilter?: AdvancedFilterApiPayload | null,
 ): Promise<AnalyticsResponseList> {
   return _analyticsRequest<AnalyticsResponseList>(
     token,
     "/analytics/responses",
-    _buildAnalyticsParams(filters),
+    _buildAnalyticsParams(filters, advancedFilter),
   )
 }
 

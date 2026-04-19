@@ -34,6 +34,13 @@ import {
   type FlowRunResponse,
   type NotificationGroupResponse,
 } from "@/lib/api/client"
+import {
+  AdvancedFiltersPanel,
+  advancedFilterToApiPayload,
+  hasActiveAdvancedFilter,
+  DEFAULT_ADV_FILTER,
+  type AdvancedFilterState,
+} from "@/components/analytics/AdvancedFiltersPanel"
 import type { RuleInfo } from "@/components/flow-editor/buildReadOnlyCanvas"
 import { FlowExecutionPreview } from "@/components/flow-editor/FlowExecutionPreview"
 import { FlowRunActionPill } from "@/components/flows/FlowRunActionPill"
@@ -41,6 +48,7 @@ import { AiAnalysisInfoTooltip } from "@/components/analytics/AiAnalysisInfoTool
 import { DataTable } from "@/components/ui/DataTable"
 import { DeleteResponseDialog } from "@/components/ui/DeleteResponseDialog"
 import { DatePicker } from "@/components/ui/DatePicker"
+import { SingleSelectDropdown } from "@/components/ui/DropdownSelect"
 import { useUnreadResponses } from "@/components/layout/UnreadResponsesContext"
 import { useAuth } from "@/contexts/AuthContext"
 import { formatIsoInUserTimeZone } from "@/lib/datetime/formatInUserTz"
@@ -546,61 +554,59 @@ function FiltersPanel({
         {/* Survey */}
         <div>
           <label className="mb-1 block text-xs font-medium text-zinc-600">Survey</label>
-          <select
+          <SingleSelectDropdown
             value={filters.survey_id}
-            onChange={(e) => onChange("survey_id", e.target.value)}
-            className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-800 focus:outline-none focus:ring-2 focus:ring-violet-400"
-          >
-            <option value="">All surveys</option>
-            {surveys.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
+            onChange={(v) => onChange("survey_id", v === "__all__" ? "" : v)}
+            options={[
+              { value: "__all__", label: "All surveys" },
+              ...surveys.map((s) => ({ value: s.id, label: s.name })),
+            ]}
+            placeholder="All surveys"
+          />
         </div>
 
         {/* QR Code */}
         <div>
           <label className="mb-1 block text-xs font-medium text-zinc-600">QR Code</label>
-          <select
+          <SingleSelectDropdown
             value={filters.qr_code_id}
-            onChange={(e) => onChange("qr_code_id", e.target.value)}
-            className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-800 focus:outline-none focus:ring-2 focus:ring-violet-400"
-          >
-            <option value="">All QR codes</option>
-            {qrCodes.map((q) => (
-              <option key={q.id} value={q.id}>{q.name}</option>
-            ))}
-          </select>
+            onChange={(v) => onChange("qr_code_id", v === "__all__" ? "" : v)}
+            options={[
+              { value: "__all__", label: "All QR codes" },
+              ...qrCodes.map((q) => ({ value: q.id, label: q.name })),
+            ]}
+            placeholder="All QR codes"
+          />
         </div>
 
         {/* Location */}
         <div>
           <label className="mb-1 block text-xs font-medium text-zinc-600">Location</label>
-          <select
+          <SingleSelectDropdown
             value={filters.location_id}
-            onChange={(e) => onChange("location_id", e.target.value)}
-            className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-800 focus:outline-none focus:ring-2 focus:ring-violet-400"
-          >
-            <option value="">All locations</option>
-            <option value="__none__">No Location</option>
-            {locations.map((l) => (
-              <option key={l.id} value={l.id}>{l.name}</option>
-            ))}
-          </select>
+            onChange={(v) => onChange("location_id", v === "__all__" ? "" : v)}
+            options={[
+              { value: "__all__", label: "All locations" },
+              { value: "__none__", label: "No Location" },
+              ...locations.map((l) => ({ value: l.id, label: l.name })),
+            ]}
+            placeholder="All locations"
+          />
         </div>
 
         {/* Completed */}
         <div>
           <label className="mb-1 block text-xs font-medium text-zinc-600">Completed</label>
-          <select
+          <SingleSelectDropdown
             value={filters.completed}
-            onChange={(e) => onChange("completed", e.target.value)}
-            className="w-full rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm text-zinc-800 focus:outline-none focus:ring-2 focus:ring-violet-400"
-          >
-            <option value="">All</option>
-            <option value="true">Yes</option>
-            <option value="false">No</option>
-          </select>
+            onChange={(v) => onChange("completed", v === "__all__" ? "" : v)}
+            options={[
+              { value: "__all__", label: "All" },
+              { value: "true", label: "Yes" },
+              { value: "false", label: "No" },
+            ]}
+            placeholder="All"
+          />
         </div>
 
         {/* Date start */}
@@ -641,6 +647,7 @@ export default function AnalyticsPage() {
   const PAGE_SIZE = 100
 
   const [filters, setFilters] = useState<FiltersState>(DEFAULT_FILTERS)
+  const [advFilter, setAdvFilter] = useState<AdvancedFilterState>(DEFAULT_ADV_FILTER)
   const [surveys, setSurveys] = useState<AnalyticsFilterOption[]>([])
   const [qrCodes, setQrCodes] = useState<AnalyticsFilterOption[]>([])
   const [locations, setLocations] = useState<AnalyticsFilterOption[]>([])
@@ -654,22 +661,13 @@ export default function AnalyticsPage() {
 
   const abortRef = useRef<AbortController | null>(null)
 
-  // Build API filter object from state
-  function buildApiFilters(): AnalyticsFilters {
-    const f: AnalyticsFilters = {
-      page,
-      page_size: PAGE_SIZE,
-      sort_column: filters.sort_column,
-      sort_direction: filters.sort_direction,
-    }
-    if (filters.survey_id) f.survey_id = filters.survey_id
-    if (filters.qr_code_id) f.qr_code_id = filters.qr_code_id
-    if (filters.location_id) f.location_id = filters.location_id
-    if (filters.completed !== "") f.completed = filters.completed === "true"
-    if (filters.date_start) f.date_start = filters.date_start
-    if (filters.date_end) f.date_end = filters.date_end
-    return f
-  }
+  // Refs so the stable loadData callback always reads fresh filter/page values
+  const filtersRef = useRef(filters)
+  const advFilterRef = useRef(advFilter)
+  const pageRef = useRef(page)
+  filtersRef.current = filters
+  advFilterRef.current = advFilter
+  pageRef.current = page
 
   // Load filter options once
   useEffect(() => {
@@ -691,16 +689,35 @@ export default function AnalyticsPage() {
     return () => { cancelled = true }
   }, [])
 
-  // Load table data whenever filters or page changes
-  const loadData = useCallback(async () => {
+  // Stable — reads current values from refs; pageOverride used when page state hasn't settled yet
+  const loadData = useCallback(async (pageOverride?: number) => {
     abortRef.current?.abort()
     abortRef.current = new AbortController()
     setLoading(true)
     setError(null)
     const token = await getToken()
     if (!token) { setError("Not authenticated"); setLoading(false); return }
+    const f = filtersRef.current
+    const af = advFilterRef.current
+    const p = pageOverride ?? pageRef.current
+    const apiFilters: AnalyticsFilters = {
+      page: p,
+      page_size: PAGE_SIZE,
+      sort_column: f.sort_column,
+      sort_direction: f.sort_direction,
+    }
+    if (f.survey_id) apiFilters.survey_id = f.survey_id
+    if (f.qr_code_id) apiFilters.qr_code_id = f.qr_code_id
+    if (f.location_id) apiFilters.location_id = f.location_id
+    if (f.completed !== "") apiFilters.completed = f.completed === "true"
+    if (f.date_start) apiFilters.date_start = f.date_start
+    if (f.date_end) apiFilters.date_end = f.date_end
     try {
-      const data = await fetchAnalyticsResponses(token, buildApiFilters())
+      const data = await fetchAnalyticsResponses(
+        token,
+        apiFilters,
+        hasActiveAdvancedFilter(af) ? advancedFilterToApiPayload(af) : null,
+      )
       setRows(data.rows)
       setTotalCount(data.total_count)
     } catch (e) {
@@ -710,8 +727,9 @@ export default function AnalyticsPage() {
       setLoading(false)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters, page])
+  }, [])
 
+  // Initial load only — loadData is stable so this fires exactly once
   useEffect(() => { loadData() }, [loadData])
 
   function handleFilterChange(key: keyof FiltersState, value: string) {
@@ -722,6 +740,8 @@ export default function AnalyticsPage() {
   function handleResetFilters() {
     setPage(1)
     setFilters(DEFAULT_FILTERS)
+    filtersRef.current = DEFAULT_FILTERS
+    loadData(1)
   }
 
   function handleSort(col: string) {
@@ -731,6 +751,11 @@ export default function AnalyticsPage() {
       sort_column: col,
       sort_direction: prev.sort_column === col && prev.sort_direction === "desc" ? "asc" : "desc",
     }))
+  }
+
+  function handleGetResults() {
+    setPage(1)
+    loadData(1)
   }
 
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
@@ -767,6 +792,25 @@ export default function AnalyticsPage() {
         onChange={handleFilterChange}
         onReset={handleResetFilters}
       />
+      <AdvancedFiltersPanel
+        state={advFilter}
+        onChange={(next) => { setPage(1); setAdvFilter(next) }}
+        onReset={() => { setPage(1); setAdvFilter(DEFAULT_ADV_FILTER); advFilterRef.current = DEFAULT_ADV_FILTER; loadData(1) }}
+        surveys={surveys}
+        mainSurveyId={filters.survey_id}
+      />
+
+      {/* Get Results */}
+      <div className="flex justify-center">
+        <button
+          type="button"
+          onClick={handleGetResults}
+          disabled={loading}
+          className="rounded-xl bg-violet-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Get Results"}
+        </button>
+      </div>
 
       {/* Summary bar */}
       <div className="flex items-center justify-between text-sm text-zinc-500">
@@ -910,7 +954,7 @@ export default function AnalyticsPage() {
               <div className="flex items-center gap-1">
                 <button
                   type="button"
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  onClick={() => { const p = Math.max(1, page - 1); setPage(p); loadData(p) }}
                   disabled={page <= 1 || loading}
                   className="rounded-lg border border-zinc-200 p-1.5 text-zinc-600 hover:bg-white disabled:opacity-40"
                   aria-label="Previous page"
@@ -922,7 +966,7 @@ export default function AnalyticsPage() {
                 </span>
                 <button
                   type="button"
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  onClick={() => { const p = Math.min(totalPages, page + 1); setPage(p); loadData(p) }}
                   disabled={page >= totalPages || loading}
                   className="rounded-lg border border-zinc-200 p-1.5 text-zinc-600 hover:bg-white disabled:opacity-40"
                   aria-label="Next page"

@@ -617,6 +617,33 @@ class PhotoSignedUrlResponse(BaseModel):
 
 
 # --------------------------------------------------
+# ADVANCED FILTER PAYLOAD
+# --------------------------------------------------
+
+class AdvFilterCondition(BaseModel):
+    condition_type: Literal[
+        "rating", "nps", "sentiment", "not_empty",
+        "checkbox", "multiple_choice", "yes_no",
+    ]
+    question_id: str  # stable_question_id UUID string
+    operator: Literal["lt", "lte", "eq", "gte", "gt", "is"] | None = None
+    value: str | list[str] | None = None
+    group_local_id: str | None = None  # None = top-level condition
+
+
+class AdvFilterGroup(BaseModel):
+    local_id: str
+    operator: Literal["AND", "OR"]
+
+
+class AdvancedFilterPayload(BaseModel):
+    survey_id: str
+    operator: Literal["AND", "OR"]
+    groups: list[AdvFilterGroup]
+    conditions: list[AdvFilterCondition]
+
+
+# --------------------------------------------------
 # SURVEY SETTINGS SCHEMA (centralised)
 # --------------------------------------------------
 

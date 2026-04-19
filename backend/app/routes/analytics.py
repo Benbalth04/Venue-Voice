@@ -3,11 +3,13 @@ Analytics routes – all require authenticated user, company-scoped.
 """
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy.orm import Session
 
 from ..auth.membership import get_company_from_membership, get_current_membership, require_company_admin
@@ -20,6 +22,7 @@ from ..auth.viewer_scoping import assert_survey_access
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import Membership as MembershipORM, User as UserORM
 from ..schemas.pydantic_model import (
+    AdvancedFilterPayload,
     AnalyticsFiltersResponse,
     AnalyticsResponseDetail,
     AnalyticsResponseList,
@@ -179,14 +182,26 @@ def analytics_filters(
 @router.get("/analytics/responses", response_model=AnalyticsResponseList)
 def analytics_responses(
     params: dict = Depends(_shared_filter_params),
+    advanced_filter: str | None = Query(None, description="JSON-encoded advanced filter payload"),
     membership: MembershipORM = Depends(get_current_membership),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
     """Paginated, filterable, sortable list of survey sessions."""
+    parsed_adv: AdvancedFilterPayload | None = None
+    if advanced_filter:
+        try:
+            raw = json.loads(advanced_filter)
+            parsed_adv = AdvancedFilterPayload.model_validate(raw)
+        except (json.JSONDecodeError, PydanticValidationError) as exc:
+            raise ValidationError(
+                code="INVALID_ADVANCED_FILTER",
+                message="Invalid advanced filter payload",
+                details={"detail": str(exc)},
+            )
     try:
         return get_analytics_responses(
-            membership=membership, db=db, user_tz=user_tz, **params
+            membership=membership, db=db, user_tz=user_tz, advanced_filter=parsed_adv, **params
         )
     except AppError:
         raise
