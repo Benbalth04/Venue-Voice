@@ -26,7 +26,7 @@ const BACKEND_ORIGIN = supabaseOrigin(backendBaseUrl);
 const securityHeaders = [
   {
     key: "X-Frame-Options",
-    value: "DENY",
+    value: "SAMEORIGIN",
   },
   {
     key: "X-Content-Type-Options",
@@ -75,7 +75,7 @@ const securityHeaders = [
         .join(" "),
       // js.stripe.com iframes are used for Stripe 3DS challenges
       `frame-src 'self' https://js.stripe.com https://*.crisp.chat`,
-      "frame-ancestors 'none'",
+      "frame-ancestors 'self'",
       "base-uri 'self'",
       "form-action 'self'",
     ].join("; "),
