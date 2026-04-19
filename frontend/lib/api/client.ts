@@ -304,6 +304,11 @@ export interface DashboardTrendPoint {
   value: number
 }
 
+export interface DashboardRateTrendPoint {
+  label: string
+  value: number | null
+}
+
 export interface DashboardSurveySummary {
   id: string
   title: string
@@ -342,6 +347,7 @@ export interface DashboardData {
   active_locations_count: number
   submission_trend: DashboardTrendPoint[]
   scan_trend: DashboardTrendPoint[]
+  completion_rate_trend: DashboardRateTrendPoint[]
   active_surveys: DashboardSurveySummary[]
   active_qr_codes: DashboardQRCodeSummary[]
   active_locations: DashboardLocationSummary[]

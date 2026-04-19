@@ -33,6 +33,7 @@ from ..schemas.pydantic_model import (
     DashboardData,
     DashboardLocationSummary,
     DashboardQRCodeSummary,
+    DashboardRateTrendPoint,
     DashboardResponseSummary,
     DashboardSurveySummary,
     DashboardTrendPoint,
@@ -61,6 +62,7 @@ def get_dashboard(
             active_locations_count=0,
             submission_trend=[],
             scan_trend=[],
+            completion_rate_trend=[],
             active_surveys=[],
             active_qr_codes=[],
             active_locations=[],
@@ -255,6 +257,17 @@ def get_dashboard(
         )
     scan_trend = [DashboardTrendPoint(label=str(r.day), value=r.cnt) for r in scan_trend_rows]
 
+    scans_by_day = {r.day: r.cnt for r in scan_trend_rows}
+    subs_by_day = {r.day: r.cnt for r in submission_trend_rows}
+    all_days = sorted(scans_by_day.keys() | subs_by_day.keys())
+    completion_rate_trend = [
+        DashboardRateTrendPoint(
+            label=str(d),
+            value=round(subs_by_day.get(d, 0) / scans_by_day[d] * 100, 1) if scans_by_day.get(d) else None,
+        )
+        for d in all_days
+    ]
+
     return DashboardData(
         company_name=company.name,
         user_display_name=f"{user.first_name} {user.last_name}".strip() or "User",
@@ -265,6 +278,7 @@ def get_dashboard(
         active_locations_count=active_locations_count,
         submission_trend=submission_trend,
         scan_trend=scan_trend,
+        completion_rate_trend=completion_rate_trend,
         active_surveys=active_surveys,
         active_qr_codes=active_qr_codes,
         active_locations=active_locations,

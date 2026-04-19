@@ -480,6 +480,11 @@ class DashboardTrendPoint(BaseModel):
     value: int
 
 
+class DashboardRateTrendPoint(BaseModel):
+    label: str
+    value: float | None
+
+
 class DashboardSurveySummary(BaseModel):
     id: uuid.UUID
     title: str
@@ -676,6 +681,7 @@ class DashboardData(BaseModel):
     active_locations_count: int
     submission_trend: list[DashboardTrendPoint]
     scan_trend: list[DashboardTrendPoint]
+    completion_rate_trend: list[DashboardRateTrendPoint]
     active_surveys: list[DashboardSurveySummary]
     active_qr_codes: list[DashboardQRCodeSummary]
     active_locations: list[DashboardLocationSummary]

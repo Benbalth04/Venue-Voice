@@ -8,6 +8,7 @@ from typing import Any
 
 import sentry_sdk
 from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
 from .config import settings
@@ -16,13 +17,19 @@ from .logging_config import request_id_var, user_id_var
 logger = logging.getLogger(__name__)
 
 
-def _before_send(event: dict[str, Any], hint: dict[str, Any]) -> dict[str, Any] | None:
-    """Inject request_id and user_id into every outbound Sentry event.
+_ERROR_LEVELS = {"error", "fatal"}
 
-    This acts as a failsafe: even when the error is auto-captured by the SDK
-    (rather than going through our handlers.py), the event will still carry
-    the request_id needed to correlate it with Loki logs.
+
+def _before_send(event: dict[str, Any], hint: dict[str, Any]) -> dict[str, Any] | None:
+    """Drop non-error events; inject request_id and user_id into all errors.
+
+    Returning None silently discards the event. This is the final gate that
+    ensures only ERROR/FATAL events ever leave the process, regardless of how
+    they were captured.
     """
+    if event.get("level") not in _ERROR_LEVELS:
+        return None
+
     req_id = request_id_var.get("")
     if req_id:
         event.setdefault("tags", {})["request_id"] = req_id
@@ -47,18 +54,16 @@ def init_sentry() -> None:
     sentry_sdk.init(
         dsn=settings.sentry_dsn,
         environment=settings.environment,
-        traces_sample_rate=settings.sentry_traces_sample_rate,
+        # Traces are performance data, not errors — disable entirely.
+        traces_sample_rate=0.0,
         integrations=[
-            # StarletteIntegration instruments the ASGI request lifecycle;
-            # FastApiIntegration adds FastAPI-specific span/transaction naming.
             StarletteIntegration(),
             FastApiIntegration(),
+            # Only promote ERROR+ log records to Sentry events; WARNING and
+            # below are captured as breadcrumbs only (the SDK default).
+            LoggingIntegration(level=logging.WARNING, event_level=logging.ERROR),
         ],
-        # Never auto-attach PII (emails, IPs) — add user context explicitly
-        # via push_scope() in the handlers if/when needed.
         send_default_pii=False,
-        # Stamp every event with request_id so Sentry events are always
-        # traceable to a Loki log stream via the shared request_id field.
         before_send=_before_send,
     )
     logger.info(
@@ -66,6 +71,5 @@ def init_sentry() -> None:
         extra={
             "event_type": "sentry_initialised",
             "environment": settings.environment,
-            "traces_sample_rate": settings.sentry_traces_sample_rate,
         },
     )

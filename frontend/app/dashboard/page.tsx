@@ -83,7 +83,7 @@ export default function DashboardOverviewPage() {
 
       <div className="grid gap-4 md:grid-cols-2">
         <TrendChart title="Submissions over time" points={data.submission_trend} />
-        <TrendChart title="Scans over time" points={data.scan_trend} />
+        <TrendChart title="Completion rate over time" points={data.completion_rate_trend} isPercentage />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">

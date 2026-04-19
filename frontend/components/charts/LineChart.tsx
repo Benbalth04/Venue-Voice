@@ -102,12 +102,23 @@ export function LineChart({
   xLabelAngled,
 }: Props) {
   const data = { labels, datasets };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const s = (obj: unknown) => (obj ?? {}) as Record<string, any>;
   const merged: ChartOptions<"line"> = {
     ...DEFAULT_OPTIONS,
     ...options,
+    scales: {
+      ...s(DEFAULT_OPTIONS.scales),
+      ...s(options?.scales),
+      x: { ...s(s(DEFAULT_OPTIONS.scales)["x"]), ...s(s(options?.scales)["x"]) },
+      y: { ...s(s(DEFAULT_OPTIONS.scales)["y"]), ...s(s(options?.scales)["y"]),
+        ticks: { ...s(s(s(DEFAULT_OPTIONS.scales)["y"])["ticks"]), ...s(s(s(options?.scales)["y"])["ticks"]) },
+      },
+    },
     plugins: {
       ...DEFAULT_OPTIONS.plugins,
       ...options?.plugins,
+      tooltip: { ...s(DEFAULT_OPTIONS.plugins?.tooltip), ...s(options?.plugins?.tooltip) },
       legend: {
         display: showLegend,
         position: "bottom",
