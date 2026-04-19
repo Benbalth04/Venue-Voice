@@ -65,6 +65,7 @@ export function CrispChat() {
     setVisible(true)
   }, [user])
 
+  if (typeof window !== "undefined" && window.self !== window.top) return null
   if (!visible || chatOpen) return null
 
   return (
