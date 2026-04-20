@@ -15,6 +15,26 @@ export interface NormalizedError {
   details?: Record<string, unknown>
 }
 
+const GENERIC_USER_MESSAGE = "Something went wrong"
+
+/**
+ * Browser/network failures surface as TypeError with vendor-specific messages
+ * (e.g. "Failed to fetch", "Load failed", "NetworkError when attempting...").
+ * These are never from our API — there was no HTTP body — and should not be
+ * shown verbatim to users.
+ */
+function isOpaqueNetworkFailureMessage(message: string): boolean {
+  const m = message.trim().toLowerCase()
+  return (
+    m === "failed to fetch" ||
+    m === "load failed" ||
+    m.includes("networkerror") ||
+    m.includes("network error when attempting to fetch") ||
+    m.includes("network request failed") ||
+    m.includes("failed to load resource")
+  )
+}
+
 /**
  * Convert a parsed (but possibly malformed) error response body into a
  * NormalizedError.  Safe to call with any value including null/undefined.
@@ -58,10 +78,12 @@ export function normalizeUnknownError(err: unknown): NormalizedError {
   if (isNormalizedError(err)) return err
 
   if (err instanceof Error && err.message) {
+    const safe =
+      isOpaqueNetworkFailureMessage(err.message) ? GENERIC_USER_MESSAGE : err.message
     return {
       category: "unknown",
       code: "NETWORK_OR_RUNTIME_ERROR",
-      message: err.message,
+      message: safe,
       details: {},
     }
   }
@@ -69,7 +91,7 @@ export function normalizeUnknownError(err: unknown): NormalizedError {
   return {
     category: "unknown",
     code: "NETWORK_OR_RUNTIME_ERROR",
-    message: "Something went wrong",
+    message: GENERIC_USER_MESSAGE,
     details: {},
   }
 }
@@ -103,9 +125,15 @@ export function showError(err: NormalizedError | unknown): void {
  * Handles NormalizedError, plain Error, and unknown values.
  * Always returns a non-empty string.
  */
-export function extractErrorMessage(err: unknown, fallback = "Something went wrong"): string {
-  if (isNormalizedError(err)) return err.message || fallback
-  if (err instanceof Error) return err.message || fallback
+export function extractErrorMessage(err: unknown, fallback = GENERIC_USER_MESSAGE): string {
+  if (isNormalizedError(err)) {
+    const msg = err.message || fallback
+    return isOpaqueNetworkFailureMessage(msg) ? fallback : msg
+  }
+  if (err instanceof Error) {
+    const msg = err.message || fallback
+    return isOpaqueNetworkFailureMessage(msg) ? fallback : msg
+  }
   return fallback
 }
 

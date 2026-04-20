@@ -35,6 +35,17 @@ class PermissionError(AppError):
         )
 
 
+class SubscriptionLimitError(AppError):
+    def __init__(self, resource: str, limit: int, current: int):
+        super().__init__(
+            category=ErrorCategory.PERMISSION,
+            code="LIMIT_EXCEEDED",
+            message=f"You have reached the limit for {resource} on your current plan.",
+            status_code=403,
+            details={"resource": resource, "limit": limit, "current": current},
+        )
+
+
 class NotFoundError(AppError):
     def __init__(self, code: str, message: str, details: dict | None = None):
         super().__init__(

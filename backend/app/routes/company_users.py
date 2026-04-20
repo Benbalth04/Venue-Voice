@@ -320,6 +320,7 @@ def set_viewer_permissions(
                 LocationORM.id.in_(payload.location_ids),
                 LocationORM.company_id == company.id,
                 LocationORM.deleted_at.is_(None),
+                LocationORM.archived_at.is_(None),
             )
             .all()
         )

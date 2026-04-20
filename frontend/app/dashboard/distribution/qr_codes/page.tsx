@@ -1,7 +1,20 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Download, Link2, Pencil, Plus, ToggleLeft, ToggleRight, Trash2, X, QrCode } from "lucide-react"
+import {
+  Archive,
+  ArchiveRestore,
+  ChevronDown,
+  Download,
+  Link2,
+  Pencil,
+  Plus,
+  ToggleLeft,
+  ToggleRight,
+  Trash2,
+  X,
+  QrCode,
+} from "lucide-react"
 import { useConfirm } from "@/components/ui/ConfirmDialog"
 import { QRCodeCanvas, QRCodeSVG } from "qrcode.react"
 import { Button } from "@/components/ui/button"
@@ -13,13 +26,15 @@ import { supabase } from "@/lib/supabase/client"
 import { useQRSubmissionBlocked } from "@/components/layout/QRSubmissionBlockedContext"
 import { useAuth } from "@/contexts/AuthContext"
 import {
+  archiveQRCode,
   createQRCode,
-  deleteQRCode,
+  deleteArchivedQRCode,
   extractErrorMessage,
   fetchLocations,
   fetchQRCodes,
   fetchSurveys,
   isStaleObjectError,
+  unarchiveQRCode,
   updateQRCode,
   type LocationResponse,
   type QRCodeCreate,
@@ -27,6 +42,8 @@ import {
   type QRCodeUpdate,
   type SurveySummary,
 } from "@/lib/api/client"
+import { formatIsoInUserTimeZone } from "@/lib/datetime/formatInUserTz"
+import { DEFAULT_USER_TIMEZONE } from "@/lib/timezone/australia"
 
 const APP_ORIGIN = process.env.NEXT_PUBLIC_APP_ORIGIN
 function qrUrl(qrCodeId: string) {
@@ -186,6 +203,7 @@ function qrStatusBadge(status: QRCodeResponse["qr_status"]) {
   const map: Record<QRCodeResponse["qr_status"], { label: string; cls: string }> = {
     active: { label: "True", cls: "bg-emerald-50 text-emerald-700" },
     inactive: { label: "False", cls: "bg-red-50 text-red-700" },
+    archived: { label: "False", cls: "bg-amber-50 text-amber-800" },
     deleted: { label: "False", cls: "bg-red-50 text-red-700" },
   }
   const resolved = map[status]
@@ -392,7 +410,8 @@ type QRSortKey = "title" | "survey" | "location" | "status"
 type SortDir = "asc" | "desc"
 
 export default function DistributionPage() {
-  const { activeMembership } = useAuth()
+  const { activeMembership, user } = useAuth()
+  const userTimeZone = user?.timezone ?? DEFAULT_USER_TIMEZONE
   const isViewer = activeMembership?.role === "viewer"
   const { refreshSubmissionBlockedQrCount } = useQRSubmissionBlocked()
   const { confirm, ConfirmDialogRender } = useConfirm()
@@ -401,6 +420,10 @@ export default function DistributionPage() {
   const [locations, setLocations] = useState<LocationResponse[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  const [archivedOpen, setArchivedOpen] = useState(false)
+  const [archivedQRCodes, setArchivedQRCodes] = useState<QRCodeResponse[]>([])
+  const [archivedLoading, setArchivedLoading] = useState(false)
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editTarget, setEditTarget] = useState<QRCodeResponse | null>(null)
@@ -433,7 +456,30 @@ export default function DistributionPage() {
     }
   }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    load()
+  }, [load])
+
+  useEffect(() => {
+    if (!archivedOpen) return
+    let cancelled = false
+    ;(async () => {
+      const token = await getToken()
+      if (!token || cancelled) return
+      setArchivedLoading(true)
+      try {
+        const rows = await fetchQRCodes(token, { archived: true })
+        if (!cancelled) setArchivedQRCodes(rows)
+      } catch {
+        if (!cancelled) setArchivedQRCodes([])
+      } finally {
+        if (!cancelled) setArchivedLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [archivedOpen])
 
   function openCreate() {
     setEditTarget(null)
@@ -502,23 +548,75 @@ export default function DistributionPage() {
     }
   }
 
-  async function handleDelete(qr: QRCodeResponse) {
+  async function handleArchive(qr: QRCodeResponse) {
     const ok = await confirm({
-      title: `Delete QR code - ${qr.title}`,
-      message: `Are you sure you want to delete this QR code? This cannot be undone.`,
-      confirmLabel: "Delete",
+      title: `Archive QR code — ${qr.title}`,
+      message:
+        "This QR code will stop accepting scans immediately. Any responses submitted through this QR code will be marked as archived.\n\nYou can restore it from the Archived section at any time.",
+      confirmLabel: "Archive",
+      variant: "warning",
+    })
+    if (!ok) return
+    const token = await getToken()
+    if (!token) return
+    try {
+      await archiveQRCode(token, qr.id, qr.updated_at)
+      setQRCodes((prev) => prev.filter((q) => q.id !== qr.id))
+      void refreshSubmissionBlockedQrCount()
+      if (archivedOpen) {
+        const t = await getToken()
+        if (t) setArchivedQRCodes(await fetchQRCodes(t, { archived: true }))
+      }
+    } catch (err) {
+      if (isStaleObjectError(err)) {
+        void load()
+        alert("This QR code was updated. Please try again.")
+      } else {
+        alert(extractErrorMessage(err, "Failed to archive QR code"))
+      }
+    }
+  }
+
+  async function handleUnarchive(qr: QRCodeResponse) {
+    const token = await getToken()
+    if (!token) return
+    try {
+      const updated = await unarchiveQRCode(token, qr.id, qr.updated_at)
+      setArchivedQRCodes((prev) => prev.filter((q) => q.id !== qr.id))
+      setQRCodes((prev) => [updated, ...prev])
+      void refreshSubmissionBlockedQrCount()
+    } catch (err) {
+      if (isStaleObjectError(err)) {
+        const t = await getToken()
+        if (t) setArchivedQRCodes(await fetchQRCodes(t, { archived: true }))
+        alert("This QR code was updated. Please try again.")
+      } else {
+        alert(extractErrorMessage(err, "Failed to unarchive QR code"))
+      }
+    }
+  }
+
+  async function handleDeleteArchived(qr: QRCodeResponse) {
+    const ok = await confirm({
+      title: `Delete QR code — ${qr.title}`,
+      message:
+        "This permanently removes this QR code and cannot be undone. The physical QR code will stop working.\n\nDeletion is blocked if any survey sessions or responses are linked to this QR code.",
+      confirmLabel: "Delete permanently",
+      cancelLabel: "Cancel",
       variant: "danger",
     })
     if (!ok) return
     const token = await getToken()
     if (!token) return
     try {
-      await deleteQRCode(token, qr.id, qr.updated_at)
-      setQRCodes((prev) => prev.filter((q) => q.id !== qr.id))
+      await deleteArchivedQRCode(token, qr.id, qr.updated_at)
+      setArchivedQRCodes((prev) => prev.filter((q) => q.id !== qr.id))
       void refreshSubmissionBlockedQrCount()
     } catch (err) {
       if (isStaleObjectError(err)) {
-        setError("This QR code was updated. Please refresh.")
+        const t = await getToken()
+        if (t) setArchivedQRCodes(await fetchQRCodes(t, { archived: true }))
+        alert("This QR code was updated. Please try again.")
       } else {
         alert(extractErrorMessage(err, "Failed to delete QR code"))
       }
@@ -674,11 +772,11 @@ export default function DistributionPage() {
               </button>
               <button
                 type="button"
-                onClick={() => handleDelete(qr)}
-                className="rounded-lg p-1.5 text-zinc-400 hover:bg-red-50 hover:text-red-600"
-                title="Delete QR code"
+                onClick={() => handleArchive(qr)}
+                className="rounded-lg p-1.5 text-zinc-400 hover:bg-amber-50 hover:text-amber-800"
+                title="Archive QR code"
               >
-                <Trash2 className="h-3.5 w-3.5" />
+                <Archive className="h-3.5 w-3.5" />
               </button>
             </>
           )}
@@ -717,25 +815,127 @@ export default function DistributionPage() {
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
         </div>
-      ) : qrCodes.length === 0 ? (
-        <Card className="flex flex-col items-center gap-3 py-16">
-          <Link2 className="h-8 w-8 text-zinc-300" />
-          <p className="text-sm font-medium text-zinc-500">No QR codes yet</p>
-          {!isViewer && (
-            <Button variant="ghost" onClick={openCreate}>
-              Create your first QR code
-            </Button>
-          )}
-        </Card>
       ) : (
-        <DataTable<QRCodeResponse>
-          data={sortedQRCodes}
-          columns={columns}
-          getRowKey={(qr) => qr.id}
-          sortKey={sortKey}
-          sortDir={sortDir}
-          onSort={(key) => toggleSort(key as QRSortKey)}
-        />
+        <div className="space-y-4">
+          {qrCodes.length === 0 ? (
+            <Card className="flex flex-col items-center gap-3 py-16">
+              <Link2 className="h-8 w-8 text-zinc-300" />
+              <p className="text-sm font-medium text-zinc-500">No QR codes yet</p>
+              {!isViewer && (
+                <Button variant="ghost" onClick={openCreate}>
+                  Create your first QR code
+                </Button>
+              )}
+            </Card>
+          ) : (
+            <DataTable<QRCodeResponse>
+              data={sortedQRCodes}
+              columns={columns}
+              getRowKey={(qr) => qr.id}
+              sortKey={sortKey}
+              sortDir={sortDir}
+              onSort={(key) => toggleSort(key as QRSortKey)}
+            />
+          )}
+
+          <details
+            className="group rounded-xl border border-zinc-200 bg-zinc-50/50"
+            open={archivedOpen}
+            onToggle={(e) => setArchivedOpen(e.currentTarget.open)}
+          >
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-sm font-medium text-zinc-700 [&::-webkit-details-marker]:hidden">
+              <span className="flex items-center gap-2">
+                <ChevronDown className="h-4 w-4 shrink-0 text-zinc-400 transition-transform group-open:rotate-180" />
+                Archived QR codes
+              </span>
+            </summary>
+            <div className="border-t border-zinc-200 px-2 pb-4 pt-2">
+              {archivedLoading ? (
+                <div className="flex justify-center py-8">
+                  <LoadingBlock message="Loading archived QR codes…" />
+                </div>
+              ) : archivedQRCodes.length === 0 ? (
+                <p className="px-2 py-6 text-center text-sm text-zinc-500">No archived QR codes</p>
+              ) : (
+                <DataTable<QRCodeResponse>
+                  data={[...archivedQRCodes].sort((a, b) => a.title.localeCompare(b.title))}
+                  columns={[
+                    {
+                      key: "title",
+                      label: "Title",
+                      sortable: false,
+                      align: "left",
+                      render: (qr) => <span className="font-medium text-zinc-800">{qr.title}</span>,
+                    },
+                    {
+                      key: "location",
+                      label: "Location",
+                      sortable: false,
+                      align: "center",
+                      render: (qr) => (
+                        <span className="text-zinc-600">{qr.location_name ?? "—"}</span>
+                      ),
+                    },
+                    {
+                      key: "reason",
+                      label: "Note",
+                      sortable: false,
+                      align: "center",
+                      render: (qr) => (
+                        <span className="text-xs text-zinc-500">
+                          {!qr.archived_at ? "Location archived" : "Archived"}
+                        </span>
+                      ),
+                    },
+                    {
+                      key: "archived_at",
+                      label: "Archived at",
+                      sortable: false,
+                      align: "center",
+                      render: (qr) => (
+                        <span className="text-sm text-zinc-600">
+                          {formatIsoInUserTimeZone(qr.archived_at ?? "", userTimeZone)}
+                        </span>
+                      ),
+                    },
+                    {
+                      key: "actions",
+                      label: "Actions",
+                      sortable: false,
+                      align: "center",
+                      render: (qr) =>
+                        isViewer ? (
+                          <span className="text-zinc-400">—</span>
+                        ) : (
+                          <div className="flex flex-wrap items-center justify-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleUnarchive(qr)}
+                              className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-sm text-violet-700 hover:bg-violet-50"
+                              title="Unarchive QR code"
+                            >
+                              <ArchiveRestore className="h-3.5 w-3.5" />
+                              Unarchive
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteArchived(qr)}
+                              className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-sm text-red-700 hover:bg-red-50"
+                              title="Delete QR code permanently"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Delete
+                            </button>
+                          </div>
+                        ),
+                    },
+                  ]}
+                  getRowKey={(qr) => qr.id}
+                />
+              )}
+            </div>
+          </details>
+        </div>
       )}
 
       {/* QR Download Panel */}

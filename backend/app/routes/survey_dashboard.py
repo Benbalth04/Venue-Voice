@@ -63,6 +63,7 @@ def _survey_dashboard_filters(
     date_start: str | None,
     date_end: str | None,
     user_tz: ZoneInfo,
+    include_archived: bool = False,
 ) -> DashboardFilterParams:
     ds = _parse_yyyy_mm_dd(date_start)
     de = _parse_yyyy_mm_dd(date_end)
@@ -79,6 +80,7 @@ def _survey_dashboard_filters(
             qr_code_ids=qr,
             date_start=naive_utc_for_sql(utc_lo),
             date_end=naive_utc_for_sql(utc_hi),
+            include_archived=include_archived,
         )
     if ds is not None:
         return DashboardFilterParams(
@@ -86,6 +88,7 @@ def _survey_dashboard_filters(
             qr_code_ids=qr,
             date_start=naive_utc_for_sql(local_date_start_utc(ds, user_tz)),
             date_end=naive_utc_for_sql(local_date_start_utc(ds + timedelta(days=1), user_tz)),
+            include_archived=include_archived,
         )
     if de is not None:
         return DashboardFilterParams(
@@ -93,8 +96,15 @@ def _survey_dashboard_filters(
             qr_code_ids=qr,
             date_start=datetime(2000, 1, 1),
             date_end=naive_utc_for_sql(local_date_start_utc(de + timedelta(days=1), user_tz)),
+            include_archived=include_archived,
         )
-    return DashboardFilterParams(location_ids=loc, qr_code_ids=qr, date_start=None, date_end=None)
+    return DashboardFilterParams(
+        location_ids=loc,
+        qr_code_ids=qr,
+        date_start=None,
+        date_end=None,
+        include_archived=include_archived,
+    )
 
 
 @router.get(
@@ -108,6 +118,7 @@ def get_survey_dashboard(
     qr_code_ids: list[uuid.UUID] | None = Query(default=None),
     date_start: str | None = Query(default=None, description="YYYY-MM-DD in user's saved timezone"),
     date_end: str | None = Query(default=None, description="YYYY-MM-DD in user's saved timezone"),
+    include_archived: bool = Query(False, description="Include archived QR, location, or survey context"),
     membership: MembershipORM = Depends(get_current_membership),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
@@ -122,6 +133,7 @@ def get_survey_dashboard(
         date_start=date_start,
         date_end=date_end,
         user_tz=user_tz,
+        include_archived=include_archived,
     )
     return get_dashboard_data(db, survey_id, company.id, filters, user_tz)
 
@@ -137,6 +149,7 @@ def get_old_questions_dashboard(
     qr_code_ids: list[uuid.UUID] | None = Query(default=None),
     date_start: str | None = Query(default=None, description="YYYY-MM-DD in user's saved timezone"),
     date_end: str | None = Query(default=None, description="YYYY-MM-DD in user's saved timezone"),
+    include_archived: bool = Query(False, description="Include archived QR, location, or survey context"),
     membership: MembershipORM = Depends(get_current_membership),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
@@ -151,6 +164,7 @@ def get_old_questions_dashboard(
         date_start=date_start,
         date_end=date_end,
         user_tz=user_tz,
+        include_archived=include_archived,
     )
     return get_old_questions_dashboard_data(db, survey_id, company.id, filters, user_tz)
 
@@ -168,6 +182,7 @@ def get_question_breakdown_endpoint(
     qr_code_ids: list[uuid.UUID] | None = Query(default=None),
     date_start: str | None = Query(default=None, description="YYYY-MM-DD in user's saved timezone"),
     date_end: str | None = Query(default=None, description="YYYY-MM-DD in user's saved timezone"),
+    include_archived: bool = Query(False, description="Include archived QR, location, or survey context"),
     membership: MembershipORM = Depends(get_current_membership),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
@@ -182,6 +197,7 @@ def get_question_breakdown_endpoint(
         date_start=date_start,
         date_end=date_end,
         user_tz=user_tz,
+        include_archived=include_archived,
     )
     return get_question_breakdown(
         db, survey_id, company.id, question_id, breakdown_by, filters, user_tz
@@ -200,6 +216,7 @@ def get_engagement_breakdown_endpoint(
     qr_code_ids: list[uuid.UUID] | None = Query(default=None),
     date_start: str | None = Query(default=None, description="YYYY-MM-DD in user's saved timezone"),
     date_end: str | None = Query(default=None, description="YYYY-MM-DD in user's saved timezone"),
+    include_archived: bool = Query(False, description="Include archived QR, location, or survey context"),
     membership: MembershipORM = Depends(get_current_membership),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
@@ -214,5 +231,6 @@ def get_engagement_breakdown_endpoint(
         date_start=date_start,
         date_end=date_end,
         user_tz=user_tz,
+        include_archived=include_archived,
     )
     return get_engagement_breakdown(db, survey_id, company.id, breakdown_by, filters, user_tz)

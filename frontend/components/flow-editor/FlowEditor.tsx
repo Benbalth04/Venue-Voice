@@ -14,7 +14,6 @@ import { supabase } from "@/lib/supabase/client"
 import {
   createSurveyFlow,
   extractErrorMessage,
-  isNormalizedError,
   fetchFlow,
   fetchFlows,
   fetchLocationSurveys,
@@ -87,7 +86,6 @@ export function FlowEditor() {
 
   const clearEditorError = useCallback(() => {
     setError(null)
-    setErrorSubscriptionHref(null)
   }, [])
 
   async function getToken() {
@@ -195,7 +193,6 @@ export function FlowEditor() {
           setFlowMissing(true)
           setDraft(null)
         } else {
-          setErrorSubscriptionHref(null)
           setError(message)
         }
       } finally {
@@ -506,7 +503,6 @@ export function FlowEditor() {
       selectedTriggerLocations,
     })
     if (validation.message) {
-      setErrorSubscriptionHref(null)
       setError(validation.message)
       setValidationHighlightNodeId(validation.highlightNodeId)
       return
@@ -545,8 +541,6 @@ export function FlowEditor() {
     } catch (err) {
       if (isStaleObjectError(err)) {
         setError("This flow was updated elsewhere. Please refresh.")
-      } else if (isNormalizedError(err)) {
-        setError(err.message || extractErrorMessage(err, "Failed to save flow"))
       } else {
         setError(extractErrorMessage(err, "Failed to save flow"))
       }

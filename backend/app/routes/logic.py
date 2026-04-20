@@ -40,6 +40,7 @@ from ..schemas.pydantic_model import (
 from ..services.flow_service import (
     create_flow,
     delete_flow,
+    get_flow_delete_preview,
     get_flow_for_company,
     get_flow_response,
     list_company_flows,
@@ -273,6 +274,19 @@ def set_flow_active_route(
         updated_at=payload.updated_at,
         user_tz=user_tz,
     )
+
+
+@router.get("/surveys/{survey_id}/flows/{flow_id}/delete-preview")
+def get_flow_delete_preview_route(
+    survey_id: str,
+    flow_id: str,
+    membership: MembershipORM = Depends(require_company_admin),
+    db: Session = Depends(get_db_connection),
+):
+    survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
+    flow_uuid = _parse_uuid(flow_id, code="INVALID_FLOW_ID", label="flow ID")
+    company = _ensure_survey_access(db, membership, survey_uuid)
+    return get_flow_delete_preview(db, company.id, survey_uuid, flow_uuid)
 
 
 @router.delete("/surveys/{survey_id}/flows/{flow_id}", status_code=204)

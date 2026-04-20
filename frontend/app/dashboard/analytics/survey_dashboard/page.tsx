@@ -17,6 +17,7 @@ import { ExpandedChartModal } from "./components/ExpandedChartModal";
 import { QuestionRow } from "./components/QuestionRow";
 import { OldQuestionsAccordion } from "./components/OldQuestionsAccordion";
 import type { ExpandChartContext } from "@/lib/dashboard/types";
+import { ArchivedDataSwitch } from "@/components/ui/VioletSwitch";
 
 const REFRESH_COOLDOWN_SECONDS = 60;
 const REGENERATE_COOLDOWN_SECONDS = 30;
@@ -116,6 +117,7 @@ function SurveyDashboardInner() {
       filters.surveyId !== appliedFilters.surveyId ||
       filters.locationIds.join(",") !== appliedFilters.locationIds.join(",") ||
       filters.qrCodeIds.join(",") !== appliedFilters.qrCodeIds.join(",") ||
+      filters.includeArchived !== appliedFilters.includeArchived ||
       resolvedDates.dateStart.toISOString() !== appliedDates.dateStart.toISOString() ||
       resolvedDates.dateEnd.toISOString() !== appliedDates.dateEnd.toISOString()
     );
@@ -146,12 +148,20 @@ function SurveyDashboardInner() {
       {/* Filter bar */}
       {filters.surveyId && (
         <>
-          <DashboardFilterBar
-            locations={locations}
-            qrCodes={qrCodes}
-            filters={filters}
-            onFilterChange={updateFilters}
-          />
+          <div className="flex flex-col gap-4 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between">
+            <div className="min-w-0 flex-1">
+              <DashboardFilterBar
+                locations={locations}
+                qrCodes={qrCodes}
+                filters={filters}
+                onFilterChange={updateFilters}
+              />
+            </div>
+            <ArchivedDataSwitch
+              checked={filters.includeArchived}
+              onCheckedChange={(next) => updateFilters({ includeArchived: next })}
+            />
+          </div>
           {filtersAreDirty && (
             <div className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5">
               <p className="text-sm text-amber-700">
@@ -171,6 +181,16 @@ function SurveyDashboardInner() {
             </div>
           )}
         </>
+      )}
+
+      {/* Archived data banner */}
+      {data && appliedFilters.includeArchived && (
+        <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-700">
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+          </svg>
+          This dashboard includes data from archived surveys, locations, or QR codes.
+        </div>
       )}
 
       {/* Loading state */}

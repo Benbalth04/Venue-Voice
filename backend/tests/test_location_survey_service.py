@@ -13,8 +13,14 @@ from app.services.location_survey_service import (
 )
 
 
-def make_location(*, is_active: bool = True, deleted_at=None):
-    return SimpleNamespace(id=uuid.uuid4(), is_active=is_active, deleted_at=deleted_at, name="Venue")
+def make_location(*, is_active: bool = True, deleted_at=None, archived_at=None):
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        is_active=is_active,
+        deleted_at=deleted_at,
+        archived_at=archived_at,
+        name="Venue",
+    )
 
 
 def make_survey(*, status: SurveyStatus = SurveyStatus.active, deleted_at=None):
@@ -42,12 +48,13 @@ def make_location_survey(
     )
 
 
-def make_qr(*, is_active: bool = True, location_survey=None, deleted_at=None):
+def make_qr(*, is_active: bool = True, location_survey=None, deleted_at=None, archived_at=None):
     return SimpleNamespace(
         id=uuid.uuid4(),
         is_active=is_active,
         location_survey=location_survey,
         deleted_at=deleted_at,
+        archived_at=archived_at,
     )
 
 
@@ -108,10 +115,32 @@ class LocationSurveyServiceTests(unittest.TestCase):
         )
         self.assertEqual(status, "deleted")
 
+    def test_derive_status_archived_location(self):
+        now = datetime.now(timezone.utc)
+        location = make_location(archived_at=now)
+        location_survey = make_location_survey(location=location)
+        status = derive_location_survey_status(location_survey, location, location_survey.survey, now)
+        self.assertEqual(status, "inactive")
+
     def test_derive_qr_code_status(self):
         self.assertEqual(derive_qr_code_status(make_qr()), "active")
         self.assertEqual(derive_qr_code_status(make_qr(is_active=False)), "inactive")
+        self.assertEqual(derive_qr_code_status(make_qr(archived_at=datetime.now(timezone.utc))), "archived")
         self.assertEqual(derive_qr_code_status(make_qr(deleted_at=datetime.now(timezone.utc))), "deleted")
+
+    def test_qr_scan_fails_for_archived_qr(self):
+        qr = make_qr(archived_at=datetime.now(timezone.utc), location_survey=make_location_survey())
+        with self.assertRaises(ValidationError) as ctx:
+            validate_qr_scan_access(qr, datetime.now(timezone.utc))
+        self.assertEqual(ctx.exception.message, "QR code is inactive")
+
+    def test_qr_scan_fails_for_archived_location(self):
+        location = make_location(archived_at=datetime.now(timezone.utc))
+        location_survey = make_location_survey(location=location)
+        qr = make_qr(location_survey=location_survey)
+        with self.assertRaises(ValidationError) as ctx:
+            validate_qr_scan_access(qr, datetime.now(timezone.utc))
+        self.assertEqual(ctx.exception.message, "This location is not active")
 
     def test_qr_scan_allows_inactive_assignment_flag_when_qr_active(self):
         qr = make_qr(location_survey=make_location_survey(is_active=False))

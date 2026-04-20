@@ -60,6 +60,7 @@ function useBreakdownData(
     filters.date_end,
     (filters.location_ids ?? []).join(","),
     (filters.qr_code_ids ?? []).join(","),
+    filters.include_archived ? "1" : "0",
   ].join("|");
 
   useEffect(() => {

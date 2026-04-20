@@ -4,6 +4,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -24,8 +25,15 @@ from app.models.postgres_model import QuestionType as QuestionTypeORM
 from app.models.postgres_model import SurveyVersion as SurveyVersionORM
 from app.models.postgres_model import SurveyStatus
 from app.models.postgres_model import QuestionTypeSetting as QuestionTypeSettingORM
+from app.models.postgres_model import Flow as FlowORM
+from app.models.postgres_model import Location as LocationORM
 from app.models.postgres_model import LocationSurvey as LocationSurveyORM
+from app.models.postgres_model import QRCode as QRCodeORM
+from app.models.postgres_model import Rule as RuleORM
+from app.models.postgres_model import ScanEvent as ScanEventORM
+from app.models.postgres_model import SurveyResponse as SurveyResponseORM
 from app.schemas.pydantic_model import (
+    DeleteRequest,
     QuestionTypeResponse,
     SurveyCreate,
     SurveyListItem,
@@ -232,6 +240,7 @@ def _survey_to_list_item(
         last_edited_by=last_edited_by,
         created_at=format_dt_for_user(s.created_at, tz) or "",
         updated_at=format_dt_for_user(s.updated_at, tz) or "",
+        archived_at=format_dt_for_user(s.archived_at, tz) if s.archived_at else None,
     )
 
 
@@ -251,6 +260,7 @@ def _to_survey_with_schema(
         created_at=format_dt_for_user(s.created_at, tz) or "",
         updated_at=format_dt_for_user(s.updated_at, tz) or "",
         last_edited_by=last_edited_by,
+        archived_at=format_dt_for_user(s.archived_at, tz) if s.archived_at else None,
         survey_schema_json=sv.schema_json,
     )
 
@@ -679,13 +689,40 @@ def archive_survey(
     current_user = db.query(UserORM).filter(UserORM.id == membership.user_id).first()
     survey = _get_survey_or_404(survey_id, company.id, db)
 
+    now = datetime.now(timezone.utc)
     rowcount = (
         db.query(SurveyORM)
         .filter(SurveyORM.id == survey.id, SurveyORM.updated_at == _strip_tz(payload.updated_at))
-        .update({"status": SurveyStatus.archived, "updated_at": datetime.now(timezone.utc)}, synchronize_session=False)
+        .update(
+            {"status": SurveyStatus.archived, "updated_at": now, "archived_at": now},
+            synchronize_session=False,
+        )
     )
     if rowcount == 0:
         raise StaleObjectError("Survey", str(survey.id))
+
+    # ORM bulk update() cannot be used on a query that has join(); select ids first.
+    qr_ids = [
+        row[0]
+        for row in (
+            db.query(QRCodeORM.id)
+            .join(LocationSurveyORM, LocationSurveyORM.id == QRCodeORM.location_survey_id)
+            .join(LocationORM, LocationORM.id == QRCodeORM.location_id)
+            .filter(
+                LocationSurveyORM.survey_id == survey.id,
+                LocationSurveyORM.deleted_at.is_(None),
+                QRCodeORM.deleted_at.is_(None),
+                QRCodeORM.archived_at.is_(None),
+                LocationORM.archived_at.is_(None),
+            )
+            .all()
+        )
+    ]
+    if qr_ids:
+        db.query(QRCodeORM).filter(QRCodeORM.id.in_(qr_ids)).update(
+            {"archived_at": now, "updated_at": now},
+            synchronize_session=False,
+        )
 
     db.commit()
     db.refresh(survey)
@@ -755,10 +792,14 @@ def unarchive_survey(
             status_code=422,
         )
 
+    now = datetime.now(timezone.utc)
     rowcount = (
         db.query(SurveyORM)
         .filter(SurveyORM.id == survey.id, SurveyORM.updated_at == _strip_tz(payload.updated_at))
-        .update({"status": SurveyStatus.draft, "updated_at": datetime.now(timezone.utc)}, synchronize_session=False)
+        .update(
+            {"status": SurveyStatus.draft, "updated_at": now, "archived_at": None},
+            synchronize_session=False,
+        )
     )
     if rowcount == 0:
         raise StaleObjectError("Survey", str(survey.id))
@@ -767,6 +808,113 @@ def unarchive_survey(
     db.refresh(survey)
     last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)
     return _survey_to_list_item(survey, user=current_user, last_edited_by=last_edited_by)
+
+
+# ------------------------------------------------------------------
+# POST /surveys/{id}/delete  –  soft-delete archived survey (no activity)
+# ------------------------------------------------------------------
+@router.post("/surveys/{survey_id}/delete", status_code=204)
+def soft_delete_archived_survey(
+    survey_id: str,
+    payload: DeleteRequest,
+    membership: MembershipORM = Depends(require_company_admin),
+    db: Session = Depends(get_db_connection),
+):
+    """Soft-delete an archived survey when it has no QR codes, responses, or scan events."""
+    company = _get_user_company(membership, db)
+    survey = _get_survey_or_404(survey_id, company.id, db)
+
+    if survey.status != SurveyStatus.archived:
+        raise ValidationError(
+            code="SURVEY_NOT_ARCHIVED",
+            message="Archive this survey before deleting it.",
+            status_code=422,
+        )
+
+    qr_count = (
+        db.query(func.count(QRCodeORM.id))
+        .join(LocationSurveyORM, LocationSurveyORM.id == QRCodeORM.location_survey_id)
+        .filter(
+            LocationSurveyORM.survey_id == survey.id,
+            QRCodeORM.deleted_at.is_(None),
+        )
+        .scalar()
+        or 0
+    )
+    if qr_count > 0:
+        raise ConflictError(
+            code="SURVEY_HAS_QR_CODES",
+            message="This survey cannot be deleted while it still has QR codes.",
+            details={"qr_count": int(qr_count)},
+        )
+
+    response_count = (
+        db.query(func.count(SurveyResponseORM.id))
+        .join(SurveyVersionORM, SurveyVersionORM.id == SurveyResponseORM.survey_version_id)
+        .filter(
+            SurveyVersionORM.survey_id == survey.id,
+            SurveyResponseORM.deleted_at.is_(None),
+        )
+        .scalar()
+        or 0
+    )
+    if response_count > 0:
+        raise ConflictError(
+            code="SURVEY_HAS_RESPONSES",
+            message="This survey cannot be deleted while responses exist.",
+            details={"response_count": int(response_count)},
+        )
+
+    scan_count = (
+        db.query(func.count(ScanEventORM.id))
+        .join(QRCodeORM, ScanEventORM.qr_code_id == QRCodeORM.id)
+        .join(LocationSurveyORM, QRCodeORM.location_survey_id == LocationSurveyORM.id)
+        .filter(
+            LocationSurveyORM.survey_id == survey.id,
+            ScanEventORM.deleted_at.is_(None),
+        )
+        .scalar()
+        or 0
+    )
+    if scan_count > 0:
+        raise ConflictError(
+            code="SURVEY_HAS_SCANS",
+            message="This survey cannot be deleted while scan events exist.",
+            details={"scan_count": int(scan_count)},
+        )
+
+    now = datetime.now(timezone.utc)
+    rowcount = (
+        db.query(SurveyORM)
+        .filter(
+            SurveyORM.id == survey.id,
+            SurveyORM.updated_at == _strip_tz(payload.updated_at),
+        )
+        .update({"deleted_at": now, "updated_at": now}, synchronize_session=False)
+    )
+    if rowcount == 0:
+        raise StaleObjectError("Survey", str(survey.id))
+
+    (
+        db.query(LocationSurveyORM)
+        .filter(
+            LocationSurveyORM.survey_id == survey.id,
+            LocationSurveyORM.deleted_at.is_(None),
+        )
+        .update({"deleted_at": func.now(), "updated_at": func.now()}, synchronize_session=False)
+    )
+    (
+        db.query(RuleORM)
+        .filter(RuleORM.survey_id == survey.id, RuleORM.deleted_at.is_(None))
+        .update({"deleted_at": func.now(), "updated_at": func.now()}, synchronize_session=False)
+    )
+    (
+        db.query(FlowORM)
+        .filter(FlowORM.survey_id == survey.id, FlowORM.deleted_at.is_(None))
+        .update({"deleted_at": func.now(), "updated_at": func.now()}, synchronize_session=False)
+    )
+
+    db.commit()
 
 
 # ------------------------------------------------------------------

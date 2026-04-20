@@ -39,6 +39,7 @@ import {
   extractErrorMessage,
   fetchRuleBundleDirect,
   fetchSurveys,
+  isNormalizedError,
   isStaleObjectError,
   updateRuleDirect,
   type LogicQuestionOption,
@@ -565,6 +566,7 @@ export default function RulesPage() {
   const [error, setError] = useState<string | null>(null)
   const [draftError, setDraftError] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [ruleInUseFlows, setRuleInUseFlows] = useState<{ id: string; name: string }[] | null>(null)
   const [draftSnapshot, setDraftSnapshot] = useState<string | null>(null)
 
   const sensors = useSensors(
@@ -736,8 +738,9 @@ export default function RulesPage() {
   async function deleteRule(rule: RuleData) {
     const ok = await confirm({
       title: `Delete rule — ${rule.name}`,
-      message: "Are you sure you want to delete this rule? This cannot be undone.",
-      confirmLabel: "Delete",
+      message:
+        "This rule will be permanently deleted from this survey's automation logic. This cannot be undone.\n\nIf this rule is referenced in any flows, deletion will be blocked — you must remove it from those flows first.",
+      confirmLabel: "Delete rule",
       variant: "danger",
     })
     if (!ok) return
@@ -752,6 +755,13 @@ export default function RulesPage() {
     } catch (err) {
       if (isStaleObjectError(err)) {
         setDeleteError("This rule was updated. Please refresh.")
+      } else if (isNormalizedError(err) && err.code === "RULE_IN_USE") {
+        const flows = err.details?.flows
+        if (Array.isArray(flows) && flows.length > 0) {
+          setRuleInUseFlows(flows as { id: string; name: string }[])
+        } else {
+          setDeleteError(err.message)
+        }
       } else {
         setDeleteError(extractErrorMessage(err, "Failed to delete rule"))
       }
@@ -893,6 +903,25 @@ export default function RulesPage() {
           New rule
         </Button>
       </div>
+
+      {ruleInUseFlows && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <p className="font-medium">This rule cannot be deleted — it is used in the following flow{ruleInUseFlows.length > 1 ? "s" : ""}:</p>
+          <ul className="mt-1.5 list-inside list-disc space-y-0.5">
+            {ruleInUseFlows.map((f) => (
+              <li key={f.id}>{f.name}</li>
+            ))}
+          </ul>
+          <p className="mt-2 text-amber-700">Remove this rule from those flows before deleting.</p>
+          <button
+            type="button"
+            className="mt-2 text-xs underline text-amber-700 hover:text-amber-900"
+            onClick={() => setRuleInUseFlows(null)}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {deleteError && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">

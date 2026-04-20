@@ -110,9 +110,15 @@ def get_dashboard(
     ) or 0
 
     # Total scans (scan_events for QR codes belonging to company, scoped to viewer)
-    qr_q = db.query(QRCodeORM.id).filter(
-        QRCodeORM.company_id == company.id,
-        QRCodeORM.deleted_at.is_(None),
+    qr_q = (
+        db.query(QRCodeORM.id)
+        .join(LocationORM, LocationORM.id == QRCodeORM.location_id)
+        .filter(
+            QRCodeORM.company_id == company.id,
+            QRCodeORM.deleted_at.is_(None),
+            QRCodeORM.archived_at.is_(None),
+            LocationORM.archived_at.is_(None),
+        )
     )
     qr_q = apply_location_filter(qr_q, location_sq, QRCodeORM.location_id)
     qr_ids = [r[0] for r in qr_q.all()]
@@ -168,10 +174,13 @@ def get_dashboard(
         active_qr_q = (
             db.query(QRCodeORM)
             .join(LocationSurveyORM, LocationSurveyORM.id == QRCodeORM.location_survey_id)
+            .join(LocationORM, LocationORM.id == QRCodeORM.location_id)
             .filter(
                 QRCodeORM.company_id == company.id,
                 QRCodeORM.is_active.is_(True),
                 QRCodeORM.deleted_at.is_(None),
+                QRCodeORM.archived_at.is_(None),
+                LocationORM.archived_at.is_(None),
             )
         )
         active_qr_q = apply_location_filter(active_qr_q, location_sq, QRCodeORM.location_id)
@@ -210,6 +219,7 @@ def get_dashboard(
             LocationORM.company_id == company.id,
             LocationORM.is_active.is_(True),
             LocationORM.deleted_at.is_(None),
+            LocationORM.archived_at.is_(None),
         )
     )
     location_query = apply_location_filter(location_query, location_sq, LocationORM.id)

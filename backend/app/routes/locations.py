@@ -8,12 +8,12 @@ from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
-from ..core.errors.exceptions import ConflictError, NotFoundError, StaleObjectError, ValidationError
+from ..core.errors.exceptions import ConflictError, NotFoundError, StaleObjectError, SubscriptionLimitError, ValidationError
 
 from ..auth.membership import get_company_from_membership, get_current_membership, require_company_admin
 from ..auth.subscription import require_active_subscription
@@ -28,8 +28,41 @@ from ..models.postgres_model import (
     Location as LocationORM,
     LocationSurvey as LocationSurveyORM,
     Membership as MembershipORM,
+    QRCode as QRCodeORM,
+    Subscription as SubscriptionORM,
+    Survey as SurveyORM,
+    SurveyStatus,
 )
 from ..schemas.pydantic_model import DeleteRequest, FlowSummary, LocationCreate, LocationFlowDependencies, LocationResponse, LocationUpdate
+
+
+def _count_company_locations(db: Session, company_id: uuid.UUID) -> int:
+    """Non-deleted, non-archived locations (plan slot usage)."""
+    return db.query(func.count(LocationORM.id)).filter(
+        LocationORM.company_id == company_id,
+        LocationORM.deleted_at.is_(None),
+        LocationORM.archived_at.is_(None),
+    ).scalar() or 0
+
+
+def _check_create_limit(db: Session, company_id: uuid.UUID) -> None:
+    """Block creation when total non-deleted locations >= subscription limit."""
+    sub = db.query(SubscriptionORM).filter(SubscriptionORM.company_id == company_id).first()
+    if sub is None or sub.location_count is None:
+        return
+    current = _count_company_locations(db, company_id)
+    if current >= sub.location_count:
+        raise SubscriptionLimitError(resource="locations", limit=sub.location_count, current=current)
+
+
+def _check_activate_limit(db: Session, company_id: uuid.UUID) -> None:
+    """Block activation when total non-deleted locations > subscription limit (downgrade scenario)."""
+    sub = db.query(SubscriptionORM).filter(SubscriptionORM.company_id == company_id).first()
+    if sub is None or sub.location_count is None:
+        return
+    current = _count_company_locations(db, company_id)
+    if current > sub.location_count:
+        raise SubscriptionLimitError(resource="locations", limit=sub.location_count, current=current)
 
 
 def _strip_tz(dt: datetime) -> datetime:
@@ -41,7 +74,26 @@ def _strip_tz(dt: datetime) -> datetime:
 router = APIRouter(dependencies=[Depends(require_active_subscription)])
 
 
-def _get_location_or_404(location_id: str, company_id: uuid.UUID, db: Session) -> LocationORM:
+def _get_active_location_or_404(location_id: str, company_id: uuid.UUID, db: Session) -> LocationORM:
+    """Non-deleted, non-archived location (dashboard / mutations on active rows)."""
+    try:
+        uid = uuid.UUID(location_id)
+    except ValueError:
+        raise NotFoundError(code="LOCATION_NOT_FOUND", message="Location not found")
+
+    loc = db.query(LocationORM).filter(
+        LocationORM.id == uid,
+        LocationORM.company_id == company_id,
+        LocationORM.deleted_at.is_(None),
+        LocationORM.archived_at.is_(None),
+    ).first()
+    if not loc:
+        raise NotFoundError(code="LOCATION_NOT_FOUND", message="Location not found")
+    return loc
+
+
+def _get_location_row_or_404(location_id: str, company_id: uuid.UUID, db: Session) -> LocationORM:
+    """Non-deleted location (any archive state), for archive / unarchive."""
     try:
         uid = uuid.UUID(location_id)
     except ValueError:
@@ -100,11 +152,13 @@ def _to_response(loc: LocationORM, user_tz: ZoneInfo) -> LocationResponse:
         google_business_url=loc.google_business_url,
         created_at=format_dt_for_user(loc.created_at, user_tz) or "",
         updated_at=format_dt_for_user(loc.updated_at, user_tz) or "",
+        archived_at=format_dt_for_user(loc.archived_at, user_tz) if loc.archived_at else None,
     )
 
 
 @router.get("/locations", response_model=list[LocationResponse])
 def list_locations(
+    archived: bool = Query(False, description="If true, only archived locations; if false, only non-archived."),
     membership: MembershipORM = Depends(get_current_membership),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
@@ -118,6 +172,10 @@ def list_locations(
             LocationORM.deleted_at.is_(None),
         )
     )
+    if archived:
+        query = query.filter(LocationORM.archived_at.isnot(None))
+    else:
+        query = query.filter(LocationORM.archived_at.is_(None))
     query = apply_location_filter(query, location_sq, LocationORM.id)
     locations = query.order_by(LocationORM.created_at.desc()).all()
     return [_to_response(loc, user_tz) for loc in locations]
@@ -131,6 +189,7 @@ def create_location(
     db: Session = Depends(get_db_connection),
 ):
     company = get_company_from_membership(membership, db)
+    _check_create_limit(db, company.id)
 
     name = payload.name.strip()
     if not name:
@@ -177,7 +236,7 @@ def get_location(
     db: Session = Depends(get_db_connection),
 ):
     company = get_company_from_membership(membership, db)
-    loc = _get_location_or_404(location_id, company.id, db)
+    loc = _get_active_location_or_404(location_id, company.id, db)
     assert_location_access(membership, loc.id, db)
     return _to_response(loc, user_tz)
 
@@ -189,7 +248,7 @@ def get_location_flow_dependencies(
     db: Session = Depends(get_db_connection),
 ):
     company = get_company_from_membership(membership, db)
-    loc = _get_location_or_404(location_id, company.id, db)
+    loc = _get_active_location_or_404(location_id, company.id, db)
 
     ls_ids = [
         ls.id
@@ -258,8 +317,11 @@ def update_location(
     db: Session = Depends(get_db_connection),
 ):
     company = get_company_from_membership(membership, db)
-    loc = _get_location_or_404(location_id, company.id, db)
+    loc = _get_active_location_or_404(location_id, company.id, db)
     was_inactive = not loc.is_active
+
+    if payload.is_active is True and was_inactive:
+        _check_activate_limit(db, company.id)
 
     update_values: dict = {"updated_at": func.now()}
 
@@ -351,7 +413,7 @@ def deactivate_location(
     db: Session = Depends(get_db_connection),
 ):
     company = get_company_from_membership(membership, db)
-    loc = _get_location_or_404(location_id, company.id, db)
+    loc = _get_active_location_or_404(location_id, company.id, db)
 
     rowcount = (
         db.query(LocationORM)
@@ -373,3 +435,170 @@ def deactivate_location(
         .update({"is_active": False}, synchronize_session=False)
     )
     db.commit()
+
+
+@router.post("/locations/{location_id}/archive", response_model=LocationResponse)
+def archive_location(
+    location_id: str,
+    payload: DeleteRequest,
+    membership: MembershipORM = Depends(require_company_admin),
+    user_tz: ZoneInfo = Depends(get_user_zoneinfo),
+    db: Session = Depends(get_db_connection),
+):
+    company = get_company_from_membership(membership, db)
+    loc = _get_location_row_or_404(location_id, company.id, db)
+    assert_location_access(membership, loc.id, db)
+
+    if loc.archived_at is not None:
+        db.refresh(loc)
+        return _to_response(loc, user_tz)
+
+    rowcount = (
+        db.query(LocationORM)
+        .filter(
+            LocationORM.id == loc.id,
+            LocationORM.updated_at == _strip_tz(payload.updated_at),
+        )
+        .update(
+            {
+                "archived_at": func.now(),
+                "is_active": False,
+                "updated_at": func.now(),
+            },
+            synchronize_session=False,
+        )
+    )
+    if rowcount == 0:
+        raise StaleObjectError("Location", str(loc.id))
+
+    (
+        db.query(LocationSurveyORM)
+        .filter(
+            LocationSurveyORM.location_id == loc.id,
+            LocationSurveyORM.deleted_at.is_(None),
+        )
+        .update({"is_active": False}, synchronize_session=False)
+    )
+    (
+        db.query(QRCodeORM)
+        .filter(
+            QRCodeORM.location_id == loc.id,
+            QRCodeORM.deleted_at.is_(None),
+        )
+        .update({"archived_at": func.now(), "updated_at": func.now()}, synchronize_session=False)
+    )
+
+    db.commit()
+    db.refresh(loc)
+    return _to_response(loc, user_tz)
+
+
+@router.post("/locations/{location_id}/delete", status_code=204)
+def soft_delete_archived_location(
+    location_id: str,
+    payload: DeleteRequest,
+    membership: MembershipORM = Depends(require_company_admin),
+    db: Session = Depends(get_db_connection),
+):
+    """Soft-delete an archived location when it has no non-deleted QR codes."""
+    company = get_company_from_membership(membership, db)
+    loc = _get_location_row_or_404(location_id, company.id, db)
+    assert_location_access(membership, loc.id, db)
+
+    if loc.archived_at is None:
+        raise ValidationError(
+            code="LOCATION_NOT_ARCHIVED",
+            message="Archive this location before deleting it.",
+            status_code=422,
+        )
+
+    qr_count = (
+        db.query(func.count(QRCodeORM.id))
+        .filter(
+            QRCodeORM.location_id == loc.id,
+            QRCodeORM.deleted_at.is_(None),
+        )
+        .scalar()
+        or 0
+    )
+    if qr_count > 0:
+        raise ConflictError(
+            code="LOCATION_HAS_QR_CODES",
+            message="This location cannot be deleted while it still has QR codes. Remove or delete those QR codes first.",
+            details={"qr_count": int(qr_count)},
+        )
+
+    rowcount = (
+        db.query(LocationORM)
+        .filter(
+            LocationORM.id == loc.id,
+            LocationORM.updated_at == _strip_tz(payload.updated_at),
+        )
+        .update({"deleted_at": func.now(), "updated_at": func.now()}, synchronize_session=False)
+    )
+    if rowcount == 0:
+        raise StaleObjectError("Location", str(loc.id))
+
+    db.commit()
+
+
+@router.post("/locations/{location_id}/unarchive", response_model=LocationResponse)
+def unarchive_location(
+    location_id: str,
+    payload: DeleteRequest,
+    membership: MembershipORM = Depends(require_company_admin),
+    user_tz: ZoneInfo = Depends(get_user_zoneinfo),
+    db: Session = Depends(get_db_connection),
+):
+    company = get_company_from_membership(membership, db)
+    loc = _get_location_row_or_404(location_id, company.id, db)
+    assert_location_access(membership, loc.id, db)
+
+    if loc.archived_at is None:
+        db.refresh(loc)
+        return _to_response(loc, user_tz)
+
+    _check_create_limit(db, company.id)
+
+    rowcount = (
+        db.query(LocationORM)
+        .filter(
+            LocationORM.id == loc.id,
+            LocationORM.updated_at == _strip_tz(payload.updated_at),
+        )
+        .update(
+            {
+                "archived_at": None,
+                "updated_at": func.now(),
+            },
+            synchronize_session=False,
+        )
+    )
+    if rowcount == 0:
+        raise StaleObjectError("Location", str(loc.id))
+
+    (
+        db.query(QRCodeORM)
+        .filter(
+            QRCodeORM.location_id == loc.id,
+            QRCodeORM.deleted_at.is_(None),
+        )
+        .update({"archived_at": None, "updated_at": func.now()}, synchronize_session=False)
+    )
+
+    # Restore is_active on location_surveys whose linked survey is still active
+    (
+        db.query(LocationSurveyORM)
+        .join(SurveyORM, SurveyORM.id == LocationSurveyORM.survey_id)
+        .filter(
+            LocationSurveyORM.location_id == loc.id,
+            LocationSurveyORM.deleted_at.is_(None),
+            SurveyORM.status == SurveyStatus.active,
+            SurveyORM.deleted_at.is_(None),
+        )
+        .update({"is_active": True}, synchronize_session=False)
+    )
+
+    db.commit()
+    db.refresh(loc)
+    return _to_response(loc, user_tz)

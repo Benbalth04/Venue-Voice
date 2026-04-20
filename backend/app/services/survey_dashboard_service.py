@@ -10,7 +10,7 @@ import uuid
 from collections import defaultdict
 from datetime import datetime, timedelta, date as _date
 
-from sqlalchemy import select, func, case, distinct, and_, cast, Date
+from sqlalchemy import select, func, case, distinct, and_, or_, cast, Date
 from sqlalchemy.orm import Session
 from zoneinfo import ZoneInfo
 
@@ -30,6 +30,7 @@ from ..models.postgres_model import (
     Question as QuestionORM,
     ScanEvent as ScanEventORM,
     Survey as SurveyORM,
+    SurveyStatus,
     SurveyResponse as SurveyResponseORM,
     SurveyResponseAnswer as SurveyResponseAnswerORM,
     SurveyResponsePhoto as SurveyResponsePhotoORM,
@@ -86,6 +87,7 @@ def get_dashboard_data(
         qr_code_ids=filters.qr_code_ids,
         date_start=date_start,
         date_end=date_end,
+        include_archived=filters.include_archived,
     )
     engagement = get_engagement_data(db, survey_id, resolved_filters, user_tz)
     active_questions = _get_active_questions(db, survey_id)
@@ -131,6 +133,7 @@ def get_old_questions_dashboard_data(
         qr_code_ids=filters.qr_code_ids,
         date_start=date_start,
         date_end=date_end,
+        include_archived=filters.include_archived,
     )
     active_questions = _get_active_questions(db, survey_id)
     active_stable_ids = {q.stable_question_id for q in active_questions}
@@ -186,15 +189,24 @@ def get_engagement_data(
         )
         .join(QRCodeORM, QRCodeORM.id == ScanEventORM.qr_code_id)
         .join(LocationSurveyORM, LocationSurveyORM.id == QRCodeORM.location_survey_id)
+        .join(SurveyORM, SurveyORM.id == LocationSurveyORM.survey_id)
+        .join(LocationORM, LocationORM.id == QRCodeORM.location_id)
         .where(
             LocationSurveyORM.survey_id == survey_id,
             ScanEventORM.deleted_at.is_(None),
             QRCodeORM.deleted_at.is_(None),
             LocationSurveyORM.deleted_at.is_(None),
+            LocationORM.deleted_at.is_(None),
             ScanEventORM.scanned_at >= filters.date_start,
             ScanEventORM.scanned_at < filters.date_end,
         )
     )
+    if not filters.include_archived:
+        scans_stmt = scans_stmt.where(
+            QRCodeORM.archived_at.is_(None),
+            LocationORM.archived_at.is_(None),
+            SurveyORM.status != SurveyStatus.archived,
+        )
     if filters.qr_code_ids is not None:
         scans_stmt = scans_stmt.where(ScanEventORM.qr_code_id.in_(filters.qr_code_ids))
     if filters.location_ids is not None:
@@ -252,6 +264,7 @@ def get_question_breakdown(
         qr_code_ids=filters.qr_code_ids,
         date_start=date_start,
         date_end=date_end,
+        include_archived=filters.include_archived,
     )
 
     # Look up the most recent question row for this stable_question_id in this survey
@@ -295,6 +308,7 @@ def get_question_breakdown(
                 qr_code_ids=resolved_filters.qr_code_ids,
                 date_start=resolved_filters.date_start,
                 date_end=resolved_filters.date_end,
+                include_archived=resolved_filters.include_archived,
             )
         else:
             entity_filter = DashboardFilterParams(
@@ -302,6 +316,7 @@ def get_question_breakdown(
                 qr_code_ids=[entity_id],
                 date_start=resolved_filters.date_start,
                 date_end=resolved_filters.date_end,
+                include_archived=resolved_filters.include_archived,
             )
         aggs = _execute_aggregations(
             db,
@@ -343,6 +358,7 @@ def get_engagement_breakdown(
         qr_code_ids=filters.qr_code_ids,
         date_start=date_start,
         date_end=date_end,
+        include_archived=filters.include_archived,
     )
 
     if breakdown_by == "location":
@@ -358,6 +374,7 @@ def get_engagement_breakdown(
                 qr_code_ids=resolved_filters.qr_code_ids,
                 date_start=resolved_filters.date_start,
                 date_end=resolved_filters.date_end,
+                include_archived=resolved_filters.include_archived,
             )
         else:
             entity_filter = DashboardFilterParams(
@@ -365,6 +382,7 @@ def get_engagement_breakdown(
                 qr_code_ids=[entity_id],
                 date_start=resolved_filters.date_start,
                 date_end=resolved_filters.date_end,
+                include_archived=resolved_filters.include_archived,
             )
         engagement = get_engagement_data(db, survey_id, entity_filter, user_tz)
         series.append(
@@ -394,6 +412,8 @@ def _get_question_entities_by_location(
         .select_from(SurveyResponseAnswerORM)
         .join(SurveyResponseORM, SurveyResponseORM.id == SurveyResponseAnswerORM.survey_response_id)
         .join(SurveyVersionORM, SurveyVersionORM.id == SurveyResponseORM.survey_version_id)
+        .join(SurveyORM, SurveyORM.id == SurveyVersionORM.survey_id)
+        .join(QRCodeORM, QRCodeORM.id == SurveyResponseORM.qr_code_id)
         .join(LocationSnapshotORM, LocationSnapshotORM.id == SurveyResponseORM.location_snapshot_id)
         .join(LocationORM, LocationORM.id == LocationSnapshotORM.location_id)
         .where(
@@ -407,6 +427,12 @@ def _get_question_entities_by_location(
         .group_by(LocationSnapshotORM.location_id, LocationORM.name)
         .order_by(LocationORM.name)
     )
+    if not filters.include_archived:
+        stmt = stmt.where(
+            QRCodeORM.archived_at.is_(None),
+            LocationORM.archived_at.is_(None),
+            SurveyORM.status != SurveyStatus.archived,
+        )
     if filters.location_ids is not None:
         stmt = stmt.where(LocationSnapshotORM.location_id.in_(filters.location_ids))
     if filters.qr_code_ids is not None:
@@ -427,7 +453,9 @@ def _get_question_entities_by_qr_code(
         .select_from(SurveyResponseAnswerORM)
         .join(SurveyResponseORM, SurveyResponseORM.id == SurveyResponseAnswerORM.survey_response_id)
         .join(SurveyVersionORM, SurveyVersionORM.id == SurveyResponseORM.survey_version_id)
+        .join(SurveyORM, SurveyORM.id == SurveyVersionORM.survey_id)
         .join(QRCodeORM, QRCodeORM.id == SurveyResponseORM.qr_code_id)
+        .join(LocationORM, LocationORM.id == QRCodeORM.location_id)
         .where(
             SurveyVersionORM.survey_id == survey_id,
             SurveyResponseAnswerORM.question_id == stable_question_id,
@@ -439,12 +467,21 @@ def _get_question_entities_by_qr_code(
         .group_by(SurveyResponseORM.qr_code_id, QRCodeORM.title)
         .order_by(QRCodeORM.title)
     )
+    if not filters.include_archived:
+        stmt = stmt.where(
+            QRCodeORM.archived_at.is_(None),
+            LocationORM.archived_at.is_(None),
+            SurveyORM.status != SurveyStatus.archived,
+        )
     if filters.qr_code_ids is not None:
         stmt = stmt.where(SurveyResponseORM.qr_code_id.in_(filters.qr_code_ids))
     if filters.location_ids is not None:
         stmt = (
             stmt
-            .join(LocationSnapshotORM, LocationSnapshotORM.id == SurveyResponseORM.location_snapshot_id)
+            .join(
+                LocationSnapshotORM,
+                LocationSnapshotORM.id == SurveyResponseORM.location_snapshot_id,
+            )
             .where(LocationSnapshotORM.location_id.in_(filters.location_ids))
         )
     rows = db.execute(stmt).fetchall()
@@ -462,6 +499,8 @@ def _get_engagement_entities_by_location(
         select(LocationSnapshotORM.location_id, LocationORM.name)
         .select_from(SurveyResponseORM)
         .join(SurveyVersionORM, SurveyVersionORM.id == SurveyResponseORM.survey_version_id)
+        .join(SurveyORM, SurveyORM.id == SurveyVersionORM.survey_id)
+        .join(QRCodeORM, QRCodeORM.id == SurveyResponseORM.qr_code_id)
         .join(LocationSnapshotORM, LocationSnapshotORM.id == SurveyResponseORM.location_snapshot_id)
         .join(LocationORM, LocationORM.id == LocationSnapshotORM.location_id)
         .where(
@@ -474,6 +513,12 @@ def _get_engagement_entities_by_location(
         )
         .group_by(LocationSnapshotORM.location_id, LocationORM.name)
     )
+    if not filters.include_archived:
+        comp_stmt = comp_stmt.where(
+            QRCodeORM.archived_at.is_(None),
+            LocationORM.archived_at.is_(None),
+            SurveyORM.status != SurveyStatus.archived,
+        )
     if filters.location_ids is not None:
         comp_stmt = comp_stmt.where(LocationSnapshotORM.location_id.in_(filters.location_ids))
     if filters.qr_code_ids is not None:
@@ -485,6 +530,7 @@ def _get_engagement_entities_by_location(
         .select_from(ScanEventORM)
         .join(QRCodeORM, QRCodeORM.id == ScanEventORM.qr_code_id)
         .join(LocationSurveyORM, LocationSurveyORM.id == QRCodeORM.location_survey_id)
+        .join(SurveyORM, SurveyORM.id == LocationSurveyORM.survey_id)
         .join(LocationORM, LocationORM.id == QRCodeORM.location_id)
         .where(
             LocationSurveyORM.survey_id == survey_id,
@@ -497,6 +543,12 @@ def _get_engagement_entities_by_location(
         )
         .group_by(QRCodeORM.location_id, LocationORM.name)
     )
+    if not filters.include_archived:
+        scan_stmt = scan_stmt.where(
+            QRCodeORM.archived_at.is_(None),
+            LocationORM.archived_at.is_(None),
+            SurveyORM.status != SurveyStatus.archived,
+        )
     if filters.location_ids is not None:
         scan_stmt = scan_stmt.where(QRCodeORM.location_id.in_(filters.location_ids))
     if filters.qr_code_ids is not None:
@@ -520,16 +572,25 @@ def _get_engagement_entities_by_qr_code(
         select(SurveyResponseORM.qr_code_id, QRCodeORM.title)
         .select_from(SurveyResponseORM)
         .join(SurveyVersionORM, SurveyVersionORM.id == SurveyResponseORM.survey_version_id)
+        .join(SurveyORM, SurveyORM.id == SurveyVersionORM.survey_id)
         .join(QRCodeORM, QRCodeORM.id == SurveyResponseORM.qr_code_id)
+        .join(LocationORM, LocationORM.id == QRCodeORM.location_id)
         .where(
             SurveyVersionORM.survey_id == survey_id,
             SurveyResponseORM.deleted_at.is_(None),
             SurveyResponseORM.completion_datetime >= filters.date_start,
             SurveyResponseORM.completion_datetime < filters.date_end,
             QRCodeORM.deleted_at.is_(None),
+            LocationORM.deleted_at.is_(None),
         )
         .group_by(SurveyResponseORM.qr_code_id, QRCodeORM.title)
     )
+    if not filters.include_archived:
+        comp_stmt = comp_stmt.where(
+            QRCodeORM.archived_at.is_(None),
+            LocationORM.archived_at.is_(None),
+            SurveyORM.status != SurveyStatus.archived,
+        )
     if filters.qr_code_ids is not None:
         comp_stmt = comp_stmt.where(SurveyResponseORM.qr_code_id.in_(filters.qr_code_ids))
 
@@ -539,24 +600,29 @@ def _get_engagement_entities_by_qr_code(
         .select_from(ScanEventORM)
         .join(QRCodeORM, QRCodeORM.id == ScanEventORM.qr_code_id)
         .join(LocationSurveyORM, LocationSurveyORM.id == QRCodeORM.location_survey_id)
+        .join(SurveyORM, SurveyORM.id == LocationSurveyORM.survey_id)
+        .join(LocationORM, LocationORM.id == QRCodeORM.location_id)
         .where(
             LocationSurveyORM.survey_id == survey_id,
             ScanEventORM.deleted_at.is_(None),
             QRCodeORM.deleted_at.is_(None),
             LocationSurveyORM.deleted_at.is_(None),
+            LocationORM.deleted_at.is_(None),
             ScanEventORM.scanned_at >= filters.date_start,
             ScanEventORM.scanned_at < filters.date_end,
         )
         .group_by(ScanEventORM.qr_code_id, QRCodeORM.title)
     )
+    if not filters.include_archived:
+        scan_stmt = scan_stmt.where(
+            QRCodeORM.archived_at.is_(None),
+            LocationORM.archived_at.is_(None),
+            SurveyORM.status != SurveyStatus.archived,
+        )
     if filters.qr_code_ids is not None:
         scan_stmt = scan_stmt.where(ScanEventORM.qr_code_id.in_(filters.qr_code_ids))
     if filters.location_ids is not None:
-        scan_stmt = (
-            scan_stmt
-            .join(LocationORM, LocationORM.id == QRCodeORM.location_id)
-            .where(QRCodeORM.location_id.in_(filters.location_ids))
-        )
+        scan_stmt = scan_stmt.where(QRCodeORM.location_id.in_(filters.location_ids))
 
     seen: dict[uuid.UUID, str] = {}
     for row in db.execute(comp_stmt).fetchall() + db.execute(scan_stmt).fetchall():
@@ -666,10 +732,13 @@ def _build_filtered_responses_subquery(
             SurveyVersionORM,
             SurveyVersionORM.id == SurveyResponseORM.survey_version_id,
         )
+        .join(SurveyORM, SurveyORM.id == SurveyVersionORM.survey_id)
+        .join(QRCodeORM, QRCodeORM.id == SurveyResponseORM.qr_code_id)
         .outerjoin(
             LocationSnapshotORM,
             LocationSnapshotORM.id == SurveyResponseORM.location_snapshot_id,
         )
+        .outerjoin(LocationORM, LocationORM.id == LocationSnapshotORM.location_id)
         .where(
             SurveyVersionORM.survey_id == survey_id,
             SurveyResponseORM.deleted_at.is_(None),
@@ -677,6 +746,12 @@ def _build_filtered_responses_subquery(
             SurveyResponseORM.completion_datetime < filters.date_end,
         )
     )
+    if not filters.include_archived:
+        stmt = stmt.where(
+            QRCodeORM.archived_at.is_(None),
+            or_(LocationSnapshotORM.location_id.is_(None), LocationORM.archived_at.is_(None)),
+            SurveyORM.status != SurveyStatus.archived,
+        )
     if filters.qr_code_ids is not None:
         stmt = stmt.where(SurveyResponseORM.qr_code_id.in_(filters.qr_code_ids))
     if filters.location_ids is not None:

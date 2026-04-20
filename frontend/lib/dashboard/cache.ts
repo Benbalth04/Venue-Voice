@@ -20,6 +20,7 @@ export function buildCacheKey(
   dateStart: string,
   dateEnd: string,
   timeZone = "",
+  includeArchived = false,
 ): string {
   return [
     prefix,
@@ -28,6 +29,7 @@ export function buildCacheKey(
     dateStart,
     dateEnd,
     timeZone,
+    includeArchived ? "a1" : "a0",
   ].join("|");
 }
 

@@ -5,9 +5,9 @@ from datetime import datetime, timezone
 
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import RedirectResponse
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from ..auth.membership import get_company_from_membership, get_current_membership, require_company_admin
@@ -25,6 +25,8 @@ from ..models.postgres_model import (
     QRCode as QRCodeORM,
     QRCodeAsset as QRCodeAssetORM,
     Survey as SurveyORM,
+    SurveyResponse as SurveyResponseORM,
+    SurveySession as SurveySessionORM,
     SurveyStatus,
 )
 from ..schemas.pydantic_model import (
@@ -77,7 +79,42 @@ def _asset_urls(qr: QRCodeORM, client) -> QRCodeAssetUrls | None:
     )
 
 
-def _get_qr_or_404(qr_id: str, company_id: uuid.UUID, db: Session) -> QRCodeORM:
+def _get_active_qr_or_404(qr_id: str, company_id: uuid.UUID, db: Session) -> QRCodeORM:
+    """Non-deleted QR on a non-archived location (dashboard operations on live rows)."""
+    try:
+        uid = uuid.UUID(qr_id)
+    except ValueError:
+        raise NotFoundError(code="QR_CODE_NOT_FOUND", message="QR code not found")
+
+    qr = (
+        db.query(QRCodeORM)
+        .options(
+            joinedload(QRCodeORM.location),
+            joinedload(QRCodeORM.location_survey).joinedload(LocationSurveyORM.location),
+            joinedload(QRCodeORM.location_survey).joinedload(LocationSurveyORM.survey),
+            selectinload(QRCodeORM.assets),
+        )
+        .join(LocationSurveyORM, LocationSurveyORM.id == QRCodeORM.location_survey_id)
+        .join(LocationORM, LocationORM.id == QRCodeORM.location_id)
+        .join(SurveyORM, SurveyORM.id == LocationSurveyORM.survey_id)
+        .filter(
+            QRCodeORM.id == uid,
+            QRCodeORM.company_id == company_id,
+            QRCodeORM.deleted_at.is_(None),
+            QRCodeORM.archived_at.is_(None),
+            LocationORM.deleted_at.is_(None),
+            LocationORM.archived_at.is_(None),
+            SurveyORM.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if not qr:
+        raise NotFoundError(code="QR_CODE_NOT_FOUND", message="QR code not found")
+    return qr
+
+
+def _get_qr_row_or_404(qr_id: str, company_id: uuid.UUID, db: Session) -> QRCodeORM:
+    """Non-deleted QR (any archive state), for archive / unarchive."""
     try:
         uid = uuid.UUID(qr_id)
     except ValueError:
@@ -121,11 +158,14 @@ def _find_or_create_location_survey(
             LocationORM.id == location_id,
             LocationORM.company_id == company_id,
             LocationORM.deleted_at.is_(None),
+            LocationORM.archived_at.is_(None),
         )
         .first()
     )
     if not location:
         raise NotFoundError(code="LOCATION_NOT_FOUND", message="Location not found")
+    if location.archived_at is not None:
+        raise ValidationError(code="LOCATION_ARCHIVED", message="Location is archived", status_code=422)
     if not location.is_active:
         raise ValidationError(code="LOCATION_INACTIVE", message="Location is not active", status_code=422)
 
@@ -171,12 +211,13 @@ def _find_or_create_location_survey(
 
 
 def _maybe_deactivate_location_survey(location_survey_id: uuid.UUID, db: Session) -> None:
-    """Soft-delete a LocationSurvey if it has no remaining non-deleted QR codes."""
+    """Soft-delete a LocationSurvey if it has no remaining active (non-archived) QR codes."""
     remaining = (
         db.query(QRCodeORM)
         .filter(
             QRCodeORM.location_survey_id == location_survey_id,
             QRCodeORM.deleted_at.is_(None),
+            QRCodeORM.archived_at.is_(None),
         )
         .count()
     )
@@ -202,6 +243,7 @@ def _to_response(qr: QRCodeORM, user_tz: ZoneInfo, client) -> QRCodeResponse:
     location_active = (
         location is not None
         and getattr(location, "deleted_at", None) is None
+        and getattr(location, "archived_at", None) is None
         and bool(getattr(location, "is_active", False))
     )
     accepting_submissions_by_survey_and_location = survey_published and location_active
@@ -224,6 +266,7 @@ def _to_response(qr: QRCodeORM, user_tz: ZoneInfo, client) -> QRCodeResponse:
         assets=_asset_urls(qr, client),
         created_at=format_dt_for_user(qr.created_at, user_tz) or "",
         updated_at=format_dt_for_user(qr.updated_at, user_tz) or "",
+        archived_at=format_dt_for_user(qr.archived_at, user_tz) if qr.archived_at else None,
         location_status=ls_status,
         assignment_status=ls_status,
     )
@@ -231,6 +274,7 @@ def _to_response(qr: QRCodeORM, user_tz: ZoneInfo, client) -> QRCodeResponse:
 
 @router.get("/qr-codes", response_model=list[QRCodeResponse])
 def list_qr_codes(
+    archived: bool = Query(False, description="If true, only archived QR rows; if false, only non-archived."),
     membership: MembershipORM = Depends(get_current_membership),
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
@@ -256,6 +300,18 @@ def list_qr_codes(
             SurveyORM.deleted_at.is_(None),
         )
     )
+    if archived:
+        q = q.filter(
+            or_(
+                QRCodeORM.archived_at.isnot(None),
+                LocationORM.archived_at.isnot(None),
+            )
+        )
+    else:
+        q = q.filter(
+            QRCodeORM.archived_at.is_(None),
+            LocationORM.archived_at.is_(None),
+        )
     if location_sq is not None:
         q = q.filter(QRCodeORM.location_id.in_(location_sq))
     if survey_sq is not None:
@@ -286,7 +342,7 @@ def get_qr_code(
     db: Session = Depends(get_db_connection),
 ):
     company = get_company_from_membership(membership, db)
-    qr = _get_qr_or_404(qr_id, company.id, db)
+    qr = _get_active_qr_or_404(qr_id, company.id, db)
     assert_location_access(membership, qr.location_id, db)
     client = get_supabase_service_client()
     return _to_response(qr, user_tz, client)
@@ -389,7 +445,7 @@ def create_qr_code(
         ) from e
 
     client = get_supabase_service_client()
-    return _to_response(_get_qr_or_404(str(qr_id), company.id, db), user_tz, client)
+    return _to_response(_get_active_qr_or_404(str(qr_id), company.id, db), user_tz, client)
 
 
 @router.patch("/qr-codes/{qr_id}", response_model=QRCodeResponse)
@@ -401,7 +457,7 @@ def update_qr_code(
     db: Session = Depends(get_db_connection),
 ):
     company = get_company_from_membership(membership, db)
-    qr = _get_qr_or_404(qr_id, company.id, db)
+    qr = _get_active_qr_or_404(qr_id, company.id, db)
 
     update_values: dict = {"updated_at": func.now()}
 
@@ -501,19 +557,66 @@ def update_qr_code(
         _maybe_deactivate_location_survey(old_location_survey_id, db)
 
     client = get_supabase_service_client()
-    return _to_response(_get_qr_or_404(str(qr.id), company.id, db), user_tz, client)
+    return _to_response(_get_active_qr_or_404(str(qr.id), company.id, db), user_tz, client)
 
 
-@router.delete("/qr-codes/{qr_id}", status_code=204)
-def delete_qr_code(
+@router.post("/qr-codes/{qr_id}/archive", response_model=QRCodeResponse)
+def archive_qr_code(
     qr_id: str,
     payload: DeleteRequest,
     membership: MembershipORM = Depends(require_company_admin),
+    user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
     company = get_company_from_membership(membership, db)
-    qr = _get_qr_or_404(qr_id, company.id, db)
+    qr = _get_qr_row_or_404(qr_id, company.id, db)
+    assert_location_access(membership, qr.location_id, db)
+
+    if qr.archived_at is not None:
+        client = get_supabase_service_client()
+        return _to_response(qr, user_tz, client)
+
     location_survey_id = qr.location_survey_id
+    rowcount = (
+        db.query(QRCodeORM)
+        .filter(
+            QRCodeORM.id == qr.id,
+            QRCodeORM.updated_at == _strip_tz(payload.updated_at),
+        )
+        .update({"archived_at": func.now(), "updated_at": func.now()}, synchronize_session=False)
+    )
+    if rowcount == 0:
+        raise StaleObjectError("QRCode", str(qr.id))
+
+    db.commit()
+    _maybe_deactivate_location_survey(location_survey_id, db)
+    db.refresh(qr)
+    client = get_supabase_service_client()
+    return _to_response(qr, user_tz, client)
+
+
+@router.post("/qr-codes/{qr_id}/unarchive", response_model=QRCodeResponse)
+def unarchive_qr_code(
+    qr_id: str,
+    payload: DeleteRequest,
+    membership: MembershipORM = Depends(require_company_admin),
+    user_tz: ZoneInfo = Depends(get_user_zoneinfo),
+    db: Session = Depends(get_db_connection),
+):
+    company = get_company_from_membership(membership, db)
+    qr = _get_qr_row_or_404(qr_id, company.id, db)
+    assert_location_access(membership, qr.location_id, db)
+
+    if qr.location.archived_at is not None:
+        raise ValidationError(
+            code="LOCATION_ARCHIVED",
+            message="Unarchive the location before unarchiving this QR code.",
+            status_code=422,
+        )
+
+    if qr.archived_at is None:
+        client = get_supabase_service_client()
+        return _to_response(qr, user_tz, client)
 
     rowcount = (
         db.query(QRCodeORM)
@@ -521,13 +624,74 @@ def delete_qr_code(
             QRCodeORM.id == qr.id,
             QRCodeORM.updated_at == _strip_tz(payload.updated_at),
         )
-        .update({"deleted_at": utc_now(), "updated_at": func.now()}, synchronize_session=False)
+        .update({"archived_at": None, "updated_at": func.now()}, synchronize_session=False)
     )
     if rowcount == 0:
         raise StaleObjectError("QRCode", str(qr.id))
 
     db.commit()
-    _maybe_deactivate_location_survey(location_survey_id, db)
+    db.refresh(qr)
+    client = get_supabase_service_client()
+    return _to_response(qr, user_tz, client)
+
+
+@router.post("/qr-codes/{qr_id}/delete", status_code=204)
+def soft_delete_archived_qr_code(
+    qr_id: str,
+    payload: DeleteRequest,
+    membership: MembershipORM = Depends(require_company_admin),
+    db: Session = Depends(get_db_connection),
+):
+    """Soft-delete an archived QR code when it has no non-deleted sessions or responses."""
+    company = get_company_from_membership(membership, db)
+    qr = _get_qr_row_or_404(qr_id, company.id, db)
+    assert_location_access(membership, qr.location_id, db)
+
+    if qr.archived_at is None:
+        raise ValidationError(
+            code="QR_CODE_NOT_ARCHIVED",
+            message="Archive this QR code before deleting it.",
+            status_code=422,
+        )
+
+    session_count = (
+        db.query(func.count(SurveySessionORM.id))
+        .filter(
+            SurveySessionORM.qr_code_id == qr.id,
+            SurveySessionORM.deleted_at.is_(None),
+        )
+        .scalar()
+        or 0
+    )
+    response_count = (
+        db.query(func.count(SurveyResponseORM.id))
+        .filter(
+            SurveyResponseORM.qr_code_id == qr.id,
+            SurveyResponseORM.deleted_at.is_(None),
+        )
+        .scalar()
+        or 0
+    )
+    if session_count > 0 or response_count > 0:
+        raise ConflictError(
+            code="QR_CODE_HAS_ACTIVITY",
+            message="This QR code cannot be deleted because it has survey sessions or responses.",
+            details={"session_count": int(session_count), "response_count": int(response_count)},
+        )
+
+    rowcount = (
+        db.query(QRCodeORM)
+        .filter(
+            QRCodeORM.id == qr.id,
+            QRCodeORM.updated_at == _strip_tz(payload.updated_at),
+        )
+        .update({"deleted_at": func.now(), "updated_at": func.now()}, synchronize_session=False)
+    )
+    if rowcount == 0:
+        raise StaleObjectError("QRCode", str(qr.id))
+
+    db.commit()
+    _maybe_deactivate_location_survey(qr.location_survey_id, db)
 
 
 @public_router.get("/{title}")
@@ -541,9 +705,12 @@ def resolve_qr(
 
     qr = (
         db.query(QRCodeORM)
+        .join(LocationORM, LocationORM.id == QRCodeORM.location_id)
         .filter(
             QRCodeORM.title == title,
             QRCodeORM.deleted_at.is_(None),
+            QRCodeORM.archived_at.is_(None),
+            LocationORM.archived_at.is_(None),
         )
         .first()
     )

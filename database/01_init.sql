@@ -86,6 +86,7 @@ CREATE TABLE subscriptions (
     billing_interval TEXT NULL CHECK (billing_interval IN ('monthly', 'yearly')),
     cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE,
     price_id TEXT NULL,
+    location_count INTEGER NULL,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -108,6 +109,7 @@ CREATE TABLE locations (
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
     deleted_at TIMESTAMP NULL,
+    archived_at TIMESTAMP NULL,
     UNIQUE(company_id, name)
 );
 
@@ -125,9 +127,12 @@ CREATE TABLE surveys (
     latest_version INTEGER NOT NULL DEFAULT 1,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
+    archived_at TIMESTAMP NULL,
     deleted_at TIMESTAMP NULL,
     UNIQUE(company_id, name)
 );
+
+CREATE INDEX idx_surveys_archived_at ON surveys(archived_at);
 
 --------------------------------------------------
 -- VIEWER PERMISSIONS
@@ -246,7 +251,8 @@ CREATE TABLE qr_codes (
     color TEXT NOT NULL DEFAULT '#000000',
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
-    deleted_at TIMESTAMP NULL
+    deleted_at TIMESTAMP NULL,
+    archived_at TIMESTAMP NULL
 );
 
 

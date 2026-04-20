@@ -142,6 +142,7 @@ export interface LocationResponse {
   google_business_url: string | null
   created_at: string
   updated_at: string
+  archived_at?: string | null
 }
 
 export interface LocationCreate {
@@ -253,8 +254,8 @@ export interface QRCodeResponse {
   location_survey_id: string
   survey_id: string
   survey_title: string | null
-  /** QR code only: active | inactive | deleted */
-  qr_status: "active" | "inactive" | "deleted"
+  /** QR code only: active | inactive | archived | deleted */
+  qr_status: "active" | "inactive" | "archived" | "deleted"
   /** Linked assignment: active | scheduled | inactive | deleted */
   location_survey_status: "active" | "scheduled" | "inactive" | "deleted"
   /** Survey published (active) and location active; independent of dates / QR toggle. */
@@ -272,6 +273,7 @@ export interface QRCodeResponse {
   assets: QRCodeAssetUrls | null
   created_at: string
   updated_at: string
+  archived_at?: string | null
   /** @deprecated use location_survey_status */
   location_status?: string | null
   /** @deprecated use location_survey_status */
@@ -361,6 +363,8 @@ export interface SurveyListItem {
   latest_version: number
   last_edited_by: string | null
   updated_at: string
+  /** ISO-ish instant when archived; null if never archived */
+  archived_at?: string | null
 }
 
 export interface SurveyWithSchema extends SurveyListItem {
@@ -851,6 +855,7 @@ export interface AnalyticsResponseRow {
   questions_answered: number
   survey_version_id: string
   unread: boolean
+  is_archived?: boolean
 }
 
 export interface AnalyticsResponseList {
@@ -863,6 +868,7 @@ export interface AnalyticsResponseList {
 export interface AnalyticsFilterOption {
   id: string
   name: string
+  is_archived?: boolean
 }
 
 export interface AnalyticsFiltersResponse {
@@ -905,6 +911,7 @@ export interface AnalyticsFilters {
   date_end?: string
   sort_column?: string
   sort_direction?: "asc" | "desc"
+  include_archived?: boolean
 }
 
 // Advanced filter types — mirror the backend AdvancedFilterPayload schema
@@ -1146,8 +1153,12 @@ export async function patchUserTimezone(
 // ------------------------------------------------------------------
 // Locations
 // ------------------------------------------------------------------
-export async function fetchLocations(accessToken: string): Promise<LocationResponse[]> {
-  return apiFetch<LocationResponse[]>(`${BACKEND_BASE}/api/v1/locations`, {
+export async function fetchLocations(
+  accessToken: string,
+  options?: { archived?: boolean },
+): Promise<LocationResponse[]> {
+  const q = options?.archived === true ? "?archived=true" : ""
+  return apiFetch<LocationResponse[]>(`${BACKEND_BASE}/api/v1/locations${q}`, {
     headers: authGetHeaders(accessToken),
   })
 }
@@ -1175,9 +1186,37 @@ export async function updateLocation(
   })
 }
 
-export async function deleteLocation(accessToken: string, id: string, updatedAt: string): Promise<void> {
-  await apiFetch<unknown>(`${BACKEND_BASE}/api/v1/locations/${id}`, {
-    method: "DELETE",
+export async function archiveLocation(
+  accessToken: string,
+  id: string,
+  updatedAt: string,
+): Promise<LocationResponse> {
+  return apiFetch<LocationResponse>(`${BACKEND_BASE}/api/v1/locations/${id}/archive`, {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify({ updated_at: updatedAt }),
+  })
+}
+
+export async function unarchiveLocation(
+  accessToken: string,
+  id: string,
+  updatedAt: string,
+): Promise<LocationResponse> {
+  return apiFetch<LocationResponse>(`${BACKEND_BASE}/api/v1/locations/${id}/unarchive`, {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify({ updated_at: updatedAt }),
+  })
+}
+
+export async function deleteArchivedLocation(
+  accessToken: string,
+  id: string,
+  updatedAt: string,
+): Promise<void> {
+  await apiFetch<unknown>(`${BACKEND_BASE}/api/v1/locations/${id}/delete`, {
+    method: "POST",
     headers: authHeaders(accessToken),
     body: JSON.stringify({ updated_at: updatedAt }),
   })
@@ -1278,8 +1317,12 @@ export async function fetchLocationSurveys(
 // ------------------------------------------------------------------
 // QR Codes
 // ------------------------------------------------------------------
-export async function fetchQRCodes(accessToken: string): Promise<QRCodeResponse[]> {
-  return apiFetch<QRCodeResponse[]>(`${BACKEND_BASE}/api/v1/qr-codes`, {
+export async function fetchQRCodes(
+  accessToken: string,
+  options?: { archived?: boolean },
+): Promise<QRCodeResponse[]> {
+  const q = options?.archived === true ? "?archived=true" : ""
+  return apiFetch<QRCodeResponse[]>(`${BACKEND_BASE}/api/v1/qr-codes${q}`, {
     headers: authGetHeaders(accessToken),
   })
 }
@@ -1322,9 +1365,37 @@ export async function updateQRCode(
   })
 }
 
-export async function deleteQRCode(accessToken: string, id: string, updatedAt: string): Promise<void> {
-  await apiFetch<unknown>(`${BACKEND_BASE}/api/v1/qr-codes/${id}`, {
-    method: "DELETE",
+export async function archiveQRCode(
+  accessToken: string,
+  id: string,
+  updatedAt: string,
+): Promise<QRCodeResponse> {
+  return apiFetch<QRCodeResponse>(`${BACKEND_BASE}/api/v1/qr-codes/${id}/archive`, {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify({ updated_at: updatedAt }),
+  })
+}
+
+export async function unarchiveQRCode(
+  accessToken: string,
+  id: string,
+  updatedAt: string,
+): Promise<QRCodeResponse> {
+  return apiFetch<QRCodeResponse>(`${BACKEND_BASE}/api/v1/qr-codes/${id}/unarchive`, {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    body: JSON.stringify({ updated_at: updatedAt }),
+  })
+}
+
+export async function deleteArchivedQRCode(
+  accessToken: string,
+  id: string,
+  updatedAt: string,
+): Promise<void> {
+  await apiFetch<unknown>(`${BACKEND_BASE}/api/v1/qr-codes/${id}/delete`, {
+    method: "POST",
     headers: authHeaders(accessToken),
     body: JSON.stringify({ updated_at: updatedAt }),
   })
@@ -1364,6 +1435,10 @@ function normalizeSurveyListItem(raw: Record<string, unknown>): SurveyListItem {
     latest_version: Number(raw.latest_version ?? raw.latestVersion ?? 1),
     last_edited_by: raw.last_edited_by != null ? String(raw.last_edited_by) : null,
     updated_at: String(raw.updated_at ?? raw.updatedAt ?? ""),
+    archived_at:
+      raw.archived_at != null && String(raw.archived_at).trim() !== ""
+        ? String(raw.archived_at)
+        : null,
   }
 }
 
@@ -1561,6 +1636,14 @@ export async function deleteSurveyFlow(
   await surveyRequest<unknown>(token, `/surveys/${surveyId}/flows/${flowId}`, "DELETE", { updated_at: updatedAt })
 }
 
+export function fetchFlowDeletePreview(
+  token: string,
+  surveyId: string,
+  flowId: string,
+): Promise<{ assignment_count: number }> {
+  return surveyRequest<{ assignment_count: number }>(token, `/surveys/${surveyId}/flows/${flowId}/delete-preview`)
+}
+
 export function testFlow(
   token: string,
   flowId: string,
@@ -1718,6 +1801,10 @@ export function unarchiveSurvey(token: string, id: string, updatedAt: string): P
   return surveyRequest<SurveyListItem>(token, `/surveys/${id}/unarchive`, "PATCH", { updated_at: updatedAt })
 }
 
+export async function deleteArchivedSurvey(token: string, id: string, updatedAt: string): Promise<void> {
+  await surveyRequest<unknown>(token, `/surveys/${id}/delete`, "POST", { updated_at: updatedAt })
+}
+
 export function duplicateSurvey(token: string, id: string): Promise<SurveyWithSchema> {
   return surveyRequest<SurveyWithSchema>(token, `/surveys/${id}/duplicate`, "POST")
 }
@@ -1740,6 +1827,7 @@ function _buildAnalyticsParams(
   if (filters.date_end) p.set("date_end", filters.date_end)
   if (filters.sort_column) p.set("sort_column", filters.sort_column)
   if (filters.sort_direction) p.set("sort_direction", filters.sort_direction)
+  if (filters.include_archived === true) p.set("include_archived", "true")
   if (advancedFilter && advancedFilter.conditions.length > 0) {
     p.set("advanced_filter", JSON.stringify(advancedFilter))
   }
@@ -1839,6 +1927,7 @@ export interface SurveyDashboardAPIParams {
   qr_code_ids?: string[]
   date_start?: string
   date_end?: string
+  include_archived?: boolean
 }
 
 function buildDashboardQueryString(params: SurveyDashboardAPIParams): string {
@@ -1847,6 +1936,7 @@ function buildDashboardQueryString(params: SurveyDashboardAPIParams): string {
   params.qr_code_ids?.forEach((id) => p.append("qr_code_ids", id))
   if (params.date_start) p.set("date_start", params.date_start)
   if (params.date_end) p.set("date_end", params.date_end)
+  if (params.include_archived === true) p.set("include_archived", "true")
   return p.toString()
 }
 
@@ -1913,6 +2003,7 @@ export interface SubscriptionResponse {
   plan_display_name: string | null
   billing_interval: string | null
   cancel_at_period_end: boolean
+  location_count: number | null
   is_active: boolean
 }
 

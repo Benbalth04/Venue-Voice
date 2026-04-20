@@ -25,6 +25,8 @@ _DEFAULTS: dict[str, str] = {
     "GROWTH_PLAN_YEARLY_PRICE_ID": "price_growth_y",
     "PRO_PLAN_MONTHLY_PRICE_ID": "price_pro_m",
     "PRO_PLAN_YEARLY_PRICE_ID": "price_pro_y",
+    "LOCATION_MONTHLY_PRICE_ID": "price_loc_m",
+    "LOCATION_YEARLY_PRICE_ID": "price_loc_y",
 }
 
 for _key, _val in _DEFAULTS.items():

@@ -36,6 +36,7 @@ import {
   deleteSurveyFlow,
   extractErrorMessage,
   fetchFlow,
+  fetchFlowDeletePreview,
   FLOW_RUNS_PAGE_SIZE,
   fetchFlowRuns,
   fetchFlows,
@@ -448,9 +449,11 @@ export default function FlowsPage() {
     const nextActive = !flow.is_active
     if (flow.is_active) {
       const ok = await confirm({
-        title: `Disable Flow - ${flow.name}`,
-        message: "Are you sure you want to disable this flow?",
+        title: `Disable flow — ${flow.name}`,
+        message:
+          "This flow will stop triggering for new survey responses. Existing flow run history is not affected.\n\nYou can re-enable it at any time.",
         confirmLabel: "Disable",
+        variant: "warning",
       })
       if (!ok) return
     }
@@ -467,15 +470,30 @@ export default function FlowsPage() {
   }
 
   async function deleteFlow(flow: FlowResponse) {
-    const ok = await confirm({
-      title: `Delete Flow - ${flow.name}`,
-      message: `Are you sure you want to delete this flow? This cannot be undone.`,
-      confirmLabel: "Delete",
-      variant: "danger",
-    })
-    if (!ok) return
     const token = await getToken()
     if (!token) return
+
+    let assignmentCount = 0
+    try {
+      const preview = await fetchFlowDeletePreview(token, flow.survey_id, flow.id)
+      assignmentCount = preview.assignment_count
+    } catch {
+      // Preview failed — proceed without assignment count
+    }
+
+    const assignmentLine =
+      assignmentCount > 0
+        ? `\n\nThis flow is currently assigned to ${assignmentCount} location survey${assignmentCount > 1 ? "s" : ""}. Those assignments will be removed.`
+        : ""
+
+    const ok1 = await confirm({
+      title: `Delete flow — ${flow.name}`,
+      message: `This will permanently delete this flow. New responses will no longer trigger this automation. This cannot be undone.${assignmentLine}`,
+      confirmLabel: "Delete flow",
+      variant: "danger",
+    })
+    if (!ok1) return
+
     try {
       await deleteSurveyFlow(token, flow.survey_id, flow.id, flow.updated_at)
       setFlows((current) => current.filter((item) => item.id !== flow.id))

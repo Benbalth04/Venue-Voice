@@ -27,6 +27,7 @@ class SubscriptionResponse(BaseModel):
     billing_interval: str | None = None
     cancel_at_period_end: bool = False
     price_id: str | None = None
+    location_count: int | None = None
     is_active: bool
 
     model_config = ConfigDict(from_attributes=True)
@@ -273,6 +274,7 @@ class LocationResponse(BaseModel):
     google_business_url: str | None
     created_at: str
     updated_at: str
+    archived_at: str | None = None
 
 
 class FlowSummary(BaseModel):
@@ -390,7 +392,7 @@ class QRCodeResponse(BaseModel):
     location_survey_id: uuid.UUID
     survey_id: uuid.UUID
     survey_title: str | None
-    qr_status: str = Field(description="QR code only: active, inactive, or deleted.")
+    qr_status: str = Field(description="QR code only: active, inactive, archived, or deleted (legacy soft-delete).")
     location_survey_status: str = Field(
         description="Linked location–survey assignment: active, scheduled, inactive, or deleted.",
     )
@@ -407,6 +409,7 @@ class QRCodeResponse(BaseModel):
     assets: QRCodeAssetUrls | None = None
     created_at: str
     updated_at: str
+    archived_at: str | None = None
     # Deprecated: use location_survey_status / qr_status instead
     location_status: str | None = None
     assignment_status: str | None = None
@@ -531,6 +534,7 @@ class SurveyListItem(BaseModel):
     created_at: str
     updated_at: str
     last_edited_by: str | None
+    archived_at: str | None = None
 
 class SurveyWithSchema(SurveyListItem):
     survey_schema_json: dict[str, Any]
@@ -559,6 +563,7 @@ class AnalyticsResponseRow(BaseModel):
     questions_answered: int
     survey_version_id: uuid.UUID | None = None
     unread: bool = True      # True if user has not viewed this response's answers
+    is_archived: bool = False
 
 
 class AnalyticsResponseList(BaseModel):
@@ -571,6 +576,7 @@ class AnalyticsResponseList(BaseModel):
 class AnalyticsFilterOption(BaseModel):
     id: uuid.UUID
     name: str
+    is_archived: bool = False
 
 
 class AnalyticsFiltersResponse(BaseModel):
@@ -1429,6 +1435,7 @@ class DashboardFilterParams(BaseModel):
     qr_code_ids: list[uuid.UUID] | None = None
     date_start: datetime | None = None
     date_end: datetime | None = None
+    include_archived: bool = False
 
 
 class DailyNumericPoint(BaseModel):

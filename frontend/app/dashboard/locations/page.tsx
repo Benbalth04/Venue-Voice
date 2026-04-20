@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { MapPin, Pencil, Plus, ToggleLeft, ToggleRight, X } from "lucide-react"
+import { Archive, ArchiveRestore, ChevronDown, MapPin, Pencil, Plus, ToggleLeft, ToggleRight, Trash2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { DropdownSelect } from "@/components/ui/DropdownSelect"
@@ -9,22 +9,30 @@ import { DataTable, type DataTableColumn } from "@/components/ui/DataTable"
 import { LoadingBlock } from "@/components/ui/LoadingSpinner"
 import { useConfirm } from "@/components/ui/ConfirmDialog"
 import { useQRSubmissionBlocked } from "@/components/layout/QRSubmissionBlockedContext"
+import { useAuth } from "@/contexts/AuthContext"
 import { supabase } from "@/lib/supabase/client"
 import {
+  archiveLocation,
   createLocation,
+  deleteArchivedLocation,
   fetchLocations,
   fetchNotificationGroups,
+  fetchSubscription,
   getLocationFlowDependencies,
   isNormalizedError,
   isStaleObjectError,
   syncLocationNotificationGroups,
+  unarchiveLocation,
   updateLocation,
   extractErrorMessage,
   type LocationCreate,
   type LocationResponse,
   type LocationUpdate,
   type NotificationGroupResponse,
+  type SubscriptionResponse,
 } from "@/lib/api/client"
+import { formatIsoInUserTimeZone } from "@/lib/datetime/formatInUserTz"
+import { DEFAULT_USER_TIMEZONE } from "@/lib/timezone/australia"
 
 /** Shown when PATCH is_active would exceed plan max **active** locations (backend: LIMIT_EXCEEDED / resource locations). */
 const ACTIVE_LOCATION_PLAN_LIMIT_MESSAGE =
@@ -42,6 +50,7 @@ function formatLocationActivationError(err: unknown): string {
 }
 
 // ─── Modal ────────────────────────────────────────────────────────────────────
+
 
 interface LocationFormData {
   name: string
@@ -199,10 +208,14 @@ function LocationModal({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function LocationsPage() {
+  const { activeMembership, user } = useAuth()
+  const userTimeZone = user?.timezone ?? DEFAULT_USER_TIMEZONE
+  const isViewer = activeMembership?.role === "viewer"
   const { confirm, ConfirmDialogRender } = useConfirm()
   const { refreshSubmissionBlockedQrCount } = useQRSubmissionBlocked()
   const [locations, setLocations] = useState<LocationResponse[]>([])
   const [notificationGroups, setNotificationGroups] = useState<NotificationGroupResponse[]>([])
+  const [subscription, setSubscription] = useState<SubscriptionResponse | null>(null)
   const [loading, setLoading] = useState(true)
   /** Set only from initial load failure — replaces main content until refresh/reload. */
   const [error, setError] = useState<string | null>(null)
@@ -238,6 +251,10 @@ export default function LocationsPage() {
   const [sortKey, setSortKey] = useState<string>("name")
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc")
 
+  const [archivedOpen, setArchivedOpen] = useState(false)
+  const [archivedLocations, setArchivedLocations] = useState<LocationResponse[]>([])
+  const [archivedLoading, setArchivedLoading] = useState(false)
+
   async function getToken() {
     const { data: { session } } = await supabase.auth.getSession()
     return session?.access_token ?? null
@@ -247,12 +264,16 @@ export default function LocationsPage() {
     const token = await getToken()
     if (!token) return
     try {
-      const [locationRows, notificationGroupRows] = await Promise.all([
+      const [locationRows, notificationGroupRows, subResult] = await Promise.allSettled([
         fetchLocations(token),
         fetchNotificationGroups(token),
+        fetchSubscription(token),
       ])
-      setLocations(locationRows)
-      setNotificationGroups(notificationGroupRows)
+      if (locationRows.status === "fulfilled") setLocations(locationRows.value)
+      else throw locationRows.reason
+      if (notificationGroupRows.status === "fulfilled") setNotificationGroups(notificationGroupRows.value)
+      else throw notificationGroupRows.reason
+      if (subResult.status === "fulfilled") setSubscription(subResult.value)
     } catch (err) {
       setError(extractErrorMessage(err, "Failed to load locations"))
     } finally {
@@ -260,7 +281,30 @@ export default function LocationsPage() {
     }
   }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    load()
+  }, [load])
+
+  useEffect(() => {
+    if (!archivedOpen) return
+    let cancelled = false
+    ;(async () => {
+      const token = await getToken()
+      if (!token || cancelled) return
+      setArchivedLoading(true)
+      try {
+        const rows = await fetchLocations(token, { archived: true })
+        if (!cancelled) setArchivedLocations(rows)
+      } catch {
+        if (!cancelled) setArchivedLocations([])
+      } finally {
+        if (!cancelled) setArchivedLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [archivedOpen])
 
   function openCreate() {
     setEditTarget(null)
@@ -329,7 +373,10 @@ export default function LocationsPage() {
         setModalOpen(false)
       }
     } catch (err) {
-      if (isStaleObjectError(err)) {
+      if (isNormalizedError(err) && err.code === "LIMIT_EXCEEDED" && err.details?.resource === "locations") {
+        await load()
+        setFormError("You've reached your plan's location limit. Upgrade your subscription to add more locations.")
+      } else if (isStaleObjectError(err)) {
         setModalOpen(false)
         await load()
         setFormError("This location was updated. Please try again.")
@@ -348,14 +395,93 @@ export default function LocationsPage() {
     }
   }
 
+  async function handleArchive(loc: LocationResponse) {
+    const ok = await confirm({
+      title: "Archive location",
+      message:
+        "All QR codes at this location will be archived and stop accepting scans.\n\nYou can recover this location and its QR codes from the Archived section.",
+      confirmLabel: "Archive",
+      cancelLabel: "Cancel",
+      variant: "warning",
+    })
+    if (!ok) return
+    const token = await getToken()
+    if (!token) return
+    try {
+      await archiveLocation(token, loc.id, loc.updated_at)
+      await load()
+      if (archivedOpen) {
+        const t = await getToken()
+        if (t) setArchivedLocations(await fetchLocations(t, { archived: true }))
+      }
+      void refreshSubmissionBlockedQrCount()
+    } catch (err) {
+      if (isStaleObjectError(err)) {
+        await load()
+        showTransientPageBanner("This location was updated. Please try again.")
+      } else {
+        showTransientPageBanner(extractErrorMessage(err, "Failed to archive location"))
+      }
+    }
+  }
+
+  async function handleUnarchive(loc: LocationResponse) {
+    const token = await getToken()
+    if (!token) return
+    try {
+      const updated = await unarchiveLocation(token, loc.id, loc.updated_at)
+      setArchivedLocations((prev) => prev.filter((l) => l.id !== updated.id))
+      await load()
+      void refreshSubmissionBlockedQrCount()
+    } catch (err) {
+      if (isStaleObjectError(err)) {
+        const t = await getToken()
+        if (t) setArchivedLocations(await fetchLocations(t, { archived: true }))
+        showTransientPageBanner("This location was updated. Please try again.")
+      } else if (isNormalizedError(err) && err.code === "LIMIT_EXCEEDED" && err.details?.resource === "locations") {
+        showTransientPageBanner(ACTIVE_LOCATION_PLAN_LIMIT_MESSAGE)
+      } else {
+        showTransientPageBanner(extractErrorMessage(err, "Failed to unarchive location"))
+      }
+    }
+  }
+
+  async function handleDeleteArchived(loc: LocationResponse) {
+    const ok = await confirm({
+      title: `Delete location — ${loc.name}`,
+      message:
+        "This permanently removes this location and cannot be undone. All QR codes must be deleted first.\n\nPast response data collected at this location will remain in your analytics.",
+      confirmLabel: "Delete permanently",
+      cancelLabel: "Cancel",
+      variant: "danger",
+    })
+    if (!ok) return
+    const token = await getToken()
+    if (!token) return
+    try {
+      await deleteArchivedLocation(token, loc.id, loc.updated_at)
+      setArchivedLocations((prev) => prev.filter((l) => l.id !== loc.id))
+      void refreshSubmissionBlockedQrCount()
+    } catch (err) {
+      if (isStaleObjectError(err)) {
+        const t = await getToken()
+        if (t) setArchivedLocations(await fetchLocations(t, { archived: true }))
+        showTransientPageBanner("This location was updated. Please try again.")
+      } else {
+        showTransientPageBanner(extractErrorMessage(err, "Failed to delete location"))
+      }
+    }
+  }
+
   async function handleToggleActive(loc: LocationResponse) {
     if (loc.is_active) {
       const ok = await confirm({
         title: "Deactivate location",
-        message: "This will deactivate all associated QR codes. Continue?",
+        message:
+          "Surveys assigned to this location will stop collecting responses until it is reactivated. QR codes themselves are not affected.\n\nYou can reactivate this location at any time.",
         confirmLabel: "Deactivate",
         cancelLabel: "Cancel",
-        variant: "danger",
+        variant: "warning",
       })
       if (!ok) return
     }
@@ -494,10 +620,22 @@ export default function LocationsPage() {
               <ToggleLeft className="h-3.5 w-3.5" />
             )}
           </button>
+          <button
+            type="button"
+            onClick={() => handleArchive(loc)}
+            className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-amber-700"
+            title="Archive location"
+          >
+            <Archive className="h-3.5 w-3.5" />
+          </button>
         </div>
       ),
     },
   ]
+
+  const locationLimit = subscription?.location_count ?? null
+  const locationsRemaining = locationLimit != null ? locationLimit - locations.length : null
+  const atLimit = locationsRemaining != null && locationsRemaining <= 0
 
   return (
     <div className="space-y-6">
@@ -507,13 +645,29 @@ export default function LocationsPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-950">Locations</h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Manage your physical business locations. New locations start inactive; your plan limits how many can be active at once.
+            Manage your physical business locations. Each location on your plan can be activated to collect feedback.
           </p>
         </div>
-        <Button onClick={openCreate}>
-          <Plus className="mr-1.5 h-4 w-4" />
-          Add Location
-        </Button>
+        <div className="flex flex-col items-end gap-1.5">
+          {locationsRemaining != null && !atLimit && (
+            <p className="text-sm font-medium text-zinc-700">
+              You have {locationsRemaining} location{locationsRemaining === 1 ? "" : "s"} remaining
+            </p>
+          )}
+          {atLimit && (
+            <p className="text-sm font-medium text-amber-700">
+              You&apos;ve reached your plan&apos;s location limit.{" "}
+              <a href="/dashboard/settings/manage-subscription" className="underline hover:text-amber-700">
+                Upgrade your plan
+              </a>{" "}
+              to add more.
+            </p>
+          )}
+          <Button onClick={openCreate} disabled={atLimit}>
+            <Plus className="mr-1.5 h-4 w-4" />
+            Add Location
+          </Button>
+        </div>
       </div>
 
       {/* Content */}
@@ -553,6 +707,86 @@ export default function LocationsPage() {
               }}
             />
           )}
+
+          <details
+            className="group rounded-xl border border-zinc-200 bg-zinc-50/50"
+            open={archivedOpen}
+            onToggle={(e) => setArchivedOpen(e.currentTarget.open)}
+          >
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-sm font-medium text-zinc-700 [&::-webkit-details-marker]:hidden">
+              <span className="flex items-center gap-2">
+                <ChevronDown className="h-4 w-4 shrink-0 text-zinc-400 transition-transform group-open:rotate-180" />
+                Archived locations
+              </span>
+            </summary>
+            <div className="border-t border-zinc-200 px-2 pb-4 pt-2">
+              {archivedLoading ? (
+                <div className="flex justify-center py-8">
+                  <LoadingBlock message="Loading archived locations…" />
+                </div>
+              ) : archivedLocations.length === 0 ? (
+                <p className="px-2 py-6 text-center text-sm text-zinc-500">No archived locations</p>
+              ) : (
+                <DataTable<LocationResponse>
+                  data={[...archivedLocations].sort((a, b) => a.name.localeCompare(b.name))}
+                  columns={[
+                    {
+                      key: "name",
+                      label: "Name",
+                      sortable: false,
+                      align: "left",
+                      render: (loc) => (
+                        <span className="font-medium text-zinc-800">{loc.name}</span>
+                      ),
+                    },
+                    {
+                      key: "archived_at",
+                      label: "Archived at",
+                      sortable: false,
+                      align: "center",
+                      render: (loc) => (
+                        <span className="text-sm text-zinc-600">
+                          {formatIsoInUserTimeZone(loc.archived_at ?? "", userTimeZone)}
+                        </span>
+                      ),
+                    },
+                    {
+                      key: "actions",
+                      label: "Actions",
+                      sortable: false,
+                      align: "center",
+                      render: (loc) =>
+                        isViewer ? (
+                          <span className="text-zinc-400">—</span>
+                        ) : (
+                          <div className="flex flex-wrap items-center justify-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => void handleUnarchive(loc)}
+                              className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-sm text-violet-700 hover:bg-violet-50"
+                              title="Unarchive location"
+                            >
+                              <ArchiveRestore className="h-3.5 w-3.5" />
+                              Unarchive
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteArchived(loc)}
+                              className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-sm text-red-700 hover:bg-red-50"
+                              title="Delete location permanently"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Delete
+                            </button>
+                          </div>
+                        ),
+                    },
+                  ]}
+                  getRowKey={(loc) => loc.id}
+                />
+              )}
+            </div>
+          </details>
         </div>
       )}
 

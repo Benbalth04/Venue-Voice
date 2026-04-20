@@ -191,6 +191,7 @@ def validate_flow(flow_id: uuid.UUID, db: Session) -> tuple[str, list[dict]]:
                     LocationSurveyORM.id.in_(location_survey_ids),
                     LocationSurveyORM.deleted_at.is_(None),
                     LocationORM.deleted_at.is_(None),
+                    LocationORM.archived_at.is_(None),
                 )
                 .all()
             )

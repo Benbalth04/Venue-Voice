@@ -222,6 +222,7 @@ def _validate_location_survey_ids(
             LocationSurveyORM.deleted_at.is_(None),
             LocationORM.company_id == company_id,
             LocationORM.deleted_at.is_(None),
+            LocationORM.archived_at.is_(None),
         )
         .all()
     )
@@ -621,8 +622,22 @@ def update_flow(
     return _flow_to_response(_get_flow_or_404(db, company_id, survey_id, flow.id), user_tz)
 
 
+def get_flow_delete_preview(db: Session, company_id: uuid.UUID, survey_id: uuid.UUID, flow_id: uuid.UUID) -> dict:
+    flow = _get_flow_or_404(db, company_id, survey_id, flow_id)
+    assignment_count = (
+        db.query(FlowLocationSurveyORM)
+        .filter(FlowLocationSurveyORM.flow_id == flow.id)
+        .count()
+    )
+    return {"assignment_count": assignment_count}
+
+
 def delete_flow(db: Session, company_id: uuid.UUID, survey_id: uuid.UUID, flow_id: uuid.UUID, updated_at) -> None:
     flow = _get_flow_or_404(db, company_id, survey_id, flow_id)
+
+    db.query(FlowLocationSurveyORM).filter(
+        FlowLocationSurveyORM.flow_id == flow.id
+    ).delete(synchronize_session=False)
 
     rowcount = (
         db.query(FlowORM)
@@ -704,6 +719,7 @@ def _get_location_runtime_context(
             LocationSurveyORM.deleted_at.is_(None),
             LocationORM.company_id == company_id,
             LocationORM.deleted_at.is_(None),
+            LocationORM.archived_at.is_(None),
         )
         .first()
     )

@@ -62,6 +62,7 @@ def _shared_filter_params(
     date_end: str | None = Query(None, description="YYYY-MM-DD in user's saved timezone"),
     sort_column: str = Query("scan_time"),
     sort_direction: Literal["asc", "desc"] = Query("desc"),
+    include_archived: bool = Query(False, description="Include sessions tied to archived QR, location, or survey"),
 ):
     return dict(
         page=page,
@@ -74,6 +75,7 @@ def _shared_filter_params(
         date_end=date_end,
         sort_column=sort_column,
         sort_direction=sort_direction,
+        include_archived=include_archived,
     )
 
 

@@ -3,9 +3,8 @@
 import { useCallback, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/contexts/AuthContext"
-import { BillingToggle } from "@/components/subscription/BillingToggle"
 import { Button } from "@/components/ui/button"
-import { Check } from "lucide-react"
+import { Check, MapPin, ArrowRight, Zap } from "lucide-react"
 import {
   createPortalSession,
   extractErrorMessage,
@@ -18,37 +17,65 @@ import {
   LOCATION_PRICE_MONTHLY,
   LOCATION_PRICE_YEARLY_MONTHLY_EQUIV,
   LOCATION_PRICE_YEARLY_TOTAL,
-  type BillingInterval,
 } from "@/lib/subscription/plans"
+import { formatIsoInUserTimeZone } from "@/lib/datetime/formatInUserTz"
 import { DEFAULT_USER_TIMEZONE } from "@/lib/timezone/australia"
 
-function formatSubscriptionEndDateTime(iso: string | null, timeZone: string): string {
-  if (!iso) return "the end of your billing period"
-  try {
-    const d = new Date(iso)
-    if (Number.isNaN(d.getTime())) return iso
-    return d.toLocaleString(undefined, {
-      timeZone,
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-      timeZoneName: "short",
-    })
-  } catch {
-    return iso
-  }
+const STATUS_CONFIG: Record<string, { label: string; classes: string }> = {
+  active:           { label: "Active",       classes: "text-emerald-700 bg-emerald-50 border-emerald-200" },
+  trialing:         { label: "Free Trial",   classes: "text-violet-700 bg-violet-50 border-violet-200" },
+  pending_cancel:   { label: "Canceling",    classes: "text-amber-700 bg-amber-50 border-amber-200" },
+  past_due:         { label: "Past Due",     classes: "text-red-700 bg-red-50 border-red-200" },
+  canceled:         { label: "Canceled",     classes: "text-zinc-600 bg-zinc-50 border-zinc-200" },
+  incomplete:       { label: "Incomplete",   classes: "text-zinc-600 bg-zinc-50 border-zinc-200" },
+  incomplete_expired: { label: "Expired",   classes: "text-zinc-600 bg-zinc-50 border-zinc-200" },
+  unpaid:           { label: "Unpaid",       classes: "text-red-700 bg-red-50 border-red-200" },
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const cfg = STATUS_CONFIG[status] ?? { label: status, classes: "text-zinc-600 bg-zinc-50 border-zinc-200" }
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${cfg.classes}`}>
+      {cfg.label}
+    </span>
+  )
+}
+
+/** IANA zone from profile (never browser default). Empty API values fall back to app default. */
+function resolveUserIanaZone(timezone: string | null | undefined): string {
+  const t = timezone?.trim()
+  return t ? t : DEFAULT_USER_TIMEZONE
+}
+
+const SUBSCRIPTION_DATE_TIME_OPTS: Intl.DateTimeFormatOptions = {
+  year: "numeric",
+  month: "long",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  timeZoneName: "short",
+}
+
+/** Format an API instant in the signed-in user’s saved timezone. */
+function formatInstantInUserZone(iso: string, timeZone: string): string {
+  const out = formatIsoInUserTimeZone(iso, timeZone, SUBSCRIPTION_DATE_TIME_OPTS)
+  return out === "—" ? iso : out
+}
+
+/** Same as above when the instant may be missing (e.g. Stripe did not send period end). */
+function formatBillingPeriodEnd(iso: string | null | undefined, timeZone: string): string {
+  if (iso == null || iso === "") return "the end of your billing period"
+  return formatInstantInUserZone(iso, timeZone)
 }
 
 export default function ManageSubscriptionPage() {
   const router = useRouter()
   const { session, user, activeMembership } = useAuth()
   const isOwner = activeMembership?.role === "company_owner"
-  const userTimeZone = user?.timezone ?? DEFAULT_USER_TIMEZONE
+  const userTimeZone = resolveUserIanaZone(user?.timezone)
+
   const [sub, setSub] = useState<SubscriptionResponse | null>(null)
   const [pageLoading, setPageLoading] = useState(true)
-  const [billing, setBilling] = useState<BillingInterval>("monthly")
   const [portalLoading, setPortalLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [syncLoading, setSyncLoading] = useState(false)
@@ -60,9 +87,6 @@ export default function ManageSubscriptionPage() {
     try {
       const data = await fetchSubscription(session.access_token)
       setSub(data)
-      if (data.billing_interval === "monthly" || data.billing_interval === "yearly") {
-        setBilling(data.billing_interval)
-      }
     } catch (err) {
       setError(extractErrorMessage(err, "Failed to load subscription details."))
     } finally {
@@ -111,11 +135,17 @@ export default function ManageSubscriptionPage() {
     }
   }
 
-  const isYearly = billing === "yearly"
-  const displayPerLocation = isYearly ? LOCATION_PRICE_YEARLY_MONTHLY_EQUIV : LOCATION_PRICE_MONTHLY
+  const locationCount = sub?.location_count ?? null
+  const isMonthly = sub?.billing_interval === "monthly"
+  const isYearly = sub?.billing_interval === "yearly"
+
+  const monthlyTotal = locationCount != null ? locationCount * LOCATION_PRICE_MONTHLY : null
+  const yearlyTotal = locationCount != null ? locationCount * LOCATION_PRICE_YEARLY_TOTAL : null
+  const annualSavings = locationCount != null ? locationCount * (LOCATION_PRICE_MONTHLY * 12 - LOCATION_PRICE_YEARLY_TOTAL) : null
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8">
+      {/* Page header */}
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-zinc-900">Manage Subscription</h1>
@@ -124,52 +154,46 @@ export default function ManageSubscriptionPage() {
           </p>
         </div>
         {isOwner && (
-          <Button variant="outline" onClick={handleOpenPortal} disabled={portalLoading} className="shrink-0">
-            {portalLoading ? "Redirecting…" : "Manage payment methods & invoices"}
+          <Button variant="outline" onClick={handleOpenPortal} disabled={portalLoading} className="shrink-0 text-sm">
+            {portalLoading ? "Redirecting…" : "Invoices & payment"}
           </Button>
         )}
       </div>
 
+      {/* Non-owner notice */}
       {!isOwner && (
         <div className="mb-5 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-600">
           Only the company owner can manage billing.
         </div>
       )}
 
+      {/* Cancellation warning */}
       {sub?.cancel_at_period_end && (
         <div className="mb-5 flex items-center justify-between gap-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
           <p className="text-sm text-amber-800">
-            Your subscription is set to cancel on{" "}
+            Your subscription cancels on{" "}
             <span className="font-medium">
-              {formatSubscriptionEndDateTime(sub.current_period_end ?? null, userTimeZone)}
+              {formatBillingPeriodEnd(sub.current_period_end, userTimeZone)}
             </span>
             . Open the portal to reactivate.
           </p>
-          <Button
-            variant="outline"
-            onClick={handleOpenPortal}
-            disabled={portalLoading}
-            className="shrink-0 px-3 py-1.5 text-xs"
-          >
-            Open portal
+          <Button variant="outline" onClick={handleOpenPortal} disabled={portalLoading} className="shrink-0 px-3 py-1.5 text-xs">
+            Reactivate
           </Button>
         </div>
       )}
 
+      {/* Error */}
       {error && (
         <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
         </div>
       )}
 
+      {/* Sync check */}
       {isOwner && (
-        <div className="mb-5">
-          <Button
-            variant="outline"
-            onClick={handleSyncCheck}
-            disabled={syncLoading}
-            className="text-sm"
-          >
+        <div className="mb-6">
+          <Button variant="outline" onClick={handleSyncCheck} disabled={syncLoading} className="text-sm">
             {syncLoading ? "Checking…" : "Already paid? Check subscription status"}
           </Button>
           {syncMessage && (
@@ -185,38 +209,135 @@ export default function ManageSubscriptionPage() {
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-violet-600 border-t-transparent" />
         </div>
       ) : (
-        <div className="relative bg-white rounded-2xl border border-zinc-200 shadow-xl overflow-hidden">
-          <div className="h-1 w-full bg-gradient-to-r from-violet-500 to-violet-400" />
-          <div className="p-8 flex flex-col items-center text-center">
+        <div className="space-y-4">
 
-            <div className="text-xl font-extrabold text-zinc-900 mb-1">Simple Per-location Pricing</div>
-            <p className="text-sm text-zinc-500 mb-6">Scale up or down as your business grows</p>
-
-            <BillingToggle value={billing} onChange={setBilling} />
-
-            <div className="mb-2 mt-2">
-              <div className="flex items-end justify-center gap-1.5">
-                <span className="text-7xl font-extrabold leading-none text-zinc-900">${displayPerLocation}</span>
-                <div className="mb-2 text-zinc-400 text-sm leading-snug text-left">
-                  <div>per location</div>
-                  <div>/ month</div>
-                </div>
+          {/* Current plan card */}
+          <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm overflow-hidden">
+            <div className="h-1 w-full bg-gradient-to-r from-violet-500 to-violet-400" />
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <p className="text-xs font-bold uppercase tracking-widest text-zinc-400">Current plan</p>
+                {sub?.status && <StatusBadge status={sub.status} />}
               </div>
-              {isYearly ? (
-                <p className="text-sm text-zinc-500 mt-2">
-                  Billed annually (${LOCATION_PRICE_YEARLY_TOTAL} per location / year)
+
+              <div className="flex items-end gap-6">
+                {/* Location count */}
+                <div className="flex items-center gap-2">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-100">
+                    <MapPin className="h-5 w-5 text-violet-600" />
+                  </div>
+                  <div>
+                    <p className="text-2xl font-extrabold text-zinc-900 leading-none">
+                      {locationCount ?? "—"}
+                    </p>
+                    <p className="text-xs text-zinc-500 mt-0.5">
+                      {locationCount === 1 ? "location" : "locations"}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Billing details */}
+                {(isMonthly || isYearly) && monthlyTotal != null && yearlyTotal != null && (
+                  <div className="border-l border-zinc-100 pl-6">
+                    {isMonthly ? (
+                      <div>
+                        <p className="text-2xl font-extrabold text-zinc-900 leading-none">
+                          ${monthlyTotal}<span className="text-base font-medium text-zinc-400">/mo</span>
+                        </p>
+                        <p className="text-xs text-zinc-500 mt-0.5">
+                          ${LOCATION_PRICE_MONTHLY} per location · billed monthly
+                        </p>
+                      </div>
+                    ) : (
+                      <div>
+                        <p className="text-2xl font-extrabold text-zinc-900 leading-none">
+                          ${yearlyTotal}<span className="text-base font-medium text-zinc-400">/yr</span>
+                        </p>
+                        <p className="text-xs text-zinc-500 mt-0.5">
+                          ${LOCATION_PRICE_YEARLY_TOTAL} per location · billed annually
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Trial end notice */}
+              {sub?.status === "trialing" && sub.trial_end && (
+                <p className="mt-4 text-sm text-violet-700 bg-violet-50 rounded-lg px-3 py-2">
+                  Your free trial ends on{" "}
+                  <span className="font-medium">{formatInstantInUserZone(sub.trial_end, userTimeZone)}</span>.
                 </p>
-              ) : (
-                <p className="text-sm text-zinc-500 mt-2">Billed monthly — switch to yearly to save 20%</p>
               )}
             </div>
+          </div>
 
-            <div className="my-8 h-px bg-zinc-100 w-full" />
+          {/* CTA: Add more locations */}
+          {isOwner && (
+            <div className="rounded-2xl border border-zinc-200 bg-white p-5 flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-semibold text-zinc-900">Need more locations?</p>
+                <p className="text-sm text-zinc-500 mt-0.5">
+                  Add locations to your plan and only pay for what you need.
+                  {locationCount != null && isMonthly && (
+                    <span className="text-zinc-400"> Each additional location is ${LOCATION_PRICE_MONTHLY}/month.</span>
+                  )}
+                  {locationCount != null && isYearly && (
+                    <span className="text-zinc-400"> Each additional location is ${LOCATION_PRICE_YEARLY_MONTHLY_EQUIV}/month (billed annually).</span>
+                  )}
+                </p>
+              </div>
+              <Button onClick={handleOpenPortal} disabled={portalLoading} className="shrink-0 bg-violet-600 hover:bg-violet-700 text-white gap-1.5">
+                {portalLoading ? "Redirecting…" : (
+                  <>Add locations <ArrowRight className="h-3.5 w-3.5" /></>
+                )}
+              </Button>
+            </div>
+          )}
 
-            <p className="text-xs font-bold tracking-widest uppercase text-zinc-400 mb-5">Everything included</p>
-            <ul className="grid sm:grid-cols-2 gap-x-10 gap-y-3.5 text-left w-full mb-8">
+          {/* CTA: Switch to yearly (only when on monthly) */}
+          {isOwner && isMonthly && annualSavings != null && annualSavings > 0 && (
+            <div className="rounded-2xl border border-violet-200 bg-violet-50 p-5 flex items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-1.5 mb-1">
+                  <Zap className="h-3.5 w-3.5 text-violet-600" />
+                  <p className="text-sm font-semibold text-violet-900">Save ${annualSavings}/year with annual billing</p>
+                </div>
+                <p className="text-sm text-violet-700">
+                  Switch to yearly and pay ${LOCATION_PRICE_YEARLY_MONTHLY_EQUIV}/location/month — 20% less than monthly.
+                </p>
+              </div>
+              <Button onClick={handleOpenPortal} disabled={portalLoading} variant="outline" className="shrink-0 border-violet-300 text-violet-700 hover:bg-violet-100 gap-1.5">
+                {portalLoading ? "Redirecting…" : (
+                  <>Switch to yearly <ArrowRight className="h-3.5 w-3.5" /></>
+                )}
+              </Button>
+            </div>
+          )}
+
+          {/* CTA: Switch to monthly (only when on yearly, softer) */}
+          {isOwner && isYearly && (
+            <div className="rounded-2xl border border-zinc-200 bg-white p-5 flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-semibold text-zinc-900">Want to switch to monthly?</p>
+                <p className="text-sm text-zinc-500 mt-0.5">
+                  Monthly billing gives you more flexibility at ${LOCATION_PRICE_MONTHLY}/location/month.
+                </p>
+              </div>
+              <Button onClick={handleOpenPortal} disabled={portalLoading} variant="outline" className="shrink-0 gap-1.5">
+                {portalLoading ? "Redirecting…" : (
+                  <>Switch to monthly <ArrowRight className="h-3.5 w-3.5" /></>
+                )}
+              </Button>
+            </div>
+          )}
+
+          {/* Features */}
+          <div className="rounded-2xl border border-zinc-200 bg-white p-6">
+            <p className="text-xs font-bold uppercase tracking-widest text-zinc-400 mb-4">Everything included</p>
+            <ul className="grid sm:grid-cols-2 gap-x-8 gap-y-3">
               {LOCATION_FEATURES.map((feature) => (
-                <li key={feature} className="flex items-start gap-3 text-sm text-zinc-700">
+                <li key={feature} className="flex items-start gap-2.5 text-sm text-zinc-700">
                   <span className="mt-0.5 shrink-0 flex items-center justify-center w-4 h-4 rounded-full bg-violet-100">
                     <Check className="w-2.5 h-2.5 text-violet-600 stroke-[3]" />
                   </span>
@@ -224,24 +345,8 @@ export default function ManageSubscriptionPage() {
                 </li>
               ))}
             </ul>
-
-            <div className="mb-8 h-px bg-zinc-100 w-full" />
-
-            {isOwner && (
-              <Button
-                onClick={handleOpenPortal}
-                disabled={portalLoading}
-                variant="outline"
-                className="w-full max-w-sm"
-              >
-                {portalLoading ? "Redirecting…" : "Manage subscription"}
-              </Button>
-            )}
-
-            <p className="text-xs text-zinc-400 mt-3">
-              To add or remove locations, open the billing portal.
-            </p>
           </div>
+
         </div>
       )}
     </div>

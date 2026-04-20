@@ -13,9 +13,12 @@ import {
   Copy,
   Globe,
   Archive,
+  ArchiveRestore,
+  ChevronDown,
   MoreHorizontal,
   CheckCircle2,
   Clock,
+  Trash2,
   XCircle,
   X,
 } from "lucide-react"
@@ -28,12 +31,16 @@ import {
   isStaleObjectError,
   publishSurvey,
   archiveSurvey,
+  deleteArchivedSurvey,
   unpublishSurvey,
   unarchiveSurvey,
   duplicateSurvey,
   updateSurveyMeta,
   type SurveyListItem,
 } from "@/lib/api/client"
+import { formatIsoInUserTimeZone } from "@/lib/datetime/formatInUserTz"
+import { DEFAULT_USER_TIMEZONE } from "@/lib/timezone/australia"
+import { useAuth } from "@/contexts/AuthContext"
 import { surveyFromApi } from "@/lib/survey/richText"
 import type { Survey } from "@/lib/survey/types"
 import { SurveyPreviewViewport } from "@/components/survey/SurveyPreviewViewport"
@@ -83,7 +90,6 @@ function ActionsMenu({
   onRename,
   onConfirmUnpublish,
   onConfirmArchive,
-  onConfirmUnarchive,
 }: {
   survey: SurveyListItem
   onPreview: (survey: SurveyListItem) => void
@@ -92,7 +98,6 @@ function ActionsMenu({
   onRename: (survey: SurveyListItem) => void
   onConfirmUnpublish: (id: string) => Promise<void>
   onConfirmArchive: (id: string) => Promise<void>
-  onConfirmUnarchive: (id: string) => Promise<void>
 }) {
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState({ top: 0, right: 0 })
@@ -204,17 +209,6 @@ function ActionsMenu({
                 <Globe className="h-4 w-4" /> Unpublish
               </button>
             )}
-            {survey.status === "archived" && (
-              <button
-                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-50"
-                onClick={async () => {
-                  setOpen(false)
-                  await onConfirmUnarchive(survey.id)
-                }}
-              >
-                <Archive className="h-4 w-4" /> Unarchive
-              </button>
-            )}
             {survey.status === "draft" && (
               <button
                 className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50"
@@ -235,6 +229,8 @@ function ActionsMenu({
 }
 
 export default function SurveysListPage() {
+  const { user } = useAuth()
+  const userTimeZone = user?.timezone ?? DEFAULT_USER_TIMEZONE
   const { refreshBrokenFlowCount } = useBrokenFlows()
   const { refreshBrokenRuleCount } = useBrokenRules()
   const { refreshSubmissionBlockedQrCount } = useQRSubmissionBlocked()
@@ -258,6 +254,8 @@ export default function SurveysListPage() {
   const [previewSurvey, setPreviewSurvey] = useState<Survey | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewError, setPreviewError] = useState<string | null>(null)
+
+  const [archivedOpen, setArchivedOpen] = useState(false)
 
   const { confirm, ConfirmDialogRender } = useConfirm()
 
@@ -404,21 +402,23 @@ export default function SurveysListPage() {
   async function handleConfirmArchive(id: string) {
     const ok = await confirm({
       title: "Archive survey",
-      message: "Archive this survey? You can restore it later.",
+      message:
+        "This survey will stop accepting responses immediately. All associated QR codes will be archived.\n\nYou can unarchive this survey later, but QR codes will remain archived and must be restored individually.",
       confirmLabel: "Archive",
       cancelLabel: "Cancel",
-      variant: "danger",
+      variant: "warning",
     })
     if (ok) await handleArchive(id)
   }
 
   async function handleConfirmUnpublish(id: string) {
     const ok = await confirm({
-      title: "Unpublish Survey",
-      message: "Are you sure you want to unpublish this survey? This will:\n- Make the survey inaccessible to respondents\n- Deactivate all QR codes associated with this survey\n- Disable any flows for this survey\nAre you sure you want to continue?",
+      title: "Unpublish survey",
+      message:
+        "This survey will stop accepting new responses. All linked QR codes will be deactivated and flows will no longer trigger until the survey is republished.\n\nYour existing response data is preserved. The survey returns to draft.",
       confirmLabel: "Unpublish",
       cancelLabel: "Cancel",
-      variant: "danger",
+      variant: "warning",
     })
     if (ok) await handleUnpublish(id)
   }
@@ -426,11 +426,38 @@ export default function SurveysListPage() {
   async function handleConfirmUnarchive(id: string) {
     const ok = await confirm({
       title: "Unarchive survey",
-      message: "Restore this survey to draft? You can edit and publish it again.",
+      message:
+        "This survey will be restored as a draft. It will not go live until you publish it again.\n\nQR codes archived alongside this survey are not automatically restored — unarchive them individually if needed.",
       confirmLabel: "Unarchive",
       cancelLabel: "Cancel",
     })
     if (ok) await handleUnarchive(id)
+  }
+
+  async function handleDeleteArchived(survey: SurveyListItem) {
+    const ok = await confirm({
+      title: "Delete survey permanently",
+      message:
+        "This cannot be undone. All rules and flows for this survey will also be permanently deleted.\n\nDeletion is only possible if the survey has no responses, QR codes, or scan history.",
+      confirmLabel: "Delete permanently",
+      cancelLabel: "Cancel",
+      variant: "danger",
+    })
+    if (!ok) return
+    const token = await getToken()
+    if (!token) return
+    try {
+      await deleteArchivedSurvey(token, survey.id, survey.updated_at)
+      setSurveys((prev) => prev.filter((s) => s.id !== survey.id))
+      refreshFlowAndRuleWarnings()
+    } catch (err) {
+      if (isStaleObjectError(err)) {
+        await load()
+        setError("This survey was updated. Please try again.")
+      } else {
+        setError(extractErrorMessage(err, "Failed to delete survey"))
+      }
+    }
   }
 
   async function openSurveyPreview(s: SurveyListItem) {
@@ -512,7 +539,10 @@ export default function SurveysListPage() {
   const [sortKey, setSortKey] = useState<SortKey>("updated_at")
   const [sortDir, setSortDir] = useState<SortDir>("desc")
 
-  const sortedSurveys = [...surveys].sort((a, b) => {
+  const mainSurveys = surveys.filter((s) => s.status !== "archived")
+  const archivedSurveys = surveys.filter((s) => s.status === "archived")
+
+  const sortedMainSurveys = [...mainSurveys].sort((a, b) => {
     let cmp = 0
     switch (sortKey) {
       case "title":
@@ -611,7 +641,6 @@ export default function SurveysListPage() {
           onRename={openTitleModal}
           onConfirmUnpublish={handleConfirmUnpublish}
           onConfirmArchive={handleConfirmArchive}
-          onConfirmUnarchive={handleConfirmUnarchive}
         />
       ),
     },
@@ -682,16 +711,102 @@ export default function SurveysListPage() {
         </div>
       )}
 
-      {/* Survey list */}
+      {/* Survey list + archived */}
       {!loading && surveys.length > 0 && (
-        <DataTable<SurveyListItem>
-          data={sortedSurveys}
-          columns={columns}
-          getRowKey={(s) => s.id}
-          sortKey={sortKey}
-          sortDir={sortDir}
-          onSort={(key) => toggleSort(key as SortKey)}
-        />
+        <div className="space-y-4">
+          {mainSurveys.length === 0 ? (
+            <div className="rounded-xl border border-zinc-200 bg-white px-4 py-8 text-center text-sm text-zinc-600">
+              No draft or active surveys. Archived surveys are below.
+            </div>
+          ) : (
+            <DataTable<SurveyListItem>
+              data={sortedMainSurveys}
+              columns={columns}
+              getRowKey={(s) => s.id}
+              sortKey={sortKey}
+              sortDir={sortDir}
+              onSort={(key) => toggleSort(key as SortKey)}
+            />
+          )}
+
+          <details
+            className="group rounded-xl border border-zinc-200 bg-zinc-50/50"
+            open={archivedOpen}
+            onToggle={(e) => setArchivedOpen(e.currentTarget.open)}
+          >
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-sm font-medium text-zinc-700 [&::-webkit-details-marker]:hidden">
+              <span className="flex items-center gap-2">
+                <ChevronDown className="h-4 w-4 shrink-0 text-zinc-400 transition-transform group-open:rotate-180" />
+                Archived surveys
+              </span>
+            </summary>
+            <div className="border-t border-zinc-200 px-2 pb-4 pt-2">
+              {archivedSurveys.length === 0 ? (
+                <p className="px-2 py-6 text-center text-sm text-zinc-500">No archived surveys</p>
+              ) : (
+                <DataTable<SurveyListItem>
+                  data={[...archivedSurveys].sort((a, b) => a.title.localeCompare(b.title))}
+                  columns={[
+                    {
+                      key: "title",
+                      label: "Title",
+                      sortable: false,
+                      align: "left",
+                      render: (s) => (
+                        <Link
+                          href={`/dashboard/surveys/${s.id}`}
+                          className="break-words font-medium text-zinc-900 hover:text-violet-700 hover:underline"
+                        >
+                          {s.title}
+                        </Link>
+                      ),
+                    },
+                    {
+                      key: "archived_at",
+                      label: "Archived at",
+                      sortable: false,
+                      align: "center",
+                      render: (s) => (
+                        <span className="text-sm text-zinc-600">
+                          {formatIsoInUserTimeZone(s.archived_at ?? "", userTimeZone)}
+                        </span>
+                      ),
+                    },
+                    {
+                      key: "actions",
+                      label: "Actions",
+                      sortable: false,
+                      align: "center",
+                      render: (s) => (
+                        <div className="flex flex-wrap items-center justify-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => void handleConfirmUnarchive(s.id)}
+                            className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-sm text-violet-700 hover:bg-violet-50"
+                            title="Unarchive survey"
+                          >
+                            <ArchiveRestore className="h-3.5 w-3.5" />
+                            Unarchive
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleDeleteArchived(s)}
+                            className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-sm text-red-700 hover:bg-red-50"
+                            title="Delete survey permanently"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Delete
+                          </button>
+                        </div>
+                      ),
+                    },
+                  ]}
+                  getRowKey={(s) => s.id}
+                />
+              )}
+            </div>
+          </details>
+        </div>
       )}
 
       {/* Create modal */}

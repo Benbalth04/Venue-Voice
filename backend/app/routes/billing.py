@@ -52,6 +52,7 @@ def _build_subscription_response(sub: Subscription, user_tz: ZoneInfo) -> dict:
         billing_interval=sub.billing_interval,
         cancel_at_period_end=sub.cancel_at_period_end,
         price_id=sub.price_id,
+        location_count=sub.location_count,
         is_active=is_subscription_active(sub),
     )
 

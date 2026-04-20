@@ -161,6 +161,7 @@ export interface FilterState {
   timePreset: TimePreset;
   dateStart: Date | null;
   dateEnd: Date | null;
+  includeArchived: boolean;
 }
 
 export interface DashboardAPIParams {
@@ -168,6 +169,7 @@ export interface DashboardAPIParams {
   qr_code_ids?: string[];
   date_start?: string;
   date_end?: string;
+  include_archived?: boolean;
 }
 
 // Config shape for multiple_choice / checkbox options

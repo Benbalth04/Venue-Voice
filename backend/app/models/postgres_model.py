@@ -101,6 +101,7 @@ class Subscription(Base):
     billing_interval: Mapped[str | None] = mapped_column(Text, nullable=True)
     cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     price_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    location_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -164,6 +165,7 @@ class Location(SoftDeleteMixin, Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
     company = relationship("Company", back_populates="locations")
     location_surveys = relationship("LocationSurvey", back_populates="location")
@@ -228,6 +230,7 @@ class Survey(SoftDeleteMixin, Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
     company = relationship("Company", back_populates="surveys")
     location_surveys = relationship("LocationSurvey", back_populates="survey")
@@ -465,6 +468,7 @@ class QRCode(SoftDeleteMixin, Base):
     color: Mapped[str] = mapped_column(String(7), nullable=False, default="#000000", server_default="#000000")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
     # Relationships
     location_survey: Mapped["LocationSurvey"] = relationship(

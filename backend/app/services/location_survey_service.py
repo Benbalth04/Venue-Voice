@@ -34,6 +34,8 @@ def derive_location_survey_status(location_survey, location, survey, now: dateti
 
     if location is None or getattr(location, "deleted_at", None) is not None:
         return "inactive"
+    if getattr(location, "archived_at", None) is not None:
+        return "inactive"
     if not getattr(location, "is_active", False):
         return "inactive"
 
@@ -56,9 +58,11 @@ def derive_location_survey_status(location_survey, location, survey, now: dateti
 
 
 def derive_qr_code_status(qr) -> str:
-    """Return one of: active, inactive, deleted (QR only; not tied to location_survey flags)."""
+    """Return one of: active, inactive, archived, deleted (QR only; not tied to location_survey flags)."""
     if getattr(qr, "deleted_at", None) is not None:
         return "deleted"
+    if getattr(qr, "archived_at", None) is not None:
+        return "archived"
     if not getattr(qr, "is_active", False):
         return "inactive"
     return "active"
@@ -76,6 +80,7 @@ def get_company_submission_blocked_active_qr_count(db: Session, company_id: uuid
         .filter(
             QRCodeORM.company_id == company_id,
             QRCodeORM.deleted_at.is_(None),
+            QRCodeORM.archived_at.is_(None),
             QRCodeORM.is_active.is_(True),
         )
         .all()
@@ -92,6 +97,8 @@ def get_company_submission_blocked_active_qr_count(db: Session, company_id: uuid
 
 def validate_qr_scan_access(qr, now: datetime):
     if getattr(qr, "deleted_at", None) is not None:
+        raise ValidationError(code="QR_CODE_INACTIVE", message="QR code is inactive")
+    if getattr(qr, "archived_at", None) is not None:
         raise ValidationError(code="QR_CODE_INACTIVE", message="QR code is inactive")
     if not getattr(qr, "is_active", False):
         raise ValidationError(code="QR_CODE_INACTIVE", message="QR code is inactive")
@@ -113,7 +120,12 @@ def validate_qr_scan_access(qr, now: datetime):
         )
 
     location = getattr(location_survey, "location", None)
-    if location is None or getattr(location, "deleted_at", None) is not None or not getattr(location, "is_active", False):
+    if (
+        location is None
+        or getattr(location, "deleted_at", None) is not None
+        or getattr(location, "archived_at", None) is not None
+        or not getattr(location, "is_active", False)
+    ):
         raise ValidationError(
             code="LOCATION_INACTIVE",
             message="This location is not active",

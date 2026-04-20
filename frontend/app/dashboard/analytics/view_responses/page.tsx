@@ -49,6 +49,7 @@ import { DataTable } from "@/components/ui/DataTable"
 import { DeleteResponseDialog } from "@/components/ui/DeleteResponseDialog"
 import { DatePicker } from "@/components/ui/DatePicker"
 import { SingleSelectDropdown } from "@/components/ui/DropdownSelect"
+import { ArchivedDataSwitch } from "@/components/ui/VioletSwitch"
 import { useUnreadResponses } from "@/components/layout/UnreadResponsesContext"
 import { useAuth } from "@/contexts/AuthContext"
 import { formatIsoInUserTimeZone } from "@/lib/datetime/formatInUserTz"
@@ -128,11 +129,13 @@ const DEFAULT_FILTERS: FiltersState = {
 
 function ReviewModal({
   responseId,
+  isArchived,
   onClose,
   onMarkRead,
   onRequestDelete,
 }: {
   responseId: string
+  isArchived?: boolean
   onClose: () => void
   onMarkRead?: (id: string) => void
   onRequestDelete?: () => void
@@ -225,9 +228,19 @@ function ReviewModal({
         <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4 sm:px-8">
           <div>
             <p className="text-xs text-zinc-500 uppercase tracking-wide">Response Review</p>
-            <h2 className="text-base font-semibold text-zinc-900">
-              {surveyName || "Survey Response"}
-            </h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-semibold text-zinc-900">
+                {surveyName || "Survey Response"}
+              </h2>
+              {isArchived && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 shrink-0" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+                    <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                  </svg>
+                  Archived
+                </span>
+              )}
+            </div>
           </div>
           <button
             type="button"
@@ -657,7 +670,9 @@ export default function AnalyticsPage() {
   const [filtersError, setFiltersError] = useState<string | null>(null)
 
   const [reviewId, setReviewId] = useState<string | null>(null)
+  const [reviewIsArchived, setReviewIsArchived] = useState(false)
   const [deleteId, setDeleteId] = useState<string | null>(null)
+  const [includeArchived, setIncludeArchived] = useState(false)
 
   const abortRef = useRef<AbortController | null>(null)
 
@@ -665,9 +680,11 @@ export default function AnalyticsPage() {
   const filtersRef = useRef(filters)
   const advFilterRef = useRef(advFilter)
   const pageRef = useRef(page)
+  const includeArchivedRef = useRef(includeArchived)
   filtersRef.current = filters
   advFilterRef.current = advFilter
   pageRef.current = page
+  includeArchivedRef.current = includeArchived
 
   // Load filter options once
   useEffect(() => {
@@ -712,6 +729,7 @@ export default function AnalyticsPage() {
     if (f.completed !== "") apiFilters.completed = f.completed === "true"
     if (f.date_start) apiFilters.date_start = f.date_start
     if (f.date_end) apiFilters.date_end = f.date_end
+    if (includeArchivedRef.current) apiFilters.include_archived = true
     try {
       const data = await fetchAnalyticsResponses(
         token,
@@ -726,7 +744,6 @@ export default function AnalyticsPage() {
     } finally {
       setLoading(false)
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Initial load only — loadData is stable so this fires exactly once
@@ -739,6 +756,8 @@ export default function AnalyticsPage() {
 
   function handleResetFilters() {
     setPage(1)
+    setIncludeArchived(false)
+    includeArchivedRef.current = false
     setFilters(DEFAULT_FILTERS)
     filtersRef.current = DEFAULT_FILTERS
     loadData(1)
@@ -801,7 +820,17 @@ export default function AnalyticsPage() {
       />
 
       {/* Get Results */}
-      <div className="flex justify-center">
+      <div className="flex flex-col items-center justify-center gap-4 sm:flex-row sm:gap-8">
+        <ArchivedDataSwitch
+          checked={includeArchived}
+          onCheckedChange={(next) => {
+            setIncludeArchived(next)
+            includeArchivedRef.current = next
+            setPage(1)
+            loadData(1)
+          }}
+          disabled={loading}
+        />
         <button
           type="button"
           onClick={handleGetResults}
@@ -811,6 +840,16 @@ export default function AnalyticsPage() {
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Get Results"}
         </button>
       </div>
+
+      {/* Archived data banner */}
+      {includeArchived && (
+        <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-700">
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+          </svg>
+          Results include data from archived surveys, locations, or QR codes.
+        </div>
+      )}
 
       {/* Summary bar */}
       <div className="flex items-center justify-between text-sm text-zinc-500">
@@ -843,7 +882,19 @@ export default function AnalyticsPage() {
             headerClassName: "w-3",
             cellClassName: "w-3 px-2",
             render: (row) =>
-              row.completed && row.unread ? (
+              row.is_archived ? (
+                <span title="From archived survey or QR code">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-4 w-4 shrink-0 text-amber-500"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    aria-label="Archived"
+                  >
+                    <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                  </svg>
+                </span>
+              ) : row.completed && row.unread ? (
                 <span
                   className="inline-block h-2.5 w-2.5 rounded-full bg-violet-500"
                   title="Unread"
@@ -927,7 +978,7 @@ export default function AnalyticsPage() {
               row.completed && row.response_id ? (
                 <button
                   type="button"
-                  onClick={() => setReviewId(row.response_id)}
+                  onClick={() => { setReviewId(row.response_id); setReviewIsArchived(row.is_archived ?? false) }}
                   className="rounded-lg border border-zinc-200 px-3 py-1 text-xs font-semibold text-zinc-700 hover:bg-violet-50 hover:border-violet-300 hover:text-violet-700"
                 >
                   Review
@@ -983,6 +1034,7 @@ export default function AnalyticsPage() {
       {reviewId && (
         <ReviewModal
           responseId={reviewId}
+          isArchived={reviewIsArchived}
           onClose={() => setReviewId(null)}
           onMarkRead={handleMarkResponseRead}
           onRequestDelete={() => { setDeleteId(reviewId); setReviewId(null) }}

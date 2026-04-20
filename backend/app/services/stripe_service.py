@@ -16,7 +16,6 @@ from ..core.config import settings
 from ..core.errors.exceptions import ExternalAPIError, NotFoundError, PermissionError, ValidationError
 from ..core.observability import track_external_call
 from ..models.postgres_model import Company, Subscription, User
-from ..services.billing.stripe_billing_display import plan_display_name_from_price
 
 logger = logging.getLogger(__name__)
 
@@ -368,12 +367,34 @@ def _price_from_stripe_subscription(stripe_sub: stripe.Subscription):
     return price
 
 
-def plan_display_name_from_price_id(price_id: str | None) -> str | None:
+def _quantity_from_stripe_subscription(stripe_sub: Any) -> int | None:
+    """Extract the quantity (location count) from the first line item."""
+    if isinstance(stripe_sub, dict):
+        items_raw = stripe_sub.get("items") or {}
+        data = items_raw.get("data") if isinstance(items_raw, dict) else []
+    else:
+        items = getattr(stripe_sub, "items", None)
+        if items is None:
+            return None
+        data = getattr(items, "data", None)
+        if data is None and hasattr(items, "get"):
+            data = items.get("data")
+    if not data:
+        return None
+    item = data[0]
+    qty = item.get("quantity") if isinstance(item, dict) else getattr(item, "quantity", None)
+    return int(qty) if qty is not None else None
+
+
+def plan_display_name_from_price_id(price_id: str | None, location_count: int | None = None) -> str | None:
     """Return the human-readable plan name for a Stripe price ID, or None.
 
-    Location-based pricing has no named plan tiers, so this always returns None.
-    Kept for compatibility with the webhook sync path.
+    For location-based pricing the display name is derived from the quantity
+    (e.g. "5 locations"). Returns None when location_count is unavailable.
     """
+    if location_count is not None:
+        label = "Location" if location_count == 1 else "Locations"
+        return f"{location_count} {label}"
     return None
 
 
@@ -392,24 +413,10 @@ def _price_id_from_price(price: Any) -> str | None:
 
 
 def _plan_display_name_from_stripe_subscription(stripe_sub: stripe.Subscription) -> str | None:
+    quantity = _quantity_from_stripe_subscription(stripe_sub)
     price = _price_from_stripe_subscription(stripe_sub)
-    if price is None:
-        return None
-    # Primary: look up our known price IDs via centralized map
-    price_id = _price_id_from_price(price)
-    name = plan_display_name_from_price_id(price_id)
-    if name:
-        return name
-    # Fallback: use Stripe price metadata (nickname / product name / price ID)
-    if isinstance(price, dict):
-        price_dict = price
-    else:
-        try:
-            price_dict = price.to_dict()
-        except Exception:
-            price_dict = {}
-    name = plan_display_name_from_price(price_dict)
-    return name if name else None
+    price_id = _price_id_from_price(price) if price is not None else None
+    return plan_display_name_from_price_id(price_id, location_count=quantity)
 
 
 def _billing_interval_from_stripe_subscription(stripe_sub: stripe.Subscription) -> str | None:
@@ -504,11 +511,12 @@ def sync_subscription_from_stripe_object(stripe_sub: stripe.Subscription, db: Se
 
     price = _price_from_stripe_subscription(stripe_sub)
     sub.price_id = _price_id_from_price(price) if price is not None else None
+    sub.location_count = _quantity_from_stripe_subscription(stripe_sub)
     sub.plan_display_name = _plan_display_name_from_stripe_subscription(stripe_sub)
     sub.billing_interval = _billing_interval_from_stripe_subscription(stripe_sub)
     logger.debug(
-        "Subscription price sync sub=%s price_id=%s plan=%s interval=%s",
-        sub_id, sub.price_id, sub.plan_display_name, sub.billing_interval,
+        "Subscription price sync sub=%s price_id=%s plan=%s interval=%s location_count=%s",
+        sub_id, sub.price_id, sub.plan_display_name, sub.billing_interval, sub.location_count,
     )
     sub.cancel_at_period_end = bool(getattr(stripe_sub, "cancel_at_period_end", False))
     sub.updated_at = datetime.utcnow()

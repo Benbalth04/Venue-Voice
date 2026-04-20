@@ -40,6 +40,7 @@ from ..models.postgres_model import (
     SurveyResponseAnswer as SurveyResponseAnswerORM,
     SurveyResponsePhoto as SurveyResponsePhotoORM,
     SurveySession as SurveySessionORM,
+    SurveyStatus,
     SurveyVersion as SurveyVersionORM,
 )
 from ..auth.viewer_scoping import survey_ids_subquery, location_ids_subquery, assert_survey_access
@@ -101,13 +102,14 @@ def get_unread_response_count(*, membership: MembershipORM, db: Session) -> int:
         )
         .filter(SurveyResponseORM.id.notin_(read_ids_subq))
     )
-    if survey_sq is not None or is_viewer:
-        q = q.join(SurveyVersionORM, SurveyVersionORM.id == SurveyResponseORM.survey_version_id)
-        if survey_sq is not None:
-            q = q.filter(SurveyVersionORM.survey_id.in_(survey_sq))
-        if is_viewer:
-            q = q.join(SurveyORM, SurveyORM.id == SurveyVersionORM.survey_id)
-            q = q.filter(SurveyORM.status == "active", SurveyORM.deleted_at.is_(None))
+    q = q.join(SurveyVersionORM, SurveyVersionORM.id == SurveyResponseORM.survey_version_id)
+    q = q.join(SurveyORM, SurveyORM.id == SurveyVersionORM.survey_id)
+    if survey_sq is not None:
+        q = q.filter(SurveyVersionORM.survey_id.in_(survey_sq))
+    if is_viewer:
+        q = q.filter(SurveyORM.status == "active", SurveyORM.deleted_at.is_(None))
+    else:
+        q = q.filter(SurveyORM.status != SurveyStatus.archived, SurveyORM.deleted_at.is_(None))
     unread_count = q.scalar()
     return int(unread_count or 0)
 
@@ -167,6 +169,8 @@ def get_new_responses_since(
 
     if membership.role == "viewer":
         q = q.filter(SurveyORM.status == "active")
+    else:
+        q = q.filter(SurveyORM.status != SurveyStatus.archived)
 
     rows = (
         q.order_by(SurveyResponseORM.completion_datetime.asc())
@@ -373,6 +377,7 @@ def get_analytics_responses(
     sort_direction: str = "desc",
     no_location: bool = False,
     advanced_filter: AdvancedFilterPayload | None = None,
+    include_archived: bool = False,
 ) -> AnalyticsResponseList:
     user_id = membership.user_id
 
@@ -434,6 +439,16 @@ def get_analytics_responses(
             SurveyResponseORM.id.label("response_id"),
             SurveyResponseORM.survey_version_id.label("survey_version_id"),
             func.coalesce(answer_count_sq.c.answer_count, 0).label("questions_answered"),
+            case(
+                (
+                    or_(
+                        SurveyORM.status == SurveyStatus.archived,
+                        QRCodeORM.archived_at.isnot(None),
+                    ),
+                    True,
+                ),
+                else_=False,
+            ).label("is_archived"),
         )
         .filter(SurveySessionORM.company_id == membership.company_id)
         .filter(
@@ -476,6 +491,15 @@ def get_analytics_responses(
         q = q.filter(SurveyORM.status == "active")
         q = q.outerjoin(LocationORM, LocationORM.id == LocationSnapshotORM.location_id)
         q = q.filter(or_(LocationSnapshotORM.location_id.is_(None), LocationORM.is_active == True))
+
+    if not include_archived:
+        if membership.role != "viewer":
+            q = q.outerjoin(LocationORM, LocationORM.id == LocationSnapshotORM.location_id)
+        q = q.filter(
+            QRCodeORM.archived_at.is_(None),
+            or_(LocationSnapshotORM.location_id.is_(None), LocationORM.archived_at.is_(None)),
+            SurveyORM.status != SurveyStatus.archived,
+        )
 
     # ------------------------------------------------------------------
     # Optional filters (all AND logic, all company-scoped already)
@@ -588,6 +612,7 @@ def get_analytics_responses(
             questions_answered=int(r.questions_answered or 0),
             survey_version_id=r.survey_version_id,
             unread=bool(r.completed and r.response_id is not None and r.response_id not in read_response_ids),
+            is_archived=bool(r.is_archived),
         )
         for r in rows
     ]
@@ -622,7 +647,7 @@ def get_analytics_filters(*, membership: MembershipORM, db: Session) -> Analytic
     is_viewer = membership.role == "viewer"
 
     survey_q = (
-        db.query(SurveyORM.id, SurveyORM.name)
+        db.query(SurveyORM.id, SurveyORM.name, SurveyORM.status)
         .filter(
             SurveyORM.company_id == membership.company_id,
             SurveyORM.deleted_at.is_(None),
@@ -632,13 +657,16 @@ def get_analytics_filters(*, membership: MembershipORM, db: Session) -> Analytic
         survey_q = survey_q.filter(SurveyORM.id.in_(survey_sq))
     if is_viewer:
         survey_q = survey_q.filter(SurveyORM.status == "active")
+    else:
+        survey_q = survey_q.filter(SurveyORM.status != SurveyStatus.archived)
     surveys = survey_q.order_by(SurveyORM.name).all()
 
     qr_codes = (
-        db.query(QRCodeORM.id, QRCodeORM.title)
+        db.query(QRCodeORM.id, QRCodeORM.title, QRCodeORM.archived_at)
         .filter(
             QRCodeORM.company_id == membership.company_id,
             QRCodeORM.deleted_at.is_(None),
+            QRCodeORM.archived_at.is_(None),
         )
         .order_by(QRCodeORM.title)
         .all()
@@ -649,6 +677,7 @@ def get_analytics_filters(*, membership: MembershipORM, db: Session) -> Analytic
         .filter(
             LocationORM.company_id == membership.company_id,
             LocationORM.deleted_at.is_(None),
+            LocationORM.archived_at.is_(None),
         )
     )
     if location_sq is not None:

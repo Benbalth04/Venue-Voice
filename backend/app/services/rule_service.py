@@ -641,17 +641,23 @@ def delete_rule(db: Session, survey_id: uuid.UUID, rule_id: uuid.UUID, updated_a
         )
         .all()
     )
+    offending_flows: dict[uuid.UUID, str] = {}
     for node in flow_nodes:
-        if node.rule_id == rule.id:
-            raise ConflictError(
-                code="RULE_IN_USE",
-                message="Cannot delete a rule that is being used by a flow.",
-            )
-        if node.node_type == "branch" and _rule_id_in_flow_branch_config(node.action_config, rule.id):
-            raise ConflictError(
-                code="RULE_IN_USE",
-                message="Cannot delete a rule that is being used by a flow",
-            )
+        uses_rule = node.rule_id == rule.id or (
+            node.node_type == "branch" and _rule_id_in_flow_branch_config(node.action_config, rule.id)
+        )
+        if uses_rule:
+            flow = db.query(FlowORM).filter(FlowORM.id == node.flow_id).first()
+            if flow and flow.id not in offending_flows:
+                offending_flows[flow.id] = flow.name
+
+    if offending_flows:
+        n = len(offending_flows)
+        raise ConflictError(
+            code="RULE_IN_USE",
+            message=f"This rule is used in {n} flow{'s' if n > 1 else ''}. Remove it from those flows before deleting.",
+            details={"flows": [{"id": str(fid), "name": name} for fid, name in offending_flows.items()]},
+        )
 
     from datetime import datetime
     now = datetime.now(timezone.utc).replace(tzinfo=None)

@@ -35,6 +35,7 @@ export function buildAPIParams(
     qr_code_ids: filters.qrCodeIds.length > 0 ? filters.qrCodeIds : undefined,
     date_start: formatCalendarDateInTimeZone(dates.dateStart, userTimeZone),
     date_end: formatCalendarDateInTimeZone(dates.dateEnd, userTimeZone),
+    include_archived: filters.includeArchived ? true : undefined,
   };
 }
 
@@ -69,6 +70,7 @@ export function useDashboardData(
         ds,
         de,
         userTimeZone,
+        filters.includeArchived,
       )
     : null;
 
@@ -110,7 +112,7 @@ export function useDashboardData(
       if (fetchKey.current === key) setIsLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keys capture filter inputs; `filters` is new ref each render from URL state
-  }, [surveyId, userTimeZone, cacheKey, locationIdsKey, qrCodeIdsKey, ds, de]);
+  }, [surveyId, userTimeZone, cacheKey, locationIdsKey, qrCodeIdsKey, ds, de, filters.includeArchived]);
 
   useEffect(() => {
     if (surveyId) fetch();
@@ -156,6 +158,7 @@ export function useOldQuestionsData(
       ds,
       de,
       userTimeZone,
+      filters.includeArchived,
     );
 
     const cached = getCache<OldQuestionsDashboardResponse>(cacheKey);
@@ -192,7 +195,7 @@ export function useOldQuestionsData(
         });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keys capture filter inputs; `filters` is new ref each render
-  }, [enabled, surveyId, userTimeZone, locationIdsKey, qrCodeIdsKey, ds, de]);
+  }, [enabled, surveyId, userTimeZone, locationIdsKey, qrCodeIdsKey, ds, de, filters.includeArchived]);
 
   return { data, isLoading, error };
 }

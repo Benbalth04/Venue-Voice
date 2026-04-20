@@ -227,6 +227,7 @@ def assign_notification_group_to_location(
             LocationORM.id == location_id,
             LocationORM.company_id == company_id,
             LocationORM.deleted_at.is_(None),
+            LocationORM.archived_at.is_(None),
         )
         .first()
     )
@@ -266,6 +267,7 @@ def sync_location_notification_groups(
             LocationORM.id == location_id,
             LocationORM.company_id == company_id,
             LocationORM.deleted_at.is_(None),
+            LocationORM.archived_at.is_(None),
         )
         .first()
     )

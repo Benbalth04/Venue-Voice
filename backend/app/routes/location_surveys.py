@@ -82,6 +82,7 @@ def list_location_surveys(
             LocationSurveyORM.deleted_at.is_(None),
             LocationORM.company_id == company.id,
             LocationORM.deleted_at.is_(None),
+            LocationORM.archived_at.is_(None),
             SurveyORM.company_id == company.id,
             SurveyORM.deleted_at.is_(None),
         )

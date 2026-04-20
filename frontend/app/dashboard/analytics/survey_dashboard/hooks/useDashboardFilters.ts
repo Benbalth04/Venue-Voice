@@ -35,6 +35,7 @@ export function useDashboardFilters(): {
     timePreset: (searchParams.get("preset") as TimePreset) || "30d",
     dateStart: searchParams.get("from") ? new Date(searchParams.get("from")!) : null,
     dateEnd: searchParams.get("to") ? new Date(searchParams.get("to")!) : null,
+    includeArchived: searchParams.get("archived") === "1",
   };
 
   // Memoize resolved dates so the object reference is stable between renders.
@@ -59,6 +60,7 @@ export function useDashboardFilters(): {
         if (next.dateStart) params.set("from", next.dateStart.toISOString());
         if (next.dateEnd) params.set("to", next.dateEnd.toISOString());
       }
+      if (next.includeArchived) params.set("archived", "1");
       router.replace(`${pathname}?${params.toString()}`);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
