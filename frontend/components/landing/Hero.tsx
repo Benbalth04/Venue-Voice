@@ -156,7 +156,7 @@ export default function Hero() {
             className="text-xl sm:text-2xl text-zinc-600 leading-relaxed max-w-3xl mx-auto"
             style={{ fontFamily: 'var(--font-manrope)' }}
           >
-            Venue Voice helps single or multi-location businesses easily capture, process and action customer feedback using AI analysis and automations.
+            Venue Voice helps multi-location businesses easily capture, process and action customer feedback using AI analysis and automations.
           </motion.p>
 
           {/* CTAs */}

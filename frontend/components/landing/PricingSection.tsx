@@ -2,28 +2,32 @@
 
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { CheckCircle2, ArrowRight } from 'lucide-react'
-import { SUBSCRIBE_PLANS } from '@/lib/subscription/plans'
+import { Check } from 'lucide-react'
 
 type BillingInterval = 'monthly' | 'yearly'
 
-const containerVariants = {
-  hidden: {},
-  show: { transition: { staggerChildren: 0.1, delayChildren: 0.05 } },
-}
-
-const cardVariant = {
-  hidden: { opacity: 0, y: 28 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.6, ease: [0.16, 1, 0.3, 1] as [number, number, number, number] } },
-}
+const FEATURES = [
+  'Capture real-time feedback from every customer',
+  'Quickly identify underperforming locations',
+  'Turn happy customers into 5-star Google reviews',
+  'Spot recurring issues before they impact revenue',
+  'Compare performance across all your venues',
+  'Get instant alerts when something goes wrong',
+  'Understand customer sentiment automatically with AI',
+  'Unlimited users across your company',
+]
 
 export default function PricingSection() {
-  const [billing, setBilling] = useState<BillingInterval>('monthly')
+  const [billing, setBilling] = useState<BillingInterval>('yearly')
+
+  const isYearly = billing === 'yearly'
+  const monthlyDisplay = isYearly ? '$8' : '$10'
+  const exampleCost = isYearly ? '$40/month' : '$50/month'
 
   return (
     <section
       id="pricing"
-      className="relative overflow-hidden py-28"
+      className="relative overflow-hidden pt-28 pb-12"
       style={{ background: 'linear-gradient(to bottom, #F4F4F5 0%, #F7F4FF 28%, #FAFAF9 62%, #F4F4F5 100%)' }}
     >
       {/* Ambient blobs */}
@@ -43,15 +47,8 @@ export default function PricingSection() {
           transform: 'translate(20%, 20%)',
         }}
       />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[550px] h-[550px] rounded-full"
-        style={{
-          background: 'radial-gradient(circle at 50% 50%, rgba(139,92,246,0.06) 0%, transparent 68%)',
-        }}
-      />
 
-      <div className="relative z-10 max-w-6xl mx-auto px-6">
+      <div className="relative z-10 max-w-5xl mx-auto px-6">
 
         {/* Header */}
         <motion.div
@@ -59,7 +56,7 @@ export default function PricingSection() {
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
           transition={{ duration: 0.6 }}
-          className="text-center mb-14"
+          className="text-center mb-12"
         >
           <span className="inline-block text-xs font-bold tracking-[0.18em] uppercase text-violet-600 bg-violet-50 px-3 py-1.5 rounded-full mb-4">
             Pricing
@@ -68,13 +65,13 @@ export default function PricingSection() {
             className="text-4xl lg:text-5xl font-extrabold text-zinc-900 leading-tight"
             style={{ fontFamily: 'var(--font-bricolage)' }}
           >
-            Simple, transparent pricing.
+            Understand and improve every location
           </h2>
           <p
-            className="mt-4 text-lg text-zinc-500 max-w-md mx-auto"
+            className="mt-4 text-lg text-zinc-500 max-w-xl mx-auto"
             style={{ fontFamily: 'var(--font-manrope)' }}
           >
-            Every plan includes a 7-day free trial. No charge until the trial ends.
+            Capture real-time customer feedback and compare performance across all your venues
           </p>
 
           {/* Billing toggle */}
@@ -107,123 +104,120 @@ export default function PricingSection() {
           </div>
         </motion.div>
 
-        {/* Plan cards */}
+        {/* Single pricing card */}
         <motion.div
-          variants={containerVariants}
-          initial="hidden"
-          whileInView="show"
+          initial={{ opacity: 0, y: 28 }}
+          whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: '-60px' }}
-          className="grid grid-cols-1 md:grid-cols-3 gap-6 items-stretch"
+          transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+          className="relative bg-white rounded-2xl border border-zinc-200 shadow-xl overflow-hidden"
         >
-          {SUBSCRIBE_PLANS.map((plan) => {
-            const isYearly = billing === 'yearly'
-            const displayPrice = isYearly ? plan.yearlyMonthlyEquiv : plan.monthlyPrice
+          {/* Top accent bar */}
+          <div className="h-1 w-full bg-gradient-to-r from-violet-500 to-violet-400" />
 
-            return (
-              <motion.div
-                key={plan.id}
-                variants={cardVariant}
-                className={`relative flex flex-col rounded-2xl p-7 bg-white transition-shadow duration-200 ${
-                  plan.popular
-                    ? 'border-2 border-violet-600 hover:shadow-lg'
-                    : 'border border-zinc-200 hover:shadow-lg'
-                }`}
-              >
-                {/* Most popular badge */}
-                {plan.popular && (
-                  <div className="absolute -top-3.5 left-1/2 -translate-x-1/2">
-                    <span className="inline-block text-xs font-bold tracking-wide text-white bg-zinc-900 px-3 py-1 rounded-full">
-                      Most Popular
-                    </span>
-                  </div>
-                )}
+          <div className="p-8 md:p-12 flex flex-col items-center text-center">
 
-                {/* Plan name & best for */}
-                <div className="mb-6">
-                  <div
-                    className="text-lg font-extrabold mb-1 text-zinc-900"
-                    style={{ fontFamily: 'var(--font-bricolage)' }}
-                  >
-                    {plan.name}
-                  </div>
-                  <div
-                    className="text-xs leading-relaxed text-zinc-500"
-                    style={{ fontFamily: 'var(--font-manrope)' }}
-                  >
-                    {plan.bestFor}
-                  </div>
-                </div>
+            {/* Price */}
+            <div
+              className="text-xl font-extrabold text-zinc-900 mb-1"
+              style={{ fontFamily: 'var(--font-bricolage)' }}
+            >
+              Per-location pricing
+            </div>
+            <p
+              className="text-sm text-zinc-500 mb-8"
+              style={{ fontFamily: 'var(--font-manrope)' }}
+            >
+              Scale up or down as your business grows
+            </p>
 
-                {/* Price */}
-                <div className="mb-2">
-                  <div className="flex items-end gap-1">
-                    <span
-                      className="text-5xl font-extrabold leading-none text-zinc-900"
-                      style={{ fontFamily: 'var(--font-bricolage)' }}
-                    >
-                      ${displayPrice}
-                    </span>
-                    <span
-                      className="text-sm mb-1.5 text-zinc-400"
-                      style={{ fontFamily: 'var(--font-manrope)' }}
-                    >
-                      /mo
-                    </span>
-                  </div>
-                  {isYearly && (
-                    <div
-                      className="text-xs mt-1 text-zinc-400"
-                      style={{ fontFamily: 'var(--font-manrope)' }}
-                    >
-                      ${plan.yearlyPrice}/year billed annually
-                    </div>
-                  )}
-                </div>
-
-                {/* Divider */}
-                <div className="my-5 h-px bg-zinc-100" />
-
-                {/* Features */}
-                <ul className="flex flex-col gap-3 flex-1 mb-7">
-                  {plan.features.map((feature) => (
-                    <li
-                      key={feature}
-                      className="flex items-start gap-2.5 text-sm text-zinc-600"
-                      style={{ fontFamily: 'var(--font-manrope)' }}
-                    >
-                      <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-violet-500" />
-                      {feature}
-                    </li>
-                  ))}
-                </ul>
-
-                {/* CTA */}
-                <motion.a
-                  href="/signup"
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  className="flex items-center justify-center gap-2 h-11 rounded-xl text-sm font-semibold transition-colors duration-200 bg-violet-600 text-white hover:bg-violet-700"
+            <div className="mb-2">
+              <div className="flex items-end justify-center gap-1.5">
+                <span
+                  className="text-7xl font-extrabold leading-none text-zinc-900"
+                  style={{ fontFamily: 'var(--font-bricolage)' }}
+                >
+                  {monthlyDisplay}
+                </span>
+                <div
+                  className="mb-2 text-zinc-400 text-sm leading-snug text-left"
                   style={{ fontFamily: 'var(--font-manrope)' }}
                 >
-                  Get started free
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </motion.a>
-              </motion.div>
-            )
-          })}
-        </motion.div>
+                  <div>per location</div>
+                  <div>/ month</div>
+                </div>
+              </div>
+              {isYearly ? (
+                <p
+                  className="text-sm text-zinc-500 mt-2"
+                  style={{ fontFamily: 'var(--font-manrope)' }}
+                >
+                  Billed annually ($96 per location / year)
+                </p>
+              ) : (
+                <p
+                  className="text-sm text-zinc-500 mt-2"
+                  style={{ fontFamily: 'var(--font-manrope)' }}
+                >
+                  Billed monthly — switch to yearly to save 20%
+                </p>
+              )}
+            </div>
 
-        {/* Bottom note */}
-        <motion.p
-          initial={{ opacity: 0 }}
-          whileInView={{ opacity: 1 }}
-          viewport={{ once: true }}
-          transition={{ delay: 0.4 }}
-          className="text-center text-xs text-zinc-400 mt-8"
-          style={{ fontFamily: 'var(--font-manrope)' }}
-        >
-          All plans include a 7-day free trial.
-        </motion.p>
+            <div className="mt-5 inline-flex items-center gap-2 bg-violet-50 text-violet-700 text-sm font-medium px-4 py-2.5 rounded-xl"
+              style={{ fontFamily: 'var(--font-manrope)' }}
+            >
+              <span className="opacity-60 text-xs">e.g.</span>
+              5 locations = {exampleCost}
+            </div>
+
+            {/* Divider */}
+            <div className="my-8 h-px bg-zinc-100 w-full" />
+
+            {/* Features */}
+            <p
+              className="text-xs font-bold tracking-widest uppercase text-zinc-400 mb-5"
+              style={{ fontFamily: 'var(--font-manrope)' }}
+            >
+              Everything included
+            </p>
+            <ul className="grid sm:grid-cols-2 gap-x-10 gap-y-3.5 text-left w-full mb-8">
+              {FEATURES.map((feature) => (
+                <li
+                  key={feature}
+                  className="flex items-start gap-3 text-sm text-zinc-700"
+                  style={{ fontFamily: 'var(--font-manrope)' }}
+                >
+                  <span className="mt-0.5 shrink-0 flex items-center justify-center w-4 h-4 rounded-full bg-violet-100">
+                    <Check className="w-2.5 h-2.5 text-violet-600 stroke-[3]" />
+                  </span>
+                  {feature}
+                </li>
+              ))}
+            </ul>
+
+            {/* Divider */}
+            <div className="mb-8 h-px bg-zinc-100 w-full" />
+
+            {/* CTA */}
+            <motion.a
+              href="/signup"
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              className="flex items-center justify-center h-12 w-full max-w-sm rounded-xl text-sm font-semibold bg-violet-600 text-white hover:bg-violet-700 transition-colors duration-200"
+              style={{ fontFamily: 'var(--font-manrope)' }}
+            >
+              Start capturing feedback
+            </motion.a>
+            <p
+              className="text-xs text-zinc-400 mt-3"
+              style={{ fontFamily: 'var(--font-manrope)' }}
+            >
+              Set up in minutes. No contracts.
+            </p>
+
+          </div>
+        </motion.div>
 
       </div>
     </section>
