@@ -17,20 +17,6 @@ class SubscriptionStatus(str, PyEnum):
     unpaid = "unpaid"
 
 
-class PlanLimitsResponse(BaseModel):
-    """Plan-tier limits returned alongside the subscription status.
-
-    Integer fields use -1 to represent 'unlimited'.
-    Frontend code should treat -1 as no cap.
-    """
-    max_locations: int
-    max_active_surveys: int
-    max_active_flows: int
-    max_branch_nodes_per_flow: int
-    can_use_photo_feedback: bool
-    can_expand_charts: bool
-
-
 class SubscriptionResponse(BaseModel):
     status: str
     trial_end: str | None = None
@@ -42,7 +28,6 @@ class SubscriptionResponse(BaseModel):
     cancel_at_period_end: bool = False
     price_id: str | None = None
     is_active: bool
-    plan_limits: PlanLimitsResponse | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -83,7 +68,7 @@ class CheckoutSessionResponse(BaseModel):
 
 
 class CheckoutSessionRequest(BaseModel):
-    plan: Literal["starter", "growth", "pro"]
+    location_count: int = Field(..., ge=1, le=200)
     billing_interval: Literal["monthly", "yearly"]
 
 

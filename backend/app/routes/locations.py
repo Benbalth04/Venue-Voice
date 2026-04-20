@@ -16,7 +16,6 @@ from sqlalchemy.exc import IntegrityError
 from ..core.errors.exceptions import ConflictError, NotFoundError, StaleObjectError, ValidationError
 
 from ..auth.membership import get_company_from_membership, get_current_membership, require_company_admin
-from ..auth.plan_enforcement import assert_can_activate_location
 from ..auth.subscription import require_active_subscription
 from ..auth.user_timezone import format_dt_for_user, get_user_zoneinfo
 from ..auth.viewer_scoping import apply_location_filter, assert_location_access, location_ids_subquery
@@ -261,13 +260,6 @@ def update_location(
     company = get_company_from_membership(membership, db)
     loc = _get_location_or_404(location_id, company.id, db)
     was_inactive = not loc.is_active
-
-    if (
-        "is_active" in payload.model_fields_set
-        and payload.is_active is True
-        and not loc.is_active
-    ):
-        assert_can_activate_location(db, company.id, company)
 
     update_values: dict = {"updated_at": func.now()}
 

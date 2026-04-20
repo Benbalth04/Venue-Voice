@@ -95,12 +95,8 @@ class Settings(BaseSettings):
     stripe_webhook_secret: str
     stripe_customer_portal_id: str
     default_free_trial_days: int = 14
-    starter_plan_monthly_price_id: str
-    starter_plan_yearly_price_id: str
-    growth_plan_monthly_price_id: str
-    growth_plan_yearly_price_id: str
-    pro_plan_monthly_price_id: str
-    pro_plan_yearly_price_id: str
+    location_monthly_price_id: str
+    location_yearly_price_id: str
 
     # ------------------------------------------------------------------
     # QR code

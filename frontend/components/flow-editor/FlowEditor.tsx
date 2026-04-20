@@ -2,7 +2,6 @@
 
 import "@xyflow/react/dist/style.css"
 
-import Link from "next/link"
 import { useParams, useRouter } from "next/navigation"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Background, ReactFlow, type Edge, type Node, type ReactFlowInstance } from "@xyflow/react"
@@ -76,7 +75,6 @@ export function FlowEditor() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [errorSubscriptionHref, setErrorSubscriptionHref] = useState<string | null>(null)
   const [saveBanner, setSaveBanner] = useState<string | null>(null)
   const [savedSnapshot, setSavedSnapshot] = useState("")
   const [flowMissing, setFlowMissing] = useState(false)
@@ -546,14 +544,10 @@ export function FlowEditor() {
       }
     } catch (err) {
       if (isStaleObjectError(err)) {
-        setErrorSubscriptionHref(null)
         setError("This flow was updated elsewhere. Please refresh.")
       } else if (isNormalizedError(err)) {
         setError(err.message || extractErrorMessage(err, "Failed to save flow"))
-        const p = err.details?.manage_subscription_path
-        setErrorSubscriptionHref(typeof p === "string" ? p : null)
       } else {
-        setErrorSubscriptionHref(null)
         setError(extractErrorMessage(err, "Failed to save flow"))
       }
     } finally {
@@ -748,16 +742,6 @@ export function FlowEditor() {
         {error ? (
           <div className="mb-3 shrink-0 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             <p>{error}</p>
-            {errorSubscriptionHref ? (
-              <p className="mt-2">
-                <Link
-                  href={errorSubscriptionHref}
-                  className="font-medium text-red-900 underline underline-offset-2 hover:text-red-950"
-                >
-                  Manage subscription
-                </Link>
-              </p>
-            ) : null}
           </div>
         ) : null}
 

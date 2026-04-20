@@ -1,16 +1,13 @@
-"""Subscription status mapping, access rules, and price_id → plan mapping."""
+"""Subscription status mapping and access rules."""
 from __future__ import annotations
 
-import os
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
 
 from app.services.stripe_service import (
     db_subscription_status_from_stripe,
     is_subscription_active,
     plan_display_name_from_price_id,
-    PRICE_ID_TO_PLAN,
 )
 
 
@@ -75,30 +72,7 @@ def test_plan_display_name_from_price_id_unknown():
     assert plan_display_name_from_price_id("price_unknown_xyz") is None
 
 
-@patch.dict(
-    os.environ,
-    {
-        "STARTER_PLAN_MONTHLY_PRICE_ID": "price_starter_monthly",
-        "STARTER_PLAN_YEARLY_PRICE_ID": "price_starter_yearly",
-        "GROWTH_PLAN_MONTHLY_PRICE_ID": "price_growth_monthly",
-        "GROWTH_PLAN_YEARLY_PRICE_ID": "price_growth_yearly",
-        "PRO_PLAN_MONTHLY_PRICE_ID": "price_pro_monthly",
-        "PRO_PLAN_YEARLY_PRICE_ID": "price_pro_yearly",
-    },
-)
-def test_price_id_to_plan_map_all_six(monkeypatch=None):
-    """PRICE_ID_TO_PLAN maps all 6 price IDs to their plan display names.
-
-    Note: PRICE_ID_TO_PLAN is built at import time, so we test via
-    plan_display_name_from_price_id with the actual env values that were set
-    when the module was imported in the test session.
-    """
-    # All known entries in PRICE_ID_TO_PLAN should map to valid display names
-    for price_id, (plan_key, display_name) in PRICE_ID_TO_PLAN.items():
-        assert display_name in ("Starter", "Growth", "Pro"), (
-            f"Unexpected display_name {display_name!r} for price_id {price_id!r}"
-        )
-        assert plan_key in ("starter", "growth", "pro"), (
-            f"Unexpected plan_key {plan_key!r} for price_id {price_id!r}"
-        )
-        assert plan_display_name_from_price_id(price_id) == display_name
+def test_plan_display_name_always_none_for_location_pricing():
+    """Location-based pricing has no named tiers — plan_display_name_from_price_id always returns None."""
+    assert plan_display_name_from_price_id("price_location_monthly") is None
+    assert plan_display_name_from_price_id("price_location_yearly") is None

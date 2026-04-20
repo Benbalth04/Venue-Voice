@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session
 from ..auth.membership import get_company_from_membership, get_current_membership, require_company_admin
 from ..core.cache import cache_delete, cache_get, cache_set
 from ..core.config import settings
-from ..auth.plan_enforcement import require_feature
 from ..auth.subscription import require_active_subscription
 from ..auth.user_timezone import get_user_zoneinfo
 from ..auth.viewer_scoping import assert_survey_access
@@ -295,7 +294,6 @@ def analytics_response_photo_signed_url(
     question_id: str,
     membership: MembershipORM = Depends(get_current_membership),
     db: Session = Depends(get_db_connection),
-    _photo_feature: None = Depends(require_feature("photo_feedback")),
 ):
     """Return a short-lived Supabase signed URL for a survey response photo."""
     try:

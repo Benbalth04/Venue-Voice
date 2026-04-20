@@ -17,14 +17,12 @@ from ..models.postgres_model import Membership, Subscription, User
 from ..schemas.pydantic_model import (
     CheckoutSessionRequest,
     CheckoutSessionResponse,
-    PlanLimitsResponse,
     PortalSessionResponse,
     SubscriptionResponse,
     SyncSubscriptionResponse,
     VerifyCheckoutSessionResponse,
 )
 from ..core.rate_limit import check_user_rate_limit
-from ..services.plan_policy import get_policy_for_subscription
 from ..services.stripe_service import (
     create_checkout_session,
     create_portal_session,
@@ -44,15 +42,6 @@ router = APIRouter(
 
 def _build_subscription_response(sub: Subscription, user_tz: ZoneInfo) -> dict:
     """Build the shared subscription response dict from a Subscription ORM row."""
-    policy = get_policy_for_subscription(sub)
-    plan_limits = PlanLimitsResponse(
-        max_locations=policy.max_locations,
-        max_active_surveys=policy.max_active_surveys,
-        max_active_flows=policy.max_active_flows,
-        max_branch_nodes_per_flow=policy.max_branch_nodes_per_flow,
-        can_use_photo_feedback=policy.can_use_photo_feedback,
-        can_expand_charts=policy.can_expand_charts,
-    )
     return dict(
         status=sub.status,
         trial_end=to_iso8601_zoned(sub.trial_end, user_tz),
@@ -64,7 +53,6 @@ def _build_subscription_response(sub: Subscription, user_tz: ZoneInfo) -> dict:
         cancel_at_period_end=sub.cancel_at_period_end,
         price_id=sub.price_id,
         is_active=is_subscription_active(sub),
-        plan_limits=plan_limits,
     )
 
 
@@ -159,7 +147,7 @@ def create_checkout(
         company,
         billing_user,
         db,
-        body.plan,
+        body.location_count,
         body.billing_interval,
     )
     return CheckoutSessionResponse(checkout_url=url)

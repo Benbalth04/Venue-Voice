@@ -1904,19 +1904,6 @@ export async function getEngagementBreakdown<T = unknown>(
 // Billing
 // ------------------------------------------------------------------
 
-export interface PlanLimits {
-  /** -1 means unlimited */
-  max_locations: number
-  /** -1 means unlimited */
-  max_active_surveys: number
-  /** -1 means unlimited */
-  max_active_flows: number
-  /** -1 means unlimited */
-  max_branch_nodes_per_flow: number
-  can_use_photo_feedback: boolean
-  can_expand_charts: boolean
-}
-
 export interface SubscriptionResponse {
   status: string
   trial_end: string | null
@@ -1927,8 +1914,6 @@ export interface SubscriptionResponse {
   billing_interval: string | null
   cancel_at_period_end: boolean
   is_active: boolean
-  /** Plan-tier limits. Null when the user has no subscription yet. */
-  plan_limits: PlanLimits | null
 }
 
 export async function fetchSubscription(
@@ -1965,12 +1950,10 @@ export async function fetchSubscriptionStatus(
   )
 }
 
-export type CheckoutPlan = "starter" | "growth" | "pro"
-
 export type CheckoutBillingInterval = "monthly" | "yearly"
 
 export interface CreateCheckoutSessionBody {
-  plan: CheckoutPlan
+  locationCount: number
   billingInterval: CheckoutBillingInterval
 }
 
@@ -1984,7 +1967,7 @@ export async function createCheckoutSession(
       method: "POST",
       headers: authHeaders(accessToken),
       body: JSON.stringify({
-        plan: body.plan,
+        location_count: body.locationCount,
         billing_interval: body.billingInterval,
       }),
     }

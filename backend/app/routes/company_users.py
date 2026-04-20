@@ -25,7 +25,6 @@ from ..auth.membership import (
     require_company_admin,
     require_company_owner,
 )
-from ..auth.plan_enforcement import assert_can_invite_user
 from ..core.rate_limit import check_user_rate_limit
 from ..auth.subscription import require_active_subscription
 from ..core.errors import (
@@ -156,9 +155,6 @@ def invite_company_user(
             code="OWNER_REQUIRED",
             message="Only the company owner can invite company admins.",
         )
-
-    # Enforce per-tier member limit before any external calls
-    assert_can_invite_user(db, company.id, company)
 
     email = payload.email.lower().strip()
 

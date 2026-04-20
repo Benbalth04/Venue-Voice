@@ -11,8 +11,6 @@ from ..auth.membership import get_company_from_membership, require_company_admin
 from ..auth.subscription import require_active_subscription
 from ..auth.user_timezone import get_user_zoneinfo
 from ..core.errors.exceptions import NotFoundError, PermissionError, ValidationError
-from ..services.plan_policy import get_policy_for_subscription
-from ..services.stripe_service import get_company_subscription
 from ..db.postgres import get_db_connection
 from ..models.postgres_model import Company as CompanyORM
 from ..models.postgres_model import Membership as MembershipORM
@@ -236,10 +234,7 @@ def create_flow_route(
 ):
     survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
     company = _ensure_survey_access(db, membership, survey_uuid)
-    sub = get_company_subscription(company, db)
-    policy = get_policy_for_subscription(sub)
-    plan_key = (sub.plan_display_name or "starter").strip().lower() if sub else "starter"
-    return create_flow(db, company.id, survey_uuid, payload, user_tz, policy=policy, plan_key=plan_key)
+    return create_flow(db, company.id, survey_uuid, payload, user_tz)
 
 
 @router.put("/surveys/{survey_id}/flows/{flow_id}", response_model=FlowResponse)
@@ -254,10 +249,7 @@ def update_flow_route(
     survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
     flow_uuid = _parse_uuid(flow_id, code="INVALID_FLOW_ID", label="flow ID")
     company = _ensure_survey_access(db, membership, survey_uuid)
-    sub = get_company_subscription(company, db)
-    policy = get_policy_for_subscription(sub)
-    plan_key = (sub.plan_display_name or "starter").strip().lower() if sub else "starter"
-    return update_flow(db, company.id, survey_uuid, flow_uuid, payload, user_tz, policy=policy, plan_key=plan_key)
+    return update_flow(db, company.id, survey_uuid, flow_uuid, payload, user_tz)
 
 
 @router.patch("/surveys/{survey_id}/flows/{flow_id}/active", response_model=FlowResponse)
@@ -272,9 +264,6 @@ def set_flow_active_route(
     survey_uuid = _parse_uuid(survey_id, code="INVALID_SURVEY_ID", label="survey ID")
     flow_uuid = _parse_uuid(flow_id, code="INVALID_FLOW_ID", label="flow ID")
     company = _ensure_survey_access(db, membership, survey_uuid)
-    sub = get_company_subscription(company, db)
-    policy = get_policy_for_subscription(sub)
-    plan_key = (sub.plan_display_name or "starter").strip().lower() if sub else "starter"
     return set_flow_active(
         db,
         company.id,
@@ -283,8 +272,6 @@ def set_flow_active_route(
         is_active=payload.is_active,
         updated_at=payload.updated_at,
         user_tz=user_tz,
-        policy=policy,
-        plan_key=plan_key,
     )
 
 

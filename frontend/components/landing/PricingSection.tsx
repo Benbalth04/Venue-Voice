@@ -122,7 +122,7 @@ export default function PricingSection() {
               className="text-xl font-extrabold text-zinc-900 mb-1"
               style={{ fontFamily: 'var(--font-bricolage)' }}
             >
-              Per-location pricing
+              Simple Per-location Pricing
             </div>
             <p
               className="text-sm text-zinc-500 mb-8"

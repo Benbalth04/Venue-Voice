@@ -7,16 +7,13 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.errors.exceptions import ConflictError, NotFoundError, PermissionError, StaleObjectError, SubscriptionFeatureError, SubscriptionLimitError, ValidationError, suggest_upgrade_plan
+from app.core.errors.exceptions import ConflictError, NotFoundError, PermissionError, StaleObjectError, ValidationError
 from app.core.timezone_australia import effective_zoneinfo_for_stored_timezone
 
 from app.auth.membership import get_company_from_membership, get_current_membership, require_company_admin
-from app.auth.plan_enforcement import acquire_company_resource_lock, count_active_surveys
 from app.auth.subscription import require_active_subscription
 from app.auth.user_timezone import format_dt_for_user
 from app.auth.viewer_scoping import apply_survey_filter, assert_survey_access, survey_ids_subquery
-from app.services.plan_policy import get_policy_for_subscription
-from app.services.stripe_service import get_company_subscription
 from app.db.postgres import get_db_connection
 from app.models.postgres_model import Survey as SurveyORM
 from app.models.postgres_model import User as UserORM
@@ -218,21 +215,6 @@ def _get_user_company(membership: MembershipORM, db: Session) -> CompanyORM:
     """Resolve company from membership. Replaces the old owner_user_id pattern."""
     return get_company_from_membership(membership, db)
 
-
-# Photo question types that require a Growth or Pro plan.
-_PHOTO_QUESTION_TYPES = {"photo"}
-
-
-def _check_photo_feedback_allowed(schema: dict[str, Any], policy) -> None:
-    """Raise SubscriptionFeatureError if the schema contains photo questions and the plan disallows it."""
-    if policy.can_use_photo_feedback:
-        return
-    for q in schema.get("questions") or []:
-        if isinstance(q, dict) and q.get("type") in _PHOTO_QUESTION_TYPES:
-            raise SubscriptionFeatureError(
-                feature="photo_feedback",
-                message="Photo feedback questions require a Growth or Pro plan.",
-            )
 
 
 def _survey_to_list_item(
@@ -466,11 +448,6 @@ def create_survey(
     if not valid:
         raise ValidationError(code="INVALID_SURVEY_SCHEMA", message="Survey schema validation failed", details={"schema_errors": errors}, status_code=422)
 
-    _check_photo_feedback_allowed(
-        payload.survey_schema_json,
-        get_policy_for_subscription(get_company_subscription(company, db)),
-    )
-
     survey = SurveyORM(
         company_id=company_id,
         name=title,
@@ -536,11 +513,6 @@ def save_survey_version(
     valid, errors = validate_survey_schema(payload.survey_schema_json, db)
     if not valid:
         raise ValidationError(code="INVALID_SURVEY_SCHEMA", message="Survey schema validation failed", details={"schema_errors": errors}, status_code=422)
-
-    _check_photo_feedback_allowed(
-        payload.survey_schema_json,
-        get_policy_for_subscription(get_company_subscription(company, db)),
-    )
 
     last_edited_by = _get_last_edited_by(survey.id, survey.latest_version, current_user.id, db)
 
@@ -668,25 +640,6 @@ def publish_survey(
     valid, errors = validate_survey_schema(sv.schema_json, db)
     if not valid:
         raise ValidationError(code="INVALID_SURVEY_SCHEMA", message="Survey schema validation failed", details={"schema_errors": errors}, status_code=422)
-
-    sub = get_company_subscription(company, db)
-    policy = get_policy_for_subscription(sub)
-    plan_key = (sub.plan_display_name or "starter").strip().lower() if sub else "starter"
-
-    _check_photo_feedback_allowed(sv.schema_json, policy)
-
-    # Active survey limit — acquire advisory lock before counting to prevent races
-    acquire_company_resource_lock(db, company.id, "active_surveys")
-    current_count = count_active_surveys(db, company.id)
-    if policy.max_active_surveys != -1 and current_count >= policy.max_active_surveys:
-        raise SubscriptionLimitError(
-            resource="active_surveys",
-            limit=policy.max_active_surveys,
-            current=current_count,
-            is_over_limit=(current_count > policy.max_active_surveys),
-            plan=plan_key,
-            upgrade_to=suggest_upgrade_plan(plan_key),
-        )
 
     rowcount = (
         db.query(SurveyORM)

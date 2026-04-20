@@ -16,9 +16,7 @@ from ...core.datetime_user_tz import (
 )
 from ...core.timezone_australia import effective_zoneinfo_for_stored_timezone
 from ...models.email_event import EmailEvent
-from ...auth.plan_enforcement import get_over_limit_status
 from ...models.postgres_model import Company, Membership, Subscription, User
-from ...services.plan_policy import get_policy_for_subscription
 from ...services.stripe_service import get_company_subscription
 from ...models.stripe_webhook_event import StripeWebhookEvent
 from ..email.constants import EMAIL_CATEGORY_STRIPE_BILLING
@@ -194,36 +192,6 @@ def handle_stripe_webhook_event(db: Session, event: dict[str, Any]) -> None:
         entity_key = sub_entity_key if job.template in _SUBSCRIPTION_LIFECYCLE_START_TEMPLATES else None
         _enqueue_billing_email(db, evt_id, user, company, job, base_ctx, entity_key=entity_key)
 
-    # After a downgrade, log the over-limit state for observability.
-    # No data is modified — this is purely a diagnostic log.
-    if any(j.template == "plan_downgraded" for j in jobs):
-        try:
-            sub_orm = get_company_subscription(company, db)
-            policy = get_policy_for_subscription(sub_orm)
-            new_plan = (sub_orm.plan_display_name or "unknown").lower() if sub_orm else "unknown"
-            over_limit = get_over_limit_status(db, company.id, policy)
-            if over_limit.any_over_limit():
-                logger.warning(
-                    "Account over limit after subscription downgrade user_id=%s plan=%s "
-                    "over_limit=%s counts=%s limits=%s",
-                    user.id,
-                    new_plan,
-                    {
-                        "locations": over_limit.locations,
-                        "active_surveys": over_limit.active_surveys,
-                        "active_flows": over_limit.active_flows,
-                    },
-                    over_limit.counts,
-                    over_limit.limits,
-                )
-            else:
-                logger.info(
-                    "Subscription downgrade within limits user_id=%s plan=%s",
-                    user.id,
-                    new_plan,
-                )
-        except Exception:
-            logger.exception("Failed to compute over-limit state after downgrade user_id=%s", user.id)
 
 
 def _run_subscription_sync(etype: str, obj: dict[str, Any], db: Session) -> None:

@@ -26,21 +26,9 @@ logger = logging.getLogger(__name__)
 _FREE_TRIAL_DAYS = settings.default_free_trial_days
 _APP_ORIGIN = settings.app_origin
 
-_PLAN_PRICE_IDS: dict[tuple[str, str], str | None] = {
-    ("starter", "monthly"): settings.starter_plan_monthly_price_id,
-    ("starter", "yearly"): settings.starter_plan_yearly_price_id,
-    ("growth", "monthly"): settings.growth_plan_monthly_price_id,
-    ("growth", "yearly"): settings.growth_plan_yearly_price_id,
-    ("pro", "monthly"): settings.pro_plan_monthly_price_id,
-    ("pro", "yearly"): settings.pro_plan_yearly_price_id,
-}
-
-# Reverse map: price_id → (plan_key, display_name). Single source of truth for
-# translating a Stripe price ID back to our internal plan representation.
-PRICE_ID_TO_PLAN: dict[str, tuple[str, str]] = {
-    pid: (plan, plan.title())
-    for (plan, _interval), pid in _PLAN_PRICE_IDS.items()
-    if pid
+_LOCATION_PRICE_IDS: dict[str, str] = {
+    "monthly": settings.location_monthly_price_id,
+    "yearly": settings.location_yearly_price_id,
 }
 
 _STRIPE_CUSTOMER_PORTAL_ID = settings.stripe_customer_portal_id
@@ -186,30 +174,29 @@ def get_or_create_stripe_customer(company: Company, owner: User, db: Session) ->
 # Checkout session
 # ---------------------------------------------------------------------------
 
-def _price_id_for_plan(plan: str, billing_interval: str) -> str:
-    raw = _PLAN_PRICE_IDS.get((plan, billing_interval))
-    price_id = (raw or "").strip()
+def _price_id_for_billing_interval(billing_interval: str) -> str:
+    price_id = (_LOCATION_PRICE_IDS.get(billing_interval) or "").strip()
     if not price_id:
         raise ExternalAPIError(
             service_name="Stripe",
             error_message=(
-                f"Stripe price ID is not configured for plan={plan!r} "
-                f"billing_interval={billing_interval!r}. Set the matching "
-                "*_PLAN_*_PRICE_ID environment variable."
+                f"Stripe price ID is not configured for billing_interval={billing_interval!r}. "
+                "Set LOCATION_MONTHLY_PRICE_ID or LOCATION_YEARLY_PRICE_ID."
             ),
         )
     return price_id
 
 
-def create_checkout_session(company: Company, owner: User, db: Session, plan: str, billing_interval: str) -> str:
-    """Create a Stripe Checkout session and return the hosted URL.
+def create_checkout_session(
+    company: Company, owner: User, db: Session, location_count: int, billing_interval: str
+) -> str:
+    """Create a Stripe Checkout session for the given number of locations.
 
-    - Uses the price ID for the requested plan and billing interval from env.
+    - Uses the per-location price ID for the billing interval from env.
+    - Quantity equals the number of locations requested.
     - Applies a free trial when the company has never had one.
-    - Sets trial_from_plan=False so Stripe does not grant a second trial on
-      re-subscription.
     """
-    price_id = _price_id_for_plan(plan, billing_interval)
+    price_id = _price_id_for_billing_interval(billing_interval)
     customer_id = get_or_create_stripe_customer(company, owner, db)
 
     sub = db.query(Subscription).filter(Subscription.company_id == company.id).first()
@@ -224,7 +211,7 @@ def create_checkout_session(company: Company, owner: User, db: Session, plan: st
             session = stripe.checkout.Session.create(
                 customer=customer_id,
                 mode="subscription",
-                line_items=[{"price": price_id, "quantity": 1}],
+                line_items=[{"price": price_id, "quantity": location_count}],
                 subscription_data=subscription_data,
                 allow_promotion_codes=True,
                 metadata={"company_id": str(company.id)},
@@ -382,11 +369,12 @@ def _price_from_stripe_subscription(stripe_sub: stripe.Subscription):
 
 
 def plan_display_name_from_price_id(price_id: str | None) -> str | None:
-    """Return the human-readable plan name for a Stripe price ID, or None."""
-    if not price_id:
-        return None
-    entry = PRICE_ID_TO_PLAN.get(price_id)
-    return entry[1] if entry else None
+    """Return the human-readable plan name for a Stripe price ID, or None.
+
+    Location-based pricing has no named plan tiers, so this always returns None.
+    Kept for compatibility with the webhook sync path.
+    """
+    return None
 
 
 def _price_id_from_price(price: Any) -> str | None:
@@ -428,13 +416,7 @@ def _billing_interval_from_stripe_subscription(stripe_sub: stripe.Subscription) 
     price = _price_from_stripe_subscription(stripe_sub)
     if price is None:
         return None
-    # Primary: look up our known price IDs
-    price_id = _price_id_from_price(price)
-    if price_id:
-        for (plan, interval), pid in _PLAN_PRICE_IDS.items():
-            if pid and pid == price_id:
-                return interval  # "monthly" or "yearly"
-    # Fallback: derive from Stripe recurring.interval
+    # Derive from Stripe recurring.interval
     if isinstance(price, dict):
         recurring = price.get("recurring")
     else:

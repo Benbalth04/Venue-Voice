@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import { useAuth } from "@/contexts/AuthContext"
 import { BillingToggle } from "@/components/subscription/BillingToggle"
 import { Button } from "@/components/ui/button"
+import { Check } from "lucide-react"
 import {
   createPortalSession,
   extractErrorMessage,
@@ -13,16 +14,13 @@ import {
   type SubscriptionResponse,
 } from "@/lib/api/client"
 import {
-  SUBSCRIBE_PLANS,
-  tierIndexFromPlanDisplayName,
-  tierAllowsPrimaryAction,
+  LOCATION_FEATURES,
+  LOCATION_PRICE_MONTHLY,
+  LOCATION_PRICE_YEARLY_MONTHLY_EQUIV,
+  LOCATION_PRICE_YEARLY_TOTAL,
   type BillingInterval,
 } from "@/lib/subscription/plans"
 import { DEFAULT_USER_TIMEZONE } from "@/lib/timezone/australia"
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function formatSubscriptionEndDateTime(iso: string | null, timeZone: string): string {
   if (!iso) return "the end of your billing period"
@@ -42,121 +40,6 @@ function formatSubscriptionEndDateTime(iso: string | null, timeZone: string): st
     return iso
   }
 }
-
-// ---------------------------------------------------------------------------
-// Plan card
-// ---------------------------------------------------------------------------
-
-interface ManagePlanCardProps {
-  name: string
-  price: string
-  billingCycle: string
-  yearlyPriceDetails?: {
-    regularMonthly: string
-    effectiveMonthly: string
-    annualTotalNote: string
-  }
-  bestFor: string
-  popular: boolean
-  features: string[]
-  isCurrent: boolean
-  isBelowCurrentTier: boolean
-  /** Primary CTA when not current tier card and not below current tier (upgrade or same-tier billing switch). */
-  upgradeOrSwitchLabel: string
-  portalLoading: boolean
-  onOpenPortal: () => void
-  isOwner: boolean
-}
-
-function ManagePlanCard({
-  name,
-  price,
-  billingCycle,
-  yearlyPriceDetails,
-  bestFor,
-  popular,
-  features,
-  isCurrent,
-  isBelowCurrentTier,
-  upgradeOrSwitchLabel,
-  portalLoading,
-  onOpenPortal,
-  isOwner,
-}: ManagePlanCardProps) {
-  const borderClass = popular
-    ? "border-2 border-violet-600 shadow-md ring-4 ring-violet-100"
-    : "border-2 border-zinc-200 shadow-sm"
-
-  return (
-    <div className={`relative flex h-full flex-col rounded-2xl bg-white p-6 ${borderClass}`}>
-      {popular && !isCurrent && (
-        <span className="absolute -top-3.5 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-full bg-violet-600 px-4 py-1 text-xs font-semibold text-white">
-          Most popular
-        </span>
-      )}
-      {isCurrent && (
-        <span className="absolute -top-3.5 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-full bg-emerald-500 px-4 py-1 text-xs font-semibold text-white">
-          Current plan
-        </span>
-      )}
-
-      <h3 className="text-lg font-semibold text-zinc-900">{name}</h3>
-      <p className="mt-1.5 text-sm leading-snug text-zinc-500">{bestFor}</p>
-
-      {yearlyPriceDetails ? (
-        <>
-          <div className="mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1">
-            <span className="text-lg font-medium text-red-500 line-through decoration-red-500">
-              {yearlyPriceDetails.regularMonthly}
-            </span>
-            <span className="text-4xl font-bold text-zinc-900">{yearlyPriceDetails.effectiveMonthly}</span>
-            <span className="text-sm font-medium text-zinc-500">/mo</span>
-          </div>
-          <p className="mt-2 text-sm text-zinc-500">{yearlyPriceDetails.annualTotalNote}</p>
-        </>
-      ) : (
-        <div className="mt-3 flex flex-wrap items-end gap-x-1 gap-y-1">
-          <span className="text-4xl font-bold text-zinc-900">{price}</span>
-          <span className="mb-1 text-sm text-zinc-500">{billingCycle}</span>
-        </div>
-      )}
-
-      <ul className="mt-5 flex-1 space-y-2.5">
-        {features.map((feature) => (
-          <li key={feature} className="flex items-start gap-2.5 text-sm text-zinc-600">
-            <svg
-              className="mt-0.5 h-4 w-4 flex-shrink-0 text-violet-600"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-            </svg>
-            {feature}
-          </li>
-        ))}
-      </ul>
-
-      {isOwner && !isBelowCurrentTier && (
-        <div className="mt-6 space-y-2">
-          {isCurrent ? (
-            <Button variant="outline" className="w-full" onClick={onOpenPortal} disabled={portalLoading}>
-              {portalLoading ? "Redirecting…" : "Manage subscription"}
-            </Button>
-          ) : (
-            <Button className="w-full" onClick={onOpenPortal} disabled={portalLoading}>
-              {portalLoading ? "Redirecting…" : upgradeOrSwitchLabel}
-            </Button>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Page
-// ---------------------------------------------------------------------------
 
 export default function ManageSubscriptionPage() {
   const router = useRouter()
@@ -228,12 +111,11 @@ export default function ManageSubscriptionPage() {
     }
   }
 
-  const currentTierIndex = tierIndexFromPlanDisplayName(sub?.plan_display_name ?? null)
-  const subscribedBilling: BillingInterval =
-    sub?.billing_interval === "yearly" ? "yearly" : "monthly"
+  const isYearly = billing === "yearly"
+  const displayPerLocation = isYearly ? LOCATION_PRICE_YEARLY_MONTHLY_EQUIV : LOCATION_PRICE_MONTHLY
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8">
+    <div className="mx-auto max-w-2xl px-4 py-8">
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-zinc-900">Manage Subscription</h1>
@@ -303,51 +185,64 @@ export default function ManageSubscriptionPage() {
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-violet-600 border-t-transparent" />
         </div>
       ) : (
-        <>
-          <BillingToggle value={billing} onChange={setBilling} />
+        <div className="relative bg-white rounded-2xl border border-zinc-200 shadow-xl overflow-hidden">
+          <div className="h-1 w-full bg-gradient-to-r from-violet-500 to-violet-400" />
+          <div className="p-8 flex flex-col items-center text-center">
 
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-3 md:items-stretch">
-            {SUBSCRIBE_PLANS.map((plan) => {
-              const planNameMatch =
-                plan.name.toLowerCase() === (sub?.plan_display_name ?? "").toLowerCase()
-              const isCurrent = planNameMatch && billing === subscribedBilling
-              const isBelowCurrentTier = !tierAllowsPrimaryAction(currentTierIndex, plan.id)
-              const upgradeOrSwitchLabel =
-                planNameMatch && billing !== subscribedBilling
-                  ? billing === "yearly"
-                    ? "Change to yearly billing"
-                    : "Change to monthly billing"
-                  : `Upgrade to ${plan.name}`
-              const isMonthly = billing === "monthly"
-              const yearlyPriceDetails = !isMonthly
-                ? {
-                    regularMonthly: `$${plan.monthlyPrice}/mo`,
-                    effectiveMonthly: `$${plan.yearlyMonthlyEquiv}`,
-                    annualTotalNote: `$${plan.yearlyPrice}/year billed annually`,
-                  }
-                : undefined
+            <div className="text-xl font-extrabold text-zinc-900 mb-1">Simple Per-location Pricing</div>
+            <p className="text-sm text-zinc-500 mb-6">Scale up or down as your business grows</p>
 
-              return (
-                <ManagePlanCard
-                  key={plan.id}
-                  name={plan.name}
-                  price={isMonthly ? `$${plan.monthlyPrice}` : `$${plan.yearlyPrice}`}
-                  billingCycle={isMonthly ? "/month" : "/year"}
-                  yearlyPriceDetails={yearlyPriceDetails}
-                  bestFor={plan.bestFor}
-                  popular={plan.popular}
-                  features={plan.features}
-                  isCurrent={isCurrent}
-                  isBelowCurrentTier={isBelowCurrentTier}
-                  upgradeOrSwitchLabel={upgradeOrSwitchLabel}
-                  portalLoading={portalLoading}
-                  onOpenPortal={handleOpenPortal}
-                  isOwner={isOwner}
-                />
-              )
-            })}
+            <BillingToggle value={billing} onChange={setBilling} />
+
+            <div className="mb-2 mt-2">
+              <div className="flex items-end justify-center gap-1.5">
+                <span className="text-7xl font-extrabold leading-none text-zinc-900">${displayPerLocation}</span>
+                <div className="mb-2 text-zinc-400 text-sm leading-snug text-left">
+                  <div>per location</div>
+                  <div>/ month</div>
+                </div>
+              </div>
+              {isYearly ? (
+                <p className="text-sm text-zinc-500 mt-2">
+                  Billed annually (${LOCATION_PRICE_YEARLY_TOTAL} per location / year)
+                </p>
+              ) : (
+                <p className="text-sm text-zinc-500 mt-2">Billed monthly — switch to yearly to save 20%</p>
+              )}
+            </div>
+
+            <div className="my-8 h-px bg-zinc-100 w-full" />
+
+            <p className="text-xs font-bold tracking-widest uppercase text-zinc-400 mb-5">Everything included</p>
+            <ul className="grid sm:grid-cols-2 gap-x-10 gap-y-3.5 text-left w-full mb-8">
+              {LOCATION_FEATURES.map((feature) => (
+                <li key={feature} className="flex items-start gap-3 text-sm text-zinc-700">
+                  <span className="mt-0.5 shrink-0 flex items-center justify-center w-4 h-4 rounded-full bg-violet-100">
+                    <Check className="w-2.5 h-2.5 text-violet-600 stroke-[3]" />
+                  </span>
+                  {feature}
+                </li>
+              ))}
+            </ul>
+
+            <div className="mb-8 h-px bg-zinc-100 w-full" />
+
+            {isOwner && (
+              <Button
+                onClick={handleOpenPortal}
+                disabled={portalLoading}
+                variant="outline"
+                className="w-full max-w-sm"
+              >
+                {portalLoading ? "Redirecting…" : "Manage subscription"}
+              </Button>
+            )}
+
+            <p className="text-xs text-zinc-400 mt-3">
+              To add or remove locations, open the billing portal.
+            </p>
           </div>
-        </>
+        </div>
       )}
     </div>
   )

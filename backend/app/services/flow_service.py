@@ -17,9 +17,7 @@ from ..core.errors.exceptions import (
     FlowExecutionError,
     NotFoundError,
     StaleObjectError,
-    SubscriptionLimitError,
     ValidationError,
-    suggest_upgrade_plan,
 )
 from ..db.postgres import SessionLocal
 from ..services.email.constants import EMAIL_CATEGORY_USER_NOTIFICATION
@@ -318,7 +316,6 @@ def _preorder_flow_nodes_for_persist(nodes: list) -> list:
     return ordered
 
 
-_MANAGE_SUBSCRIPTION_PATH = "/dashboard/settings/manage-subscription"
 
 
 def _assert_flow_rule_ids_unique_per_root_path(nodes: list) -> None:
@@ -493,49 +490,11 @@ def list_company_flows(db: Session, company_id: uuid.UUID, user_tz: ZoneInfo) ->
 
 def create_flow(
     db: Session, company_id: uuid.UUID, survey_id: uuid.UUID, payload, user_tz: ZoneInfo,
-    *, policy=None, plan_key: str | None = None,
 ) -> dict[str, Any]:
     _get_survey_or_404(db, company_id, survey_id)
     _ensure_unique_flow_name(db, company_id, payload.name)
     _validate_location_survey_ids(db, company_id, survey_id, payload.location_survey_ids)
     _validate_nodes(db, company_id, survey_id, payload.nodes)
-
-    if policy is not None:
-        # Active flow limit — only applies when the new flow starts active
-        if payload.is_active:
-            from ..auth.plan_enforcement import acquire_company_resource_lock, count_active_flows
-            acquire_company_resource_lock(db, company_id, "active_flows")
-            current = count_active_flows(db, company_id)
-            if policy.max_active_flows != -1 and current >= policy.max_active_flows:
-                raise SubscriptionLimitError(
-                    resource="active_flows",
-                    limit=policy.max_active_flows,
-                    current=current,
-                    is_over_limit=(current > policy.max_active_flows),
-                    plan=plan_key,
-                    upgrade_to=suggest_upgrade_plan(plan_key),
-                )
-
-        # Branch node limit per flow
-        if policy.max_branch_nodes_per_flow != -1:
-            branch_count = sum(
-                1 for n in payload.nodes
-                if n.node_type.value == "branch"
-            )
-            if branch_count > policy.max_branch_nodes_per_flow:
-                lim = policy.max_branch_nodes_per_flow
-                raise SubscriptionLimitError(
-                    resource="branch_nodes_per_flow",
-                    limit=lim,
-                    current=branch_count,
-                    message=(
-                        f"This flow has {branch_count} branch steps, but your plan allows at most {lim} per flow. "
-                        "Remove branch steps or upgrade your plan."
-                    ),
-                    plan=plan_key,
-                    upgrade_to=suggest_upgrade_plan(plan_key),
-                    extra_details={"manage_subscription_path": _MANAGE_SUBSCRIPTION_PATH},
-                )
 
     flow = FlowORM(
         company_id=company_id,
@@ -577,24 +536,8 @@ def set_flow_active(
     is_active: bool,
     updated_at,
     user_tz: ZoneInfo,
-    policy=None,
-    plan_key: str | None = None,
 ) -> dict[str, Any]:
     flow = _get_flow_or_404(db, company_id, survey_id, flow_id)
-
-    if is_active and policy is not None:
-        from ..auth.plan_enforcement import acquire_company_resource_lock, count_active_flows
-        acquire_company_resource_lock(db, company_id, "active_flows")
-        current = count_active_flows(db, company_id)
-        if policy.max_active_flows != -1 and current >= policy.max_active_flows:
-            raise SubscriptionLimitError(
-                resource="active_flows",
-                limit=policy.max_active_flows,
-                current=current,
-                is_over_limit=(current > policy.max_active_flows),
-                plan=plan_key,
-                upgrade_to=suggest_upgrade_plan(plan_key),
-            )
 
     rowcount = (
         db.query(FlowORM)
@@ -618,7 +561,6 @@ def update_flow(
     flow_id: uuid.UUID,
     payload,
     user_tz: ZoneInfo,
-    *, policy=None, plan_key: str | None = None,
 ) -> dict[str, Any]:
     flow = _get_flow_or_404(db, company_id, survey_id, flow_id)
     _ensure_unique_flow_name(db, company_id, payload.name, exclude_flow_id=flow.id)
@@ -630,30 +572,6 @@ def update_flow(
         exclude_flow_id=flow.id,
     )
     _validate_nodes(db, company_id, survey_id, payload.nodes)
-
-    # Branch node limit — applies on edit because user could add branch nodes.
-    # We always block if the submitted node count exceeds the plan limit, whether
-    # the account is exactly at-limit (normal) or over-limit (post-downgrade).
-    if policy is not None and policy.max_branch_nodes_per_flow != -1:
-        branch_count = sum(
-            1 for n in payload.nodes
-            if n.node_type.value == "branch"
-        )
-        if branch_count > policy.max_branch_nodes_per_flow:
-            lim = policy.max_branch_nodes_per_flow
-            raise SubscriptionLimitError(
-                resource="branch_nodes_per_flow",
-                limit=lim,
-                current=branch_count,
-                is_over_limit=True,  # edit path: user is actively trying to worsen a violation
-                plan=plan_key,
-                upgrade_to=suggest_upgrade_plan(plan_key),
-                message=(
-                    f"This flow has {branch_count} branch steps, but your plan allows at most {lim} per flow. "
-                    "Remove branch steps or upgrade your plan."
-                ),
-                extra_details={"manage_subscription_path": _MANAGE_SUBSCRIPTION_PATH},
-            )
 
     rowcount = (
         db.query(FlowORM)
