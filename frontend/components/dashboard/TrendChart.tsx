@@ -9,7 +9,7 @@ export type TrendPoint = { label: string; value: number | null }
 
 export function TrendChart({
   title,
-  points,
+  points = [],
   isPercentage = false,
 }: {
   title: string

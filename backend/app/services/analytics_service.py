@@ -7,8 +7,12 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime, timedelta
-from typing import Any
+from decimal import Decimal
+from typing import Any, TYPE_CHECKING
 from zoneinfo import ZoneInfo
+
+if TYPE_CHECKING:
+    from ..schemas.pydantic_model import AdvancedFilterPayload
 
 from ..core.datetime_user_tz import (
     inclusive_local_date_range_to_utc_bounds,
@@ -18,6 +22,7 @@ from ..core.datetime_user_tz import (
 )
 
 from sqlalchemy import func, case, literal_column, and_, or_
+from sqlalchemy.dialects.postgresql import array as pg_array
 from sqlalchemy.orm import Session
 
 from ..models.postgres_model import (
@@ -39,6 +44,7 @@ from ..models.postgres_model import (
 )
 from ..auth.viewer_scoping import survey_ids_subquery, location_ids_subquery, assert_survey_access
 from ..schemas.pydantic_model import (
+    AdvancedFilterPayload,
     AnalyticsAnswerDetail,
     AnalyticsFilterOption,
     AnalyticsFiltersResponse,
@@ -180,6 +186,176 @@ def get_new_responses_since(
     ]
 
 
+_NUMERIC_OPS = {"lt", "lte", "eq", "gte", "gt"}
+
+
+def _build_advanced_filter_clause(
+    payload: AdvancedFilterPayload,
+    db: Session,
+    response_id_col: Any,
+) -> Any | None:
+    """Build a correlated SQLAlchemy WHERE clause for advanced question-based filtering.
+
+    Each condition becomes an EXISTS subquery against survey_response_answers or
+    ai_analysis, correlated on response_id_col (SurveyResponseORM.id).
+
+    Returns None when the payload carries no conditions (no additional filtering).
+    Raises ValidationError for malformed UUIDs or unsupported operators.
+    """
+    if not payload.conditions:
+        return None
+
+    group_operator_map: dict[str, str] = {g.local_id: g.operator for g in payload.groups}
+
+    grouped: dict[str, list] = {}
+    top_standalone: list = []
+    for cond in payload.conditions:
+        if cond.group_local_id is None:
+            top_standalone.append(cond)
+        else:
+            grouped.setdefault(cond.group_local_id, []).append(cond)
+
+    def cond_to_exists(cond: Any) -> Any | None:
+        try:
+            q_uuid = uuid.UUID(cond.question_id)
+        except (ValueError, AttributeError):
+            raise ValidationError(
+                code="INVALID_QUESTION_ID",
+                message=f"Invalid question_id UUID in advanced filter: {cond.question_id!r}",
+            )
+
+        ct = cond.condition_type
+
+        if ct == "not_empty":
+            return (
+                db.query(SurveyResponseAnswerORM.id)
+                .filter(
+                    SurveyResponseAnswerORM.survey_response_id == response_id_col,
+                    SurveyResponseAnswerORM.question_id == q_uuid,
+                    SurveyResponseAnswerORM.deleted_at.is_(None),
+                )
+                .exists()
+            )
+
+        if ct == "sentiment":
+            if not isinstance(cond.value, str) or not cond.value:
+                raise ValidationError(
+                    code="INVALID_CONDITION_VALUE",
+                    message="Sentiment condition requires a string value (positive/neutral/negative)",
+                )
+            return (
+                db.query(AIAnalysisORM.id)
+                .filter(
+                    AIAnalysisORM.survey_response_id == response_id_col,
+                    AIAnalysisORM.question_id == q_uuid,
+                    AIAnalysisORM.deleted_at.is_(None),
+                    AIAnalysisORM.sentiment == cond.value.strip().lower(),
+                )
+                .exists()
+            )
+
+        if ct in ("rating", "nps"):
+            if cond.operator not in _NUMERIC_OPS:
+                raise ValidationError(
+                    code="INVALID_OPERATOR",
+                    message=f"Numeric condition requires one of: {sorted(_NUMERIC_OPS)}",
+                )
+            try:
+                num_val = Decimal(str(cond.value))
+            except Exception:
+                raise ValidationError(
+                    code="INVALID_CONDITION_VALUE",
+                    message="Numeric condition value must be a number",
+                )
+            num_col = SurveyResponseAnswerORM.numeric_value
+            op = cond.operator
+            if op == "lt":
+                num_filter = num_col < num_val
+            elif op == "lte":
+                num_filter = num_col <= num_val
+            elif op == "eq":
+                num_filter = num_col == num_val
+            elif op == "gte":
+                num_filter = num_col >= num_val
+            else:  # gt
+                num_filter = num_col > num_val
+            return (
+                db.query(SurveyResponseAnswerORM.id)
+                .filter(
+                    SurveyResponseAnswerORM.survey_response_id == response_id_col,
+                    SurveyResponseAnswerORM.question_id == q_uuid,
+                    SurveyResponseAnswerORM.deleted_at.is_(None),
+                    num_filter,
+                )
+                .exists()
+            )
+
+        if ct in ("multiple_choice", "yes_no"):
+            if not isinstance(cond.value, str) or not cond.value:
+                raise ValidationError(
+                    code="INVALID_CONDITION_VALUE",
+                    message=f"{ct} condition requires a string value",
+                )
+            return (
+                db.query(SurveyResponseAnswerORM.id)
+                .filter(
+                    SurveyResponseAnswerORM.survey_response_id == response_id_col,
+                    SurveyResponseAnswerORM.question_id == q_uuid,
+                    SurveyResponseAnswerORM.deleted_at.is_(None),
+                    SurveyResponseAnswerORM.text_value == cond.value,
+                )
+                .exists()
+            )
+
+        if ct == "checkbox":
+            # Checkbox answers are stored as ", ".join(selected_options) in a single text_value row.
+            # Use PostgreSQL string_to_array + @> (contains all) for "all of" semantics.
+            values = cond.value if isinstance(cond.value, list) else ([cond.value] if cond.value else [])
+            values = [v for v in values if v]
+            if not values:
+                raise ValidationError(
+                    code="INVALID_CONDITION_VALUE",
+                    message="Checkbox condition requires at least one value",
+                )
+            arr_col = func.string_to_array(SurveyResponseAnswerORM.text_value, ", ")
+            contains_all = arr_col.op("@>")(pg_array(values))
+            return (
+                db.query(SurveyResponseAnswerORM.id)
+                .filter(
+                    SurveyResponseAnswerORM.survey_response_id == response_id_col,
+                    SurveyResponseAnswerORM.question_id == q_uuid,
+                    SurveyResponseAnswerORM.deleted_at.is_(None),
+                    contains_all,
+                )
+                .exists()
+            )
+
+        raise ValidationError(
+            code="INVALID_CONDITION_TYPE",
+            message=f"Unknown condition type in advanced filter: {ct!r}",
+        )
+
+    # Build top-level clause elements
+    top_clauses: list[Any] = []
+
+    for cond in top_standalone:
+        ex = cond_to_exists(cond)
+        if ex is not None:
+            top_clauses.append(ex)
+
+    for group_local_id, group_conds in grouped.items():
+        group_op = group_operator_map.get(group_local_id, "AND")
+        group_clauses = [ex for cond in group_conds if (ex := cond_to_exists(cond)) is not None]
+        if not group_clauses:
+            continue
+        top_clauses.append(or_(*group_clauses) if group_op == "OR" else and_(*group_clauses))
+
+    if not top_clauses:
+        return None
+
+    return or_(*top_clauses) if payload.operator == "OR" else and_(*top_clauses)
+
+
 def get_analytics_responses(
     *,
     membership: MembershipORM,
@@ -196,6 +372,7 @@ def get_analytics_responses(
     sort_column: str = "scan_time",
     sort_direction: str = "desc",
     no_location: bool = False,
+    advanced_filter: AdvancedFilterPayload | None = None,
 ) -> AnalyticsResponseList:
     user_id = membership.user_id
 
@@ -346,6 +523,14 @@ def get_analytics_responses(
             SurveySessionORM.start_time
             < naive_utc_for_sql(local_date_start_utc(de + timedelta(days=1), user_tz))
         )
+
+    # ------------------------------------------------------------------
+    # Advanced filter — question-based conditions
+    # ------------------------------------------------------------------
+    if advanced_filter is not None:
+        adv_clause = _build_advanced_filter_clause(advanced_filter, db, SurveyResponseORM.id)
+        if adv_clause is not None:
+            q = q.filter(adv_clause)
 
     # ------------------------------------------------------------------
     # Sorting
