@@ -99,6 +99,12 @@ export default function SignupPage() {
             Log in
           </Link>
         </p>
+        <p className="mt-1 text-sm text-zinc-600">
+          Have questions?{" "}
+          <Link className="font-medium text-violet-700" href="/contact">
+            Get in touch
+          </Link>
+        </p>
 
         <form className="mt-6 space-y-4" onSubmit={onSubmit}>
           <div className="grid gap-4 sm:grid-cols-2">

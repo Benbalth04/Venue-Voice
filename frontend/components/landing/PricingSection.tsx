@@ -209,6 +209,15 @@ export default function PricingSection() {
             >
               Start capturing feedback
             </motion.a>
+            <motion.a
+              href="/contact"
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              className="flex items-center justify-center h-12 w-full max-w-sm rounded-xl text-sm font-semibold border border-violet-300 text-violet-700 hover:bg-violet-50 transition-colors duration-200 mt-3"
+              style={{ fontFamily: 'var(--font-manrope)' }}
+            >
+              Unsure? Get in touch
+            </motion.a>
             <p
               className="text-xs text-zinc-400 mt-3"
               style={{ fontFamily: 'var(--font-manrope)' }}
