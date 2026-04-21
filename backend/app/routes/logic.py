@@ -431,6 +431,7 @@ def sync_location_notification_groups_route(
         location_uuid,
         payload.group_ids,
         user_tz=user_tz,
+        location_updated_at=payload.location_updated_at,
     )
     # Revalidate flows that target this location after notification-group changes
     # (separate transaction from the sync; fail-safe).

@@ -1226,13 +1226,14 @@ export async function syncLocationNotificationGroups(
   accessToken: string,
   locationId: string,
   groupIds: string[],
+  locationUpdatedAt: string,
 ): Promise<NotificationGroupResponse[]> {
   return apiFetch<NotificationGroupResponse[]>(
     `${BACKEND_BASE}/api/v1/locations/${locationId}/notification-groups`,
     {
       method: "PUT",
       headers: authHeaders(accessToken),
-      body: JSON.stringify({ group_ids: groupIds }),
+      body: JSON.stringify({ group_ids: groupIds, location_updated_at: locationUpdatedAt }),
     },
   )
 }

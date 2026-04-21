@@ -361,13 +361,13 @@ export default function LocationsPage() {
 
         const payload: LocationUpdate = { ...basePayload, updated_at: editTarget.updated_at }
         const updated = await updateLocation(token, editTarget.id, payload)
-        await syncLocationNotificationGroups(token, editTarget.id, form.notification_group_ids)
+        await syncLocationNotificationGroups(token, editTarget.id, form.notification_group_ids, updated.updated_at)
         setLocations((prev) => prev.map((l) => (l.id === updated.id ? updated : l)))
         setNotificationGroups(await fetchNotificationGroups(token))
         setModalOpen(false)
       } else {
         const created = await createLocation(token, basePayload)
-        await syncLocationNotificationGroups(token, created.id, form.notification_group_ids)
+        await syncLocationNotificationGroups(token, created.id, form.notification_group_ids, created.updated_at)
         setLocations((prev) => [created, ...prev])
         setNotificationGroups(await fetchNotificationGroups(token))
         setModalOpen(false)

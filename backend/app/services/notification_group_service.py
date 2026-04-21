@@ -260,6 +260,7 @@ def sync_location_notification_groups(
     location_id: uuid.UUID,
     group_ids: list[uuid.UUID],
     user_tz: ZoneInfo,
+    location_updated_at: datetime,
 ) -> list[dict]:
     location = (
         db.query(LocationORM)
@@ -273,6 +274,17 @@ def sync_location_notification_groups(
     )
     if not location:
         raise NotFoundError(code="LOCATION_NOT_FOUND", message="Location not found")
+
+    rowcount = (
+        db.query(LocationORM)
+        .filter(
+            LocationORM.id == location_id,
+            LocationORM.updated_at == _strip_tz(location_updated_at),
+        )
+        .update({"updated_at": _now()}, synchronize_session="fetch")
+    )
+    if rowcount == 0:
+        raise StaleObjectError("Location", str(location_id))
 
     unique_group_ids = list(dict.fromkeys(group_ids))
     if unique_group_ids:

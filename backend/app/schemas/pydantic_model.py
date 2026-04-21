@@ -355,6 +355,7 @@ class LocationNotificationGroupUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     group_ids: list[uuid.UUID] = Field(default_factory=list)
+    location_updated_at: datetime
 
 
 # --------------------------------------------------
