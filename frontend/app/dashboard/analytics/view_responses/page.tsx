@@ -651,8 +651,9 @@ function FiltersPanel({
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function AnalyticsPage() {
-  const { user } = useAuth()
+  const { user, activeMembership } = useAuth()
   const userTimeZone = user?.timezone ?? DEFAULT_USER_TIMEZONE
+  const isViewer = activeMembership?.role === "viewer"
   const { markResponseRead } = useUnreadResponses()
   const [rows, setRows] = useState<AnalyticsResponseRow[]>([])
   const [totalCount, setTotalCount] = useState(0)
@@ -821,16 +822,18 @@ export default function AnalyticsPage() {
 
       {/* Get Results */}
       <div className="flex flex-col items-center justify-center gap-4 sm:flex-row sm:gap-8">
-        <ArchivedDataSwitch
-          checked={includeArchived}
-          onCheckedChange={(next) => {
-            setIncludeArchived(next)
-            includeArchivedRef.current = next
-            setPage(1)
-            loadData(1)
-          }}
-          disabled={loading}
-        />
+        {!isViewer && (
+          <ArchivedDataSwitch
+            checked={includeArchived}
+            onCheckedChange={(next) => {
+              setIncludeArchived(next)
+              includeArchivedRef.current = next
+              setPage(1)
+              loadData(1)
+            }}
+            disabled={loading}
+          />
+        )}
         <button
           type="button"
           onClick={handleGetResults}
@@ -842,7 +845,7 @@ export default function AnalyticsPage() {
       </div>
 
       {/* Archived data banner */}
-      {includeArchived && (
+      {!isViewer && includeArchived && (
         <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-700">
           <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0" viewBox="0 0 20 20" fill="currentColor">
             <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />

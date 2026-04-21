@@ -123,6 +123,8 @@ def get_survey_dashboard(
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ) -> SurveyDashboardResponse:
+    if include_archived and membership.role == "viewer":
+        include_archived = False
     company = get_company_from_membership(membership, db)
     assert_survey_access(membership, survey_id, db)
     location_ids = clip_location_ids_for_viewer(membership, location_ids, db)
@@ -154,6 +156,8 @@ def get_old_questions_dashboard(
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ) -> OldQuestionsDashboardResponse:
+    if include_archived and membership.role == "viewer":
+        include_archived = False
     company = get_company_from_membership(membership, db)
     assert_survey_access(membership, survey_id, db)
     location_ids = clip_location_ids_for_viewer(membership, location_ids, db)
@@ -187,6 +191,8 @@ def get_question_breakdown_endpoint(
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ) -> QuestionBreakdownResponse:
+    if include_archived and membership.role == "viewer":
+        include_archived = False
     company = get_company_from_membership(membership, db)
     assert_survey_access(membership, survey_id, db)
     location_ids = clip_location_ids_for_viewer(membership, location_ids, db)
@@ -221,6 +227,8 @@ def get_engagement_breakdown_endpoint(
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ) -> EngagementBreakdownResponse:
+    if include_archived and membership.role == "viewer":
+        include_archived = False
     company = get_company_from_membership(membership, db)
     assert_survey_access(membership, survey_id, db)
     location_ids = clip_location_ids_for_viewer(membership, location_ids, db)

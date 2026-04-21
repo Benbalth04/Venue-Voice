@@ -200,6 +200,8 @@ def analytics_responses(
                 message="Invalid advanced filter payload",
                 details={"detail": str(exc)},
             )
+    if params.get("include_archived") and membership.role == "viewer":
+        params = {**params, "include_archived": False}
     try:
         return get_analytics_responses(
             membership=membership, db=db, user_tz=user_tz, advanced_filter=parsed_adv, **params

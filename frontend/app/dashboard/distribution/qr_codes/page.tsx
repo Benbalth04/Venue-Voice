@@ -838,7 +838,7 @@ export default function DistributionPage() {
             />
           )}
 
-          <details
+          {!isViewer && <details
             className="group rounded-xl border border-zinc-200 bg-zinc-50/50"
             open={archivedOpen}
             onToggle={(e) => setArchivedOpen(e.currentTarget.open)}
@@ -934,7 +934,7 @@ export default function DistributionPage() {
                 />
               )}
             </div>
-          </details>
+          </details>}
         </div>
       )}
 

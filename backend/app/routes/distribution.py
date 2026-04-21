@@ -279,6 +279,11 @@ def list_qr_codes(
     user_tz: ZoneInfo = Depends(get_user_zoneinfo),
     db: Session = Depends(get_db_connection),
 ):
+    if archived and membership.role == "viewer":
+        raise PermissionError(
+            code="VIEWER_ARCHIVED_ACCESS_DENIED",
+            message="Viewers cannot access archived QR codes.",
+        )
     company = get_company_from_membership(membership, db)
     location_sq = location_ids_subquery(membership, db)
     survey_sq = survey_ids_subquery(membership, db)
