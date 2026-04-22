@@ -457,7 +457,8 @@ def get_analytics_responses(
             SurveyVersionORM.deleted_at.is_(None),
             SurveyORM.deleted_at.is_(None),
             or_(LocationSnapshotORM.id.is_(None), LocationSnapshotORM.deleted_at.is_(None)),
-            or_(SurveyResponseORM.id.is_(None), SurveyResponseORM.deleted_at.is_(None)),
+            SurveyResponseORM.id.isnot(None),
+            SurveyResponseORM.deleted_at.is_(None),
         )
         .join(QRCodeORM, QRCodeORM.id == SurveySessionORM.qr_code_id)
         .join(SurveyVersionORM, SurveyVersionORM.id == SurveySessionORM.survey_version_id)
