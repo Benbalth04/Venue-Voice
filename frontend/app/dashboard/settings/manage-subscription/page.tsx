@@ -53,7 +53,6 @@ const SUBSCRIPTION_DATE_TIME_OPTS: Intl.DateTimeFormatOptions = {
   day: "numeric",
   hour: "numeric",
   minute: "2-digit",
-  timeZoneName: "short",
 }
 
 /** Format an API instant in the signed-in user’s saved timezone. */
