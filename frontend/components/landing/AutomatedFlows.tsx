@@ -69,7 +69,7 @@ export default function AutomatedFlows() {
           </span>
           <h2
             className="text-4xl lg:text-5xl xl:text-6xl font-extrabold text-white leading-tight max-w-3xl mx-auto"
-            style={{ fontFamily: 'var(--font-bricolage)' }}
+            style={{ fontFamily: 'var(--font-sora)' }}
           >
             Stop negative reviews
             <br />

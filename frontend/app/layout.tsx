@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono, Syne, Manrope, Bricolage_Grotesque } from "next/font/google";
+import { Geist, Geist_Mono, Syne, Manrope, Bricolage_Grotesque, Sora } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import { SpeedInsights } from "@vercel/speed-insights/next"
 import "./globals.css";
@@ -34,6 +34,12 @@ const bricolage = Bricolage_Grotesque({
   weight: ["400", "500", "600", "700", "800"],
 });
 
+const sora = Sora({
+  variable: "--font-sora",
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700", "800"],
+});
+
 export const metadata: Metadata = {
   title: "Venue Voice",
   description: "Capture customer feedback at your venues, analyse sentiment with AI, and automate workflows. Built for hospitality, retail, and multi-location businesses.",
@@ -46,7 +52,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable} ${syne.variable} ${manrope.variable} ${bricolage.variable} antialiased`}>
+      <body className={`${geistSans.variable} ${geistMono.variable} ${syne.variable} ${manrope.variable} ${bricolage.variable} ${sora.variable} antialiased`}>
         <AuthProvider>{children}</AuthProvider>
         <Analytics />
         <SpeedInsights />

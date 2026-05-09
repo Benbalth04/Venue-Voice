@@ -145,9 +145,9 @@ export default function Hero() {
           <motion.h1
             variants={item}
             className="text-5xl lg:text-6xl xl:text-7xl font-extrabold leading-[1.05] tracking-tight text-zinc-900 max-w-5xl mx-auto"
-            style={{ fontFamily: 'var(--font-bricolage)' }}
+            style={{ fontFamily: 'var(--font-sora)' }}
           >
-            <span className="text-violet-600">AI-Powered Customer Feedback Management System</span>
+            <span className="text-violet-600">Take control of your customer feedback</span>
           </motion.h1>
 
           {/* Subheadline */}
@@ -156,7 +156,7 @@ export default function Hero() {
             className="text-xl sm:text-2xl text-zinc-600 leading-relaxed max-w-3xl mx-auto"
             style={{ fontFamily: 'var(--font-manrope)' }}
           >
-            Venue Voice helps multi-location businesses easily capture, process and action customer feedback using AI analysis and automations.
+            Venue Voice gives multi-location hospitality groups one system to standardise feedback across every location, so you can identify trends, fix issues faster, and make data-driven decisions.
           </motion.p>
 
           {/* CTAs */}

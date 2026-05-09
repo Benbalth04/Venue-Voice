@@ -63,7 +63,7 @@ export default function PricingSection() {
           </span>
           <h2
             className="text-4xl lg:text-5xl font-extrabold text-zinc-900 leading-tight"
-            style={{ fontFamily: 'var(--font-bricolage)' }}
+            style={{ fontFamily: 'var(--font-sora)' }}
           >
             Understand and improve every location
           </h2>

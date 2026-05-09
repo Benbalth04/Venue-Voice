@@ -122,7 +122,7 @@ export default function FAQSection() {
             <h2
               id="faq-heading"
               className="text-4xl lg:text-5xl font-extrabold text-zinc-900 leading-tight"
-              style={{ fontFamily: 'var(--font-bricolage)' }}
+              style={{ fontFamily: 'var(--font-sora)' }}
             >
               Frequently Asked Questions
             </h2>
@@ -169,7 +169,7 @@ export default function FAQSection() {
           <div className="mt-16 pt-12 border-t border-zinc-200 text-center">
             <h3
               className="text-2xl sm:text-3xl font-extrabold text-zinc-900 leading-tight"
-              style={{ fontFamily: 'var(--font-bricolage)' }}
+              style={{ fontFamily: 'var(--font-sora)' }}
             >
               Ready to get started?
             </h3>
