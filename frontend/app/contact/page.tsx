@@ -6,8 +6,6 @@ import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { AuthShell } from "@/components/auth/AuthShell"
 
-const BACKEND_BASE = process.env.NEXT_PUBLIC_BACKEND_BASE_URL
-
 export default function ContactPage() {
   const [name, setName] = useState("")
   const [company, setCompany] = useState("")
@@ -47,7 +45,7 @@ export default function ContactPage() {
     if (!validate()) return
     setLoading(true)
     try {
-      const res = await fetch(`${BACKEND_BASE}/api/v1/contact`, {
+      const res = await fetch(`/api/contact`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

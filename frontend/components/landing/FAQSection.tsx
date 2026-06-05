@@ -180,11 +180,11 @@ export default function FAQSection() {
               Start collecting feedback and boosting your brand today.
             </p>
             <a
-              href="/signup"
+              href="/contact"
               className="mt-6 inline-flex items-center gap-2 h-12 px-8 bg-violet-600 text-white text-base font-semibold rounded-full hover:bg-violet-700 transition-colors duration-200"
               style={{ fontFamily: 'var(--font-manrope)' }}
             >
-              Start your free trial
+              Get in Contact
               <ArrowRight className="w-4 h-4" aria-hidden />
             </a>
             <p

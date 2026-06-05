@@ -207,18 +207,15 @@ export default function HowItWorks() {
           className="text-center mt-24"
         >
           <motion.a
-            href="/signup"
+            href="/contact"
             whileHover={{ scale: 1.03 }}
             whileTap={{ scale: 0.97 }}
             className="inline-flex items-center gap-2 h-13 px-8 py-3.5 bg-violet-600 text-white text-base font-semibold rounded-full hover:bg-violet-700 transition-colors duration-200"
             style={{ fontFamily: 'var(--font-manrope)' }}
           >
-            Start your free trial
+            Get in Contact
             <ArrowRight className="w-4 h-4" />
           </motion.a>
-          <p className="mt-3 text-xs text-zinc-400" style={{ fontFamily: 'var(--font-manrope)' }}>
-            7-day free trial
-          </p>
         </motion.div>
 
       </div>

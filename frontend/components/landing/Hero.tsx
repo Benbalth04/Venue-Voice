@@ -162,13 +162,13 @@ export default function Hero() {
           {/* CTAs */}
           <motion.div variants={item} className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <motion.a
-              href="/signup"
+              href="/contact"
               whileHover={{ scale: 1.03 }}
               whileTap={{ scale: 0.97 }}
               className="h-13 px-7 py-3.5 bg-violet-600 text-white text-base font-semibold rounded-full hover:bg-violet-700 transition-colors duration-200 flex items-center gap-2"
               style={{ fontFamily: 'var(--font-manrope)' }}
             >
-              Start your 7-day free trial
+              Get in Contact
               <ArrowRight className="w-4 h-4" />
             </motion.a>
             <a

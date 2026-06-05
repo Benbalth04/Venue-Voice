@@ -63,13 +63,13 @@ export default function Navbar() {
             Log in
           </a>
           <motion.a
-            href="/signup"
+            href="/contact"
             whileHover={{ scale: 1.03 }}
             whileTap={{ scale: 0.97 }}
             className="h-9 px-5 bg-violet-600 text-white text-sm font-semibold rounded-full hover:bg-violet-700 transition-colors duration-200 flex items-center"
             style={{ fontFamily: 'var(--font-manrope)' }}
           >
-            Start your free trial
+            Get in Contact
           </motion.a>
         </div>
 
@@ -111,12 +111,12 @@ export default function Navbar() {
               Log in
             </a>
             <a
-              href="/signup"
+              href="/contact"
               onClick={() => setMobileOpen(false)}
               className="mt-2 h-10 px-5 bg-violet-600 text-white text-sm font-semibold rounded-full flex items-center justify-center"
               style={{ fontFamily: 'var(--font-manrope)' }}
             >
-              Get started free
+              Get in Contact
             </a>
           </nav>
         </motion.div>
